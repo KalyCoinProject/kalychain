@@ -8,25 +8,28 @@ import (
 	"github.com/KalyCoinProject/kalychain/command"
 	"github.com/KalyCoinProject/kalychain/command/helper"
 	"github.com/KalyCoinProject/kalychain/consensus/ibft"
-	"github.com/KalyCoinProject/kalychain/consensus/ibft/fork"
-	"github.com/KalyCoinProject/kalychain/consensus/ibft/signer"
-	"github.com/KalyCoinProject/kalychain/contracts/staking"
-	stakingHelper "github.com/KalyCoinProject/kalychain/helper/staking"
+	"github.com/KalyCoinProject/kalychain/contracts/systemcontracts"
+	bridgeHelper "github.com/KalyCoinProject/kalychain/helper/bridge"
+	validatorsetHelper "github.com/KalyCoinProject/kalychain/helper/validatorset"
+	vaultHelper "github.com/KalyCoinProject/kalychain/helper/vault"
 	"github.com/KalyCoinProject/kalychain/server"
 	"github.com/KalyCoinProject/kalychain/types"
-	"github.com/KalyCoinProject/kalychain/validators"
 )
 
 const (
-	dirFlag           = "dir"
-	nameFlag          = "name"
-	premineFlag       = "premine"
-	chainIDFlag       = "chain-id"
-	epochSizeFlag     = "epoch-size"
-	blockGasLimitFlag = "block-gas-limit"
-	posFlag           = "pos"
-	minValidatorCount = "min-validator-count"
-	maxValidatorCount = "max-validator-count"
+	dirFlag                 = "dir"
+	nameFlag                = "name"
+	premineFlag             = "premine"
+	chainIDFlag             = "chain-id"
+	ibftValidatorFlag       = "ibft-validator"
+	ibftValidatorPrefixFlag = "ibft-validators-prefix-path"
+	epochSizeFlag           = "epoch-size"
+	blockGasLimitFlag       = "block-gas-limit"
+	posFlag                 = "pos"
+	validatorsetOwner       = "validatorset-owner"
+	bridgeOwner             = "bridge-owner"
+	bridgeSigner            = "bridge-signer"
+	vaultOwner              = "vault-owner"
 )
 
 // Legacy flags that need to be preserved for running clients
@@ -51,7 +54,7 @@ type genesisParams struct {
 	validatorPrefixPath string
 	premine             []string
 	bootnodes           []string
-	ibftValidators      validators.Validators
+	ibftValidators      []types.Address
 
 	ibftValidatorsRaw []string
 
@@ -60,11 +63,11 @@ type genesisParams struct {
 	blockGasLimit uint64
 	isPos         bool
 
-	minNumValidators uint64
-	maxNumValidators uint64
-
-	rawIBFTValidatorType string
-	ibftValidatorType    validators.ValidatorType
+	validatorsetOwner string
+	bridgeOwner       string
+	bridgeSignersRaw  []string
+	bridgeSigners     []types.Address
+	vaultOwner        string
 
 	extraData []byte
 	consensus server.ConsensusType
@@ -100,11 +103,6 @@ func (p *genesisParams) validateFlags() error {
 		return errInvalidEpochSize
 	}
 
-	// Validate min and max validators number
-	if err := command.ValidateMinMaxValidatorsNumber(p.minNumValidators, p.maxNumValidators); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -129,14 +127,11 @@ func (p *genesisParams) getRequiredFlags() []string {
 func (p *genesisParams) initRawParams() error {
 	p.consensus = server.ConsensusType(p.consensusRaw)
 
-	if err := p.initIBFTValidatorType(); err != nil {
-		return err
-	}
-
 	if err := p.initValidatorSet(); err != nil {
 		return err
 	}
 
+	p.initBridgeSigners()
 	p.initIBFTExtraData()
 	p.initConsensusEngineConfig()
 
@@ -144,77 +139,44 @@ func (p *genesisParams) initRawParams() error {
 }
 
 // setValidatorSetFromCli sets validator set from cli command
-func (p *genesisParams) setValidatorSetFromCli() error {
-	if len(p.ibftValidatorsRaw) == 0 {
-		return nil
+func (p *genesisParams) setValidatorSetFromCli() {
+	if len(p.ibftValidatorsRaw) != 0 {
+		for _, val := range p.ibftValidatorsRaw {
+			p.ibftValidators = append(
+				p.ibftValidators,
+				types.StringToAddress(val),
+			)
+		}
 	}
-
-	newValidators, err := validators.ParseValidators(p.ibftValidatorType, p.ibftValidatorsRaw)
-	if err != nil {
-		return err
-	}
-
-	if err = p.ibftValidators.Merge(newValidators); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // setValidatorSetFromPrefixPath sets validator set from prefix path
 func (p *genesisParams) setValidatorSetFromPrefixPath() error {
+	var readErr error
+
 	if !p.areValidatorsSetByPrefix() {
 		return nil
 	}
 
-	validators, err := command.GetValidatorsFromPrefixPath(
+	if p.ibftValidators, readErr = getValidatorsFromPrefixPath(
 		p.validatorPrefixPath,
-		p.ibftValidatorType,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to read from prefix: %w", err)
-	}
-
-	if err := p.ibftValidators.Merge(validators); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (p *genesisParams) initIBFTValidatorType() error {
-	var err error
-	if p.ibftValidatorType, err = validators.ParseValidatorType(p.rawIBFTValidatorType); err != nil {
-		return err
+	); readErr != nil {
+		return fmt.Errorf("failed to read from prefix: %w", readErr)
 	}
 
 	return nil
 }
 
 func (p *genesisParams) initValidatorSet() error {
-	p.ibftValidators = validators.NewValidatorSetFromType(p.ibftValidatorType)
-
 	// Set validator set
 	// Priority goes to cli command over prefix path
 	if err := p.setValidatorSetFromPrefixPath(); err != nil {
 		return err
 	}
 
-	if err := p.setValidatorSetFromCli(); err != nil {
-		return err
-	}
-
-	// Validate if validator number exceeds max number
-	if ok := p.isValidatorNumberValid(); !ok {
-		return command.ErrValidatorNumberExceedsMax
-	}
+	p.setValidatorSetFromCli()
 
 	return nil
-}
-
-func (p *genesisParams) isValidatorNumberValid() bool {
-	return p.ibftValidators == nil || uint64(p.ibftValidators.Len()) <= p.maxNumValidators
 }
 
 func (p *genesisParams) initIBFTExtraData() {
@@ -222,22 +184,13 @@ func (p *genesisParams) initIBFTExtraData() {
 		return
 	}
 
-	var committedSeal signer.Seals
-
-	switch p.ibftValidatorType {
-	case validators.ECDSAValidatorType:
-		committedSeal = new(signer.SerializedSeal)
-	case validators.BLSValidatorType:
-		committedSeal = new(signer.AggregatedSeal)
+	ibftExtra := &ibft.IstanbulExtra{
+		Validators:    p.ibftValidators,
+		Seal:          []byte{},
+		CommittedSeal: [][]byte{},
 	}
 
-	ibftExtra := &signer.IstanbulExtra{
-		Validators:     p.ibftValidators,
-		ProposerSeal:   []byte{},
-		CommittedSeals: committedSeal,
-	}
-
-	p.extraData = make([]byte, signer.IstanbulExtraVanity)
+	p.extraData = make([]byte, ibft.IstanbulExtraVanity)
 	p.extraData = ibftExtra.MarshalRLPTo(p.extraData)
 }
 
@@ -251,20 +204,19 @@ func (p *genesisParams) initConsensusEngineConfig() {
 	}
 
 	if p.isPos {
-		p.initIBFTEngineMap(fork.PoS)
+		p.initIBFTEngineMap(ibft.PoS)
 
 		return
 	}
 
-	p.initIBFTEngineMap(fork.PoA)
+	p.initIBFTEngineMap(ibft.PoA)
 }
 
-func (p *genesisParams) initIBFTEngineMap(ibftType fork.IBFTType) {
+func (p *genesisParams) initIBFTEngineMap(mechanism ibft.MechanismType) {
 	p.consensusEngineConfig = map[string]interface{}{
 		string(server.IBFTConsensus): map[string]interface{}{
-			fork.KeyType:          ibftType,
-			fork.KeyValidatorType: p.ibftValidatorType,
-			ibft.KeyEpochSize:     p.epochSize,
+			"type":      mechanism,
+			"epochSize": p.epochSize,
 		},
 	}
 }
@@ -302,14 +254,31 @@ func (p *genesisParams) initGenesisConfig() error {
 		Bootnodes: p.bootnodes,
 	}
 
-	// Predeploy staking smart contract if needed
-	if p.shouldPredeployStakingSC() {
-		stakingAccount, err := p.predeployStakingSC()
+	// Predeploy ValidatorSet smart contract if needed
+	if p.shouldPredeployValidatorSetSC() {
+		account, err := p.predeployValidatorSetSC()
 		if err != nil {
 			return err
 		}
 
-		chainConfig.Genesis.Alloc[staking.AddrStakingContract] = stakingAccount
+		chainConfig.Genesis.Alloc[systemcontracts.AddrValidatorSetContract] = account
+	}
+
+	// Predeploy bridge contract
+	if bridgeAccount, err := p.predeployBridgeSC(); err != nil {
+		return err
+	} else {
+		chainConfig.Genesis.Alloc[systemcontracts.AddrBridgeContract] = bridgeAccount
+	}
+
+	// Predeploy vault contract if needed
+	if p.shouldPredeployValidatorSetSC() {
+		vaultAccount, err := p.predeployVaultSC()
+		if err != nil {
+			return err
+		}
+
+		chainConfig.Genesis.Alloc[systemcontracts.AddrVaultContract] = vaultAccount
 	}
 
 	// Premine accounts
@@ -322,28 +291,52 @@ func (p *genesisParams) initGenesisConfig() error {
 	return nil
 }
 
-func (p *genesisParams) shouldPredeployStakingSC() bool {
+func (p *genesisParams) shouldPredeployValidatorSetSC() bool {
 	// If the consensus selected is IBFT / Dev and the mechanism is Proof of Stake,
-	// deploy the Staking SC
+	// deploy the ValidatorSet SC
 	return p.isPos && (p.consensus == server.IBFTConsensus || p.consensus == server.DevConsensus)
 }
 
-func (p *genesisParams) predeployStakingSC() (*chain.GenesisAccount, error) {
-	stakingAccount, predeployErr := stakingHelper.PredeployStakingSC(
-		p.ibftValidators,
-		stakingHelper.PredeployParams{
-			MinValidatorCount: p.minNumValidators,
-			MaxValidatorCount: p.maxNumValidators,
+func (p *genesisParams) predeployValidatorSetSC() (*chain.GenesisAccount, error) {
+	account, predeployErr := validatorsetHelper.PredeploySC(
+		validatorsetHelper.PredeployParams{
+			Owner:      types.StringToAddress(p.validatorsetOwner),
+			Validators: p.ibftValidators,
 		})
 	if predeployErr != nil {
 		return nil, predeployErr
 	}
 
-	return stakingAccount, nil
+	return account, nil
+}
+
+func (p *genesisParams) predeployVaultSC() (*chain.GenesisAccount, error) {
+	return vaultHelper.PredeployVaultSC(
+		vaultHelper.PredeployParams{
+			Owner: types.StringToAddress(p.vaultOwner),
+		},
+	)
 }
 
 func (p *genesisParams) getResult() command.CommandResult {
 	return &GenesisResult{
 		Message: fmt.Sprintf("Genesis written to %s\n", p.genesisPath),
 	}
+}
+
+func (p *genesisParams) initBridgeSigners() {
+	p.bridgeSigners = make([]types.Address, 0, len(p.bridgeSignersRaw))
+
+	for _, signer := range p.bridgeSignersRaw {
+		p.bridgeSigners = append(p.bridgeSigners, types.StringToAddress(signer))
+	}
+}
+
+func (p *genesisParams) predeployBridgeSC() (*chain.GenesisAccount, error) {
+	return bridgeHelper.PredeployBridgeSC(
+		bridgeHelper.PredeployParams{
+			Owner:   types.StringToAddress(p.bridgeOwner),
+			Signers: p.bridgeSigners,
+		},
+	)
 }

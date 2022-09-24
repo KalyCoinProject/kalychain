@@ -105,7 +105,7 @@ func setFlags(cmd *cobra.Command) {
 		&params.detailed,
 		detailedFlag,
 		false,
-		"flag indicating if the error logs should be shown",
+		"flag indicating if the error logs should be shown. (default: false)",
 	)
 
 	cmd.Flags().Uint64Var(
@@ -141,6 +141,12 @@ func runPreRun(cmd *cobra.Command, _ []string) error {
 
 	if _, err := helper.ParseJSONRPCAddress(
 		helper.GetJSONRPCAddress(cmd),
+	); err != nil {
+		return err
+	}
+
+	if _, err := helper.ParseGraphQLAddress(
+		helper.GetGraphQLAddress(cmd),
 	); err != nil {
 		return err
 	}

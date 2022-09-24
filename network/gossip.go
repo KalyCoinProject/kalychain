@@ -5,7 +5,6 @@ import (
 	"reflect"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/libp2p/go-libp2p-core/peer"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"google.golang.org/protobuf/proto"
 )
@@ -43,7 +42,7 @@ func (t *Topic) Publish(obj proto.Message) error {
 	return t.topic.Publish(context.Background(), data)
 }
 
-func (t *Topic) Subscribe(handler func(obj interface{}, from peer.ID)) error {
+func (t *Topic) Subscribe(handler func(obj interface{})) error {
 	sub, err := t.topic.Subscribe(pubsub.WithBufferSize(subscribeOutputBufferSize))
 	if err != nil {
 		return err
@@ -54,7 +53,7 @@ func (t *Topic) Subscribe(handler func(obj interface{}, from peer.ID)) error {
 	return nil
 }
 
-func (t *Topic) readLoop(sub *pubsub.Subscription, handler func(obj interface{}, from peer.ID)) {
+func (t *Topic) readLoop(sub *pubsub.Subscription, handler func(obj interface{})) {
 	ctx, cancelFn := context.WithCancel(context.Background())
 
 	go func() {
@@ -78,7 +77,7 @@ func (t *Topic) readLoop(sub *pubsub.Subscription, handler func(obj interface{},
 				return
 			}
 
-			handler(obj, msg.GetFrom())
+			handler(obj)
 		}()
 	}
 }

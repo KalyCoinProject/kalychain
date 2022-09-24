@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/umbracle/fastrlp"
+	"github.com/KalyCoinProject/fastrlp"
 )
 
 type RLPUnmarshaler interface {
@@ -45,7 +45,8 @@ func (b *Block) UnmarshalRLPFrom(p *fastrlp.Parser, v *fastrlp.Value) error {
 	}
 
 	if len(elems) < 3 {
-		return fmt.Errorf("incorrect number of elements to decode block, expected 3 but found %d", len(elems))
+		return fmt.Errorf("incorrect number of elements to decode block, expected at least 3 but found %d",
+			len(elems))
 	}
 
 	// header
@@ -98,7 +99,8 @@ func (h *Header) UnmarshalRLPFrom(p *fastrlp.Parser, v *fastrlp.Value) error {
 	}
 
 	if len(elems) < 15 {
-		return fmt.Errorf("incorrect number of elements to decode header, expected 15 but found %d", len(elems))
+		return fmt.Errorf("incorrect number of elements to decode header, expected at least 15 but found %d",
+			len(elems))
 	}
 
 	// parentHash
@@ -110,7 +112,7 @@ func (h *Header) UnmarshalRLPFrom(p *fastrlp.Parser, v *fastrlp.Value) error {
 		return err
 	}
 	// miner
-	if h.Miner, err = elems[2].GetBytes(h.Miner[:]); err != nil {
+	if err = elems[2].GetAddr(h.Miner[:]); err != nil {
 		return err
 	}
 	// stateroot
@@ -205,7 +207,8 @@ func (r *Receipt) UnmarshalRLPFrom(p *fastrlp.Parser, v *fastrlp.Value) error {
 	}
 
 	if len(elems) < 4 {
-		return fmt.Errorf("incorrect number of elements to decode receipt, expected 4 but found %d", len(elems))
+		return fmt.Errorf("incorrect number of elements to decode receipt, expected at least 4 but found %d",
+			len(elems))
 	}
 
 	// root or status
@@ -259,7 +262,8 @@ func (l *Log) UnmarshalRLPFrom(p *fastrlp.Parser, v *fastrlp.Value) error {
 	}
 
 	if len(elems) < 3 {
-		return fmt.Errorf("incorrect number of elements to decode log, expected 3 but found %d", len(elems))
+		return fmt.Errorf("incorrect number of elements to decode log, expected at least 3 but found %d",
+			len(elems))
 	}
 
 	// address
@@ -292,7 +296,7 @@ func (t *Transaction) UnmarshalRLP(input []byte) error {
 	return UnmarshalRlp(t.UnmarshalRLPFrom, input)
 }
 
-// UnmarshalRLPFrom unmarshals a Transaction in RLP format
+// UnmarshalRLP unmarshals a Transaction in RLP format
 func (t *Transaction) UnmarshalRLPFrom(p *fastrlp.Parser, v *fastrlp.Value) error {
 	elems, err := v.GetElems()
 	if err != nil {
@@ -300,7 +304,8 @@ func (t *Transaction) UnmarshalRLPFrom(p *fastrlp.Parser, v *fastrlp.Value) erro
 	}
 
 	if len(elems) < 9 {
-		return fmt.Errorf("incorrect number of elements to decode transaction, expected 9 but found %d", len(elems))
+		return fmt.Errorf("incorrect number of elements to decode transaction, expected at least 9 but found %d",
+			len(elems))
 	}
 
 	p.Hash(t.Hash[:0], v)

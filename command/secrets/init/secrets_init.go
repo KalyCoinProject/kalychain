@@ -8,7 +8,7 @@ import (
 func GetCommand() *cobra.Command {
 	secretsInitCmd := &cobra.Command{
 		Use: "init",
-		Short: "Initializes private keys for the Kaly Chain (Validator + Networking) " +
+		Short: "Initializes private keys for the KalyCoinProject Kalychain (Validator + Networking) " +
 			"to the specified Secrets Manager",
 		PreRunE: runPreRun,
 		Run:     runCommand,
@@ -24,7 +24,7 @@ func setFlags(cmd *cobra.Command) {
 		&params.dataDir,
 		dataDirFlag,
 		"",
-		"the directory for the Kaly Chain data if the local FS is used",
+		"the directory for the KalyCoinProject Kalychain data if the local FS is used",
 	)
 
 	cmd.Flags().StringVar(
@@ -33,29 +33,6 @@ func setFlags(cmd *cobra.Command) {
 		"",
 		"the path to the SecretsManager config file, "+
 			"if omitted, the local FS secrets manager is used",
-	)
-
-	cmd.MarkFlagsMutuallyExclusive(dataDirFlag, configFlag)
-
-	cmd.Flags().BoolVar(
-		&params.generatesECDSA,
-		ecdsaFlag,
-		true,
-		"the flag indicating whether new ECDSA key is created",
-	)
-
-	cmd.Flags().BoolVar(
-		&params.generatesNetwork,
-		networkFlag,
-		true,
-		"the flag indicating whether new Network key is created",
-	)
-
-	cmd.Flags().BoolVar(
-		&params.generatesBLS,
-		blsFlag,
-		true,
-		"the flag indicating whether new BLS key is created",
 	)
 }
 
@@ -73,12 +50,5 @@ func runCommand(cmd *cobra.Command, _ []string) {
 		return
 	}
 
-	res, err := params.getResult()
-	if err != nil {
-		outputter.SetError(err)
-
-		return
-	}
-
-	outputter.SetCommandResult(res)
+	outputter.SetCommandResult(params.getResult())
 }

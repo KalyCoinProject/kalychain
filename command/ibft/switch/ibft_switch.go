@@ -5,7 +5,6 @@ import (
 
 	"github.com/KalyCoinProject/kalychain/command"
 	"github.com/KalyCoinProject/kalychain/command/helper"
-	"github.com/KalyCoinProject/kalychain/validators"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +27,10 @@ func setFlags(cmd *cobra.Command) {
 		&params.genesisPath,
 		chainFlag,
 		fmt.Sprintf("./%s", command.DefaultGenesisFileName),
-		"the genesis file to update",
+		fmt.Sprintf(
+			"the genesis file to update. Default: ./%s",
+			command.DefaultGenesisFileName,
+		),
 	)
 
 	cmd.Flags().StringVar(
@@ -38,68 +40,19 @@ func setFlags(cmd *cobra.Command) {
 		"the new IBFT type [PoA, PoS]",
 	)
 
-	{
-		// switch block height
-		cmd.Flags().StringVar(
-			&params.deploymentRaw,
-			deploymentFlag,
-			"",
-			"the height to deploy the contract in PoS",
-		)
-
-		cmd.Flags().StringVar(
-			&params.fromRaw,
-			fromFlag,
-			"",
-			"the height to switch the new type",
-		)
-	}
-
-	// Validator Configurations
 	cmd.Flags().StringVar(
-		&params.rawIBFTValidatorType,
-		command.IBFTValidatorTypeFlag,
-		string(validators.BLSValidatorType),
-		"the type of validators in IBFT",
+		&params.deploymentRaw,
+		deploymentFlag,
+		"",
+		"the height to deploy the contract in PoS",
 	)
 
-	{
-		// PoA Configuration
-		cmd.Flags().StringVar(
-			&params.ibftValidatorPrefixPath,
-			command.IBFTValidatorPrefixFlag,
-			"",
-			"prefix path for validator folder directory. "+
-				"Needs to be present if ibft-validator is omitted",
-		)
-
-		cmd.Flags().StringArrayVar(
-			&params.ibftValidatorsRaw,
-			command.IBFTValidatorFlag,
-			[]string{},
-			"addresses to be used as IBFT validators, can be used multiple times. "+
-				"Needs to be present if ibft-validators-prefix-path is omitted",
-		)
-
-		cmd.MarkFlagsMutuallyExclusive(command.IBFTValidatorPrefixFlag, command.IBFTValidatorFlag)
-	}
-
-	{
-		// PoS Configuration
-		cmd.Flags().StringVar(
-			&params.minValidatorCountRaw,
-			minValidatorCount,
-			"",
-			"the minimum number of validators in the validator set for PoS",
-		)
-
-		cmd.Flags().StringVar(
-			&params.maxValidatorCountRaw,
-			maxValidatorCount,
-			"",
-			"the maximum number of validators in the validator set for PoS",
-		)
-	}
+	cmd.Flags().StringVar(
+		&params.fromRaw,
+		fromFlag,
+		"",
+		"the height to switch the new type",
+	)
 }
 
 func runPreRun(_ *cobra.Command, _ []string) error {

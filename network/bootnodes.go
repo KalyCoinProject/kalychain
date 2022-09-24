@@ -1,9 +1,8 @@
 package network
 
 import (
-	"sync/atomic"
-
 	"github.com/libp2p/go-libp2p-core/peer"
+	"sync/atomic"
 )
 
 type bootnodesWrapper struct {

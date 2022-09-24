@@ -4,11 +4,10 @@ import (
 	"crypto/sha256"
 	"math/big"
 
-	"golang.org/x/crypto/ripemd160" //nolint:staticcheck
-
 	"github.com/KalyCoinProject/kalychain/chain"
 	"github.com/KalyCoinProject/kalychain/crypto"
 	"github.com/KalyCoinProject/kalychain/helper/keccak"
+	"golang.org/x/crypto/ripemd160"
 )
 
 type ecrecover struct {

@@ -14,7 +14,7 @@ import (
 func GetCommand() *cobra.Command {
 	statusCmd := &cobra.Command{
 		Use:   "status",
-		Short: "Returns the status of the Kaly Chain client",
+		Short: "Returns the status of the KalyCoinProject Kalychain client",
 		Args:  cobra.NoArgs,
 		Run:   runCommand,
 	}

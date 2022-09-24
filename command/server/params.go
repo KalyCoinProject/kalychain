@@ -4,12 +4,12 @@ import (
 	"errors"
 	"net"
 
+	"github.com/hashicorp/go-hclog"
+
 	"github.com/KalyCoinProject/kalychain/chain"
-	"github.com/KalyCoinProject/kalychain/command/server/config"
 	"github.com/KalyCoinProject/kalychain/network"
 	"github.com/KalyCoinProject/kalychain/secrets"
 	"github.com/KalyCoinProject/kalychain/server"
-	"github.com/hashicorp/go-hclog"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -17,6 +17,12 @@ const (
 	configFlag                   = "config"
 	genesisPathFlag              = "chain"
 	dataDirFlag                  = "data-dir"
+	leveldbCacheFlag             = "leveldb.cache-size"
+	leveldbHandlesFlag           = "leveldb.handles"
+	leveldbBloomKeyBitsFlag      = "leveldb.bloom-bits"
+	leveldbTableSizeFlag         = "leveldb.table-size"
+	leveldbTotalTableSizeFlag    = "leveldb.total-table-size"
+	leveldbNoSyncFlag            = "leveldb.nosync"
 	libp2pAddressFlag            = "libp2p"
 	prometheusAddressFlag        = "prometheus"
 	natFlag                      = "nat"
@@ -26,10 +32,9 @@ const (
 	maxInboundPeersFlag          = "max-inbound-peers"
 	maxOutboundPeersFlag         = "max-outbound-peers"
 	priceLimitFlag               = "price-limit"
-	jsonRPCBatchRequestLimitFlag = "json-rpc-batch-request-limit"
-	jsonRPCBlockRangeLimitFlag   = "json-rpc-block-range-limit"
 	maxSlotsFlag                 = "max-slots"
-	maxEnqueuedFlag              = "max-enqueued"
+	pruneTickSecondsFlag         = "prune-tick-seconds"
+	promoteOutdateSecondsFlag    = "promote-outdate-seconds"
 	blockGasTargetFlag           = "block-gas-target"
 	secretsConfigFlag            = "secrets-config"
 	restoreFlag                  = "restore"
@@ -37,13 +42,12 @@ const (
 	devIntervalFlag              = "dev-interval"
 	devFlag                      = "dev"
 	corsOriginFlag               = "access-control-allow-origins"
+	daemonFlag                   = "daemon"
 	logFileLocationFlag          = "log-to"
-)
-
-// Flags that are deprecated, but need to be preserved for
-// backwards compatibility with existing scripts
-const (
-	ibftBaseTimeoutFlagLEGACY = "ibft-base-timeout"
+	enableGraphQLFlag            = "enable-graphql"
+	jsonRPCBatchRequestLimitFlag = "json-rpc-batch-request-limit"
+	jsonRPCBlockRangeLimitFlag   = "json-rpc-block-range-limit"
+	enableWSFlag                 = "enable-ws"
 )
 
 const (
@@ -52,41 +56,63 @@ const (
 
 var (
 	params = &serverParams{
-		rawConfig: &config.Config{
-			Telemetry: &config.Telemetry{},
-			Network:   &config.Network{},
-			TxPool:    &config.TxPool{},
+		rawConfig: &Config{
+			Telemetry: &Telemetry{},
+			Network:   &Network{},
+			TxPool:    &TxPool{},
 		},
 	}
 )
 
 var (
-	errInvalidNATAddress = errors.New("could not parse NAT IP address")
+	errInvalidPeerParams = errors.New("both max-peers and max-inbound/outbound flags are set")
+	errInvalidNATAddress = errors.New("could not parse NAT address (ip:port)")
 )
 
 type serverParams struct {
-	rawConfig  *config.Config
+	rawConfig  *Config
 	configPath string
+
+	leveldbCacheSize      int
+	leveldbHandles        int
+	leveldbBloomKeyBits   int
+	leveldbTableSize      int
+	leveldbTotalTableSize int
+	leveldbNoSync         bool
 
 	libp2pAddress     *net.TCPAddr
 	prometheusAddress *net.TCPAddr
-	natAddress        net.IP
+	natAddress        *net.TCPAddr
 	dnsAddress        multiaddr.Multiaddr
 	grpcAddress       *net.TCPAddr
 	jsonRPCAddress    *net.TCPAddr
+	graphqlAddress    *net.TCPAddr
 
 	blockGasTarget uint64
 	devInterval    uint64
 	isDevMode      bool
+	isDaemon       bool
+	validatorKey   string
 
 	corsAllowedOrigins []string
-
-	ibftBaseTimeoutLegacy uint64
 
 	genesisConfig *chain.Chain
 	secretsConfig *secrets.SecretsManagerConfig
 
 	logFileLocation string
+}
+
+func (p *serverParams) validateFlags() error {
+	// Validate the max peers configuration
+	if p.isMaxPeersSet() && p.isPeerRangeSet() {
+		return errInvalidPeerParams
+	}
+
+	return nil
+}
+
+func (p *serverParams) isLogFileLocationSet() bool {
+	return p.rawConfig.LogFilePath != ""
 }
 
 func (p *serverParams) isMaxPeersSet() bool {
@@ -114,10 +140,6 @@ func (p *serverParams) isDNSAddressSet() bool {
 	return p.rawConfig.Network.DNSAddr != ""
 }
 
-func (p *serverParams) isLogFileLocationSet() bool {
-	return p.rawConfig.LogFilePath != ""
-}
-
 func (p *serverParams) isDevConsensus() bool {
 	return server.ConsensusType(p.genesisConfig.Params.GetEngine()) == server.DevConsensus
 }
@@ -138,13 +160,31 @@ func (p *serverParams) setRawJSONRPCAddress(jsonRPCAddress string) {
 	p.rawConfig.JSONRPCAddr = jsonRPCAddress
 }
 
+func (p *serverParams) setRawGraphQLAddress(graphqlAddress string) {
+	p.rawConfig.GraphQLAddr = graphqlAddress
+}
+
 func (p *serverParams) generateConfig() *server.Config {
+	chainCfg := p.genesisConfig
+
+	// Replace block gas limit
+	if p.blockGasTarget > 0 {
+		chainCfg.Params.BlockGasTarget = p.blockGasTarget
+	}
+
 	return &server.Config{
-		Chain: p.genesisConfig,
+		Chain: chainCfg,
 		JSONRPC: &server.JSONRPC{
 			JSONRPCAddr:              p.jsonRPCAddress,
 			AccessControlAllowOrigin: p.corsAllowedOrigins,
 			BatchLengthLimit:         p.rawConfig.JSONRPCBatchRequestLimit,
+			BlockRangeLimit:          p.rawConfig.JSONRPCBlockRangeLimit,
+			EnableWS:                 p.rawConfig.EnableWS,
+		},
+		EnableGraphQL: p.rawConfig.EnableGraphQL,
+		GraphQL: &server.GraphQL{
+			GraphQLAddr:              p.graphqlAddress,
+			AccessControlAllowOrigin: p.corsAllowedOrigins,
 			BlockRangeLimit:          p.rawConfig.JSONRPCBlockRangeLimit,
 		},
 		GRPCAddr:   p.grpcAddress,
@@ -163,15 +203,26 @@ func (p *serverParams) generateConfig() *server.Config {
 			MaxOutboundPeers: p.rawConfig.Network.MaxOutboundPeers,
 			Chain:            p.genesisConfig,
 		},
-		DataDir:            p.rawConfig.DataDir,
-		Seal:               p.rawConfig.ShouldSeal,
-		PriceLimit:         p.rawConfig.TxPool.PriceLimit,
-		MaxSlots:           p.rawConfig.TxPool.MaxSlots,
-		MaxAccountEnqueued: p.rawConfig.TxPool.MaxAccountEnqueued,
-		SecretsManager:     p.secretsConfig,
-		RestoreFile:        p.getRestoreFilePath(),
-		BlockTime:          p.rawConfig.BlockTime,
-		LogLevel:           hclog.LevelFromString(p.rawConfig.LogLevel),
-		LogFilePath:        p.logFileLocation,
+		DataDir:               p.rawConfig.DataDir,
+		Seal:                  p.rawConfig.ShouldSeal,
+		PriceLimit:            p.rawConfig.TxPool.PriceLimit,
+		MaxSlots:              p.rawConfig.TxPool.MaxSlots,
+		PruneTickSeconds:      p.rawConfig.TxPool.PruneTickSeconds,
+		PromoteOutdateSeconds: p.rawConfig.TxPool.PromoteOutdateSeconds,
+		SecretsManager:        p.secretsConfig,
+		RestoreFile:           p.getRestoreFilePath(),
+		LeveldbOptions: &server.LeveldbOptions{
+			CacheSize:           p.leveldbCacheSize,
+			Handles:             p.leveldbHandles,
+			BloomKeyBits:        p.leveldbBloomKeyBits,
+			CompactionTableSize: p.leveldbTableSize,
+			CompactionTotalSize: p.leveldbTotalTableSize,
+			NoSync:              p.leveldbNoSync,
+		},
+		BlockTime:    p.rawConfig.BlockTime,
+		LogLevel:     hclog.LevelFromString(p.rawConfig.LogLevel),
+		LogFilePath:  p.logFileLocation,
+		Daemon:       p.isDaemon,
+		ValidatorKey: p.validatorKey,
 	}
 }

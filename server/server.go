@@ -13,11 +13,12 @@ import (
 
 	"github.com/KalyCoinProject/kalychain/archive"
 	"github.com/KalyCoinProject/kalychain/blockchain"
+	"github.com/KalyCoinProject/kalychain/blockchain/storage/leveldb"
 	"github.com/KalyCoinProject/kalychain/chain"
 	"github.com/KalyCoinProject/kalychain/consensus"
 	"github.com/KalyCoinProject/kalychain/crypto"
+	"github.com/KalyCoinProject/kalychain/graphql"
 	"github.com/KalyCoinProject/kalychain/helper/common"
-	configHelper "github.com/KalyCoinProject/kalychain/helper/config"
 	"github.com/KalyCoinProject/kalychain/helper/keccak"
 	"github.com/KalyCoinProject/kalychain/helper/progress"
 	"github.com/KalyCoinProject/kalychain/jsonrpc"
@@ -37,7 +38,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-// Server is the central manager of the blockchain client
+// Minimal is the central manager of the blockchain client
 type Server struct {
 	logger       hclog.Logger
 	config       *Config
@@ -55,6 +56,9 @@ type Server struct {
 
 	// jsonrpc stack
 	jsonrpcServer *jsonrpc.JSONRPC
+
+	// graphql stack
+	graphqlServer *graphql.GraphQLService
 
 	// system grpc server
 	grpcServer *grpc.Server
@@ -76,12 +80,17 @@ type Server struct {
 	restoreProgression *progress.ProgressionWrapper
 }
 
+const (
+	loggerDomainName = "kalychain"
+)
+
 var dirPaths = []string{
 	"blockchain",
 	"trie",
 }
 
 // newFileLogger returns logger instance that writes all logs to a specified file.
+//
 // If log file can't be created, it returns an error
 func newFileLogger(config *Config) (hclog.Logger, error) {
 	logFileWriter, err := os.Create(config.LogFilePath)
@@ -90,7 +99,7 @@ func newFileLogger(config *Config) (hclog.Logger, error) {
 	}
 
 	return hclog.New(&hclog.LoggerOptions{
-		Name:   "kalychain",
+		Name:   loggerDomainName,
 		Level:  config.LogLevel,
 		Output: logFileWriter,
 	}), nil
@@ -99,12 +108,13 @@ func newFileLogger(config *Config) (hclog.Logger, error) {
 // newCLILogger returns minimal logger instance that sends all logs to standard output
 func newCLILogger(config *Config) hclog.Logger {
 	return hclog.New(&hclog.LoggerOptions{
-		Name:  "kalychain",
+		Name:  loggerDomainName,
 		Level: config.LogLevel,
 	})
 }
 
 // newLoggerFromConfig creates a new logger which logs to a specified file.
+//
 // If log file is not set it outputs to standard output ( console ).
 // If log file is specified, and it can't be created the server command will error out
 func newLoggerFromConfig(config *Config) (hclog.Logger, error) {
@@ -128,10 +138,13 @@ func NewServer(config *Config) (*Server, error) {
 	}
 
 	m := &Server{
-		logger:             logger,
-		config:             config,
-		chain:              config.Chain,
-		grpcServer:         grpc.NewServer(),
+		logger: logger,
+		config: config,
+		chain:  config.Chain,
+		grpcServer: grpc.NewServer(
+			grpc.MaxRecvMsgSize(common.MaxGrpcMsgSize),
+			grpc.MaxSendMsgSize(common.MaxGrpcMsgSize),
+		),
 		restoreProgression: progress.NewProgressionWrapper(progress.ChainSyncRestore),
 	}
 
@@ -188,8 +201,27 @@ func NewServer(config *Config) (*Server, error) {
 	genesisRoot := m.executor.WriteGenesis(config.Chain.Genesis.Alloc)
 	config.Chain.Genesis.StateRoot = genesisRoot
 
+	// create leveldb storageBuilder
+	leveldbBuilder := leveldb.NewBuilder(
+		logger,
+		filepath.Join(m.config.DataDir, "blockchain"),
+	)
+
+	leveldbBuilder.SetCacheSize(config.LeveldbOptions.CacheSize).
+		SetHandles(config.LeveldbOptions.Handles).
+		SetBloomKeyBits(config.LeveldbOptions.BloomKeyBits).
+		SetCompactionTableSize(config.LeveldbOptions.CompactionTableSize).
+		SetCompactionTotalSize(config.LeveldbOptions.CompactionTotalSize).
+		SetNoSync(config.LeveldbOptions.NoSync)
+
 	// blockchain object
-	m.blockchain, err = blockchain.NewBlockchain(logger, m.config.DataDir, config.Chain, nil, m.executor)
+	m.blockchain, err = blockchain.NewBlockchain(
+		logger,
+		config.Chain,
+		leveldbBuilder,
+		nil,
+		m.executor,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -202,9 +234,9 @@ func NewServer(config *Config) (*Server, error) {
 			Blockchain: m.blockchain,
 		}
 
-		deploymentWhitelist, err := configHelper.GetDeploymentWhitelist(config.Chain)
-		if err != nil {
-			return nil, err
+		blackList := make([]types.Address, len(m.config.Chain.Params.BlackList))
+		for i, a := range m.config.Chain.Params.BlackList {
+			blackList[i] = types.StringToAddress(a)
 		}
 
 		// start transaction pool
@@ -216,11 +248,12 @@ func NewServer(config *Config) (*Server, error) {
 			m.network,
 			m.serverMetrics.txpool,
 			&txpool.Config{
-				Sealing:             m.config.Seal,
-				MaxSlots:            m.config.MaxSlots,
-				PriceLimit:          m.config.PriceLimit,
-				MaxAccountEnqueued:  m.config.MaxAccountEnqueued,
-				DeploymentWhitelist: deploymentWhitelist,
+				Sealing:               m.config.Seal,
+				MaxSlots:              m.config.MaxSlots,
+				PriceLimit:            m.config.PriceLimit,
+				PruneTickSeconds:      m.config.PruneTickSeconds,
+				PromoteOutdateSeconds: m.config.PromoteOutdateSeconds,
+				BlackList:             blackList,
 			},
 		)
 		if err != nil {
@@ -252,17 +285,13 @@ func NewServer(config *Config) (*Server, error) {
 		return nil, err
 	}
 
-	// setup and start grpc server
-	if err := m.setupGRPC(); err != nil {
-		return nil, err
-	}
-
-	if err := m.network.Start(); err != nil {
-		return nil, err
-	}
-
 	// setup and start jsonrpc server
 	if err := m.setupJSONRPC(); err != nil {
+		return nil, err
+	}
+
+	// setup and start graphql server
+	if err := m.setupGraphQL(); err != nil {
 		return nil, err
 	}
 
@@ -273,6 +302,15 @@ func NewServer(config *Config) (*Server, error) {
 
 	// start consensus
 	if err := m.consensus.Start(); err != nil {
+		return nil, err
+	}
+
+	// setup and start grpc server
+	if err := m.setupGRPC(); err != nil {
+		return nil, err
+	}
+
+	if err := m.network.Start(); err != nil {
 		return nil, err
 	}
 
@@ -353,10 +391,16 @@ func (s *Server) setupSecretsManager() error {
 	}
 
 	if secretsManagerType == secrets.Local {
-		// Only the base directory is required for
-		// the local secrets manager
+		// The base directory is required for the local secrets manager
 		secretsManagerParams.Extra = map[string]interface{}{
 			secrets.Path: s.config.DataDir,
+		}
+
+		// When server started as daemon,
+		// ValidatorKey is required for the local secrets manager
+		if s.config.Daemon {
+			secretsManagerParams.DaemonValidatorKey = s.config.ValidatorKey
+			secretsManagerParams.IsDaemon = s.config.Daemon
 		}
 	}
 
@@ -402,16 +446,16 @@ func (s *Server) setupConsensus() error {
 	}
 
 	consensus, err := engine(
-		&consensus.Params{
+		&consensus.ConsensusParams{
 			Context:        context.Background(),
 			Seal:           s.config.Seal,
 			Config:         config,
-			TxPool:         s.txpool,
+			Txpool:         s.txpool,
 			Network:        s.network,
 			Blockchain:     s.blockchain,
 			Executor:       s.executor,
 			Grpc:           s.grpcServer,
-			Logger:         s.logger,
+			Logger:         s.logger.Named("consensus"),
 			Metrics:        s.serverMetrics.consensus,
 			SecretsManager: s.secretsManager,
 			BlockTime:      s.config.BlockTime,
@@ -560,9 +604,10 @@ func (s *Server) setupJSONRPC() error {
 		Addr:                     s.config.JSONRPC.JSONRPCAddr,
 		ChainID:                  uint64(s.config.Chain.Params.ChainID),
 		AccessControlAllowOrigin: s.config.JSONRPC.AccessControlAllowOrigin,
-		PriceLimit:               s.config.PriceLimit,
 		BatchLengthLimit:         s.config.JSONRPC.BatchLengthLimit,
 		BlockRangeLimit:          s.config.JSONRPC.BlockRangeLimit,
+		EnableWS:                 s.config.JSONRPC.EnableWS,
+		PriceLimit:               s.config.PriceLimit,
 	}
 
 	srv, err := jsonrpc.NewJSONRPC(s.logger, conf)
@@ -571,6 +616,40 @@ func (s *Server) setupJSONRPC() error {
 	}
 
 	s.jsonrpcServer = srv
+
+	return nil
+}
+
+// setupGraphQL sets up the graphql server, using the set configuration
+func (s *Server) setupGraphQL() error {
+	if !s.config.EnableGraphQL {
+		return nil
+	}
+
+	hub := &jsonRPCHub{
+		state:              s.state,
+		restoreProgression: s.restoreProgression,
+		Blockchain:         s.blockchain,
+		TxPool:             s.txpool,
+		Executor:           s.executor,
+		Consensus:          s.consensus,
+		Server:             s.network,
+	}
+
+	conf := &graphql.Config{
+		Store:                    hub,
+		Addr:                     s.config.GraphQL.GraphQLAddr,
+		ChainID:                  uint64(s.config.Chain.Params.ChainID),
+		AccessControlAllowOrigin: s.config.GraphQL.AccessControlAllowOrigin,
+		BlockRangeLimit:          s.config.GraphQL.BlockRangeLimit,
+	}
+
+	srv, err := graphql.NewGraphQLService(s.logger, conf)
+	if err != nil {
+		return err
+	}
+
+	s.graphqlServer = srv
 
 	return nil
 }
@@ -607,9 +686,9 @@ func (s *Server) JoinPeer(rawPeerMultiaddr string) error {
 
 // Close closes the Minimal server (blockchain, networking, consensus)
 func (s *Server) Close() {
-	// Close the blockchain layer
-	if err := s.blockchain.Close(); err != nil {
-		s.logger.Error("failed to close blockchain", "err", err.Error())
+	// Close the consensus layer
+	if err := s.consensus.Close(); err != nil {
+		s.logger.Error("failed to close consensus", "err", err.Error())
 	}
 
 	// Close the networking layer
@@ -617,9 +696,12 @@ func (s *Server) Close() {
 		s.logger.Error("failed to close networking", "err", err.Error())
 	}
 
-	// Close the consensus layer
-	if err := s.consensus.Close(); err != nil {
-		s.logger.Error("failed to close consensus", "err", err.Error())
+	// close the txpool's main loop
+	s.txpool.Close()
+
+	// Close the blockchain layer
+	if err := s.blockchain.Close(); err != nil {
+		s.logger.Error("failed to close blockchain", "err", err.Error())
 	}
 
 	// Close the state storage
@@ -632,15 +714,28 @@ func (s *Server) Close() {
 			s.logger.Error("Prometheus server shutdown error", err)
 		}
 	}
-
-	// close the txpool's main loop
-	s.txpool.Close()
 }
 
-// Entry is a consensus configuration entry
+// Entry is a backend configuration entry
 type Entry struct {
 	Enabled bool
 	Config  map[string]interface{}
+}
+
+// SetupDataDir sets up the kalychain data directory and sub-folders
+func SetupDataDir(dataDir string, paths []string) error {
+	if err := createDir(dataDir); err != nil {
+		return fmt.Errorf("failed to create data dir: (%s): %w", dataDir, err)
+	}
+
+	for _, path := range paths {
+		path := filepath.Join(dataDir, path)
+		if err := createDir(path); err != nil {
+			return fmt.Errorf("failed to create path: (%s): %w", path, err)
+		}
+	}
+
+	return nil
 }
 
 func (s *Server) startPrometheusServer(listenAddr *net.TCPAddr) *http.Server {
@@ -652,7 +747,7 @@ func (s *Server) startPrometheusServer(listenAddr *net.TCPAddr) *http.Server {
 				promhttp.HandlerOpts{},
 			),
 		),
-		ReadHeaderTimeout: 60 * time.Second,
+		ReadHeaderTimeout: time.Minute,
 	}
 
 	go func() {
@@ -664,4 +759,20 @@ func (s *Server) startPrometheusServer(listenAddr *net.TCPAddr) *http.Server {
 	}()
 
 	return srv
+}
+
+// createDir creates a file system directory if it doesn't exist
+func createDir(path string) error {
+	_, err := os.Stat(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	if os.IsNotExist(err) {
+		if err := os.MkdirAll(path, os.ModePerm); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

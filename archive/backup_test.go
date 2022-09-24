@@ -91,8 +91,6 @@ func (m *systemClientMock) BlockByNumber(
 }
 
 func Test_determineTo(t *testing.T) {
-	t.Parallel()
-
 	toPtr := func(x uint64) *uint64 {
 		return &x
 	}
@@ -156,10 +154,7 @@ func Test_determineTo(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			resTo, resToHash, err := determineTo(context.Background(), tt.systemClientMock, tt.targetTo)
 			assert.Equal(t, tt.err, err)
 			if tt.err == nil {
@@ -259,8 +254,8 @@ func Test_processExportStream(t *testing.T) {
 				return
 			}
 
-			assert.Equal(t, tt.from, *from)
-			assert.Equal(t, tt.to, *to)
+			assert.Equal(t, tt.from, from)
+			assert.Equal(t, tt.to, to)
 
 			// create expected data
 			expectedData := make([]byte, 0)

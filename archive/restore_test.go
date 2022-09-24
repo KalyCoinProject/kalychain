@@ -2,7 +2,6 @@ package archive
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/KalyCoinProject/kalychain/blockchain"
 	"github.com/KalyCoinProject/kalychain/helper/progress"
+	"github.com/KalyCoinProject/kalychain/protocol"
 	"github.com/KalyCoinProject/kalychain/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -49,7 +49,7 @@ func (m *mockChain) GetHashByNumber(num uint64) types.Hash {
 	return b.Hash()
 }
 
-func (m *mockChain) WriteBlock(block *types.Block, _ string) error {
+func (m *mockChain) WriteBlock(block *types.Block) error {
 	m.blocks = append(m.blocks, block)
 
 	return nil
@@ -60,7 +60,7 @@ func (m *mockChain) VerifyFinalizedBlock(block *types.Block) error {
 }
 
 func (m *mockChain) SubscribeEvents() blockchain.Subscription {
-	return blockchain.NewMockSubscription()
+	return protocol.NewMockSubscription()
 }
 
 func getLatestBlockFromMockChain(m *mockChain) *types.Block {
@@ -206,13 +206,6 @@ func Test_parseBlock(t *testing.T) {
 			blockstream: newBlockStream(bytes.NewBuffer(blocks[0].MarshalRLP())),
 			block:       blocks[0],
 			err:         nil,
-		},
-		{
-			name:        "should return error",
-			blockstream: newBlockStream(bytes.NewBuffer((&Metadata{}).MarshalRLP())),
-			block:       nil,
-			// should fail by wrong format
-			err: errors.New("incorrect number of elements to decode block, expected 3 but found 2"),
 		},
 	}
 

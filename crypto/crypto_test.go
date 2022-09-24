@@ -15,13 +15,13 @@ import (
 
 func TestKeyEncoding(t *testing.T) {
 	for i := 0; i < 10; i++ {
-		priv, _ := GenerateECDSAKey()
+		priv, _ := GenerateKey()
 
 		// marshall private key
-		buf, err := MarshalECDSAPrivateKey(priv)
+		buf, err := MarshalPrivateKey(priv)
 		assert.NoError(t, err)
 
-		priv0, err := ParseECDSAPrivateKey(buf)
+		priv0, err := ParsePrivateKey(buf)
 		assert.NoError(t, err)
 
 		assert.Equal(t, priv, priv0)
@@ -37,8 +37,6 @@ func TestKeyEncoding(t *testing.T) {
 }
 
 func TestCreate2(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		address  string
 		salt     string
@@ -90,15 +88,11 @@ func TestCreate2(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		c := c
-
 		t.Run("", func(t *testing.T) {
-			t.Parallel()
-
 			address := types.StringToAddress(c.address)
-			initCode := hex.MustDecodeHex(c.initCode)
+			initCode, _ := hex.DecodeHex(c.initCode)
 
-			saltRaw := hex.MustDecodeHex(c.salt)
+			saltRaw, _ := hex.DecodeHex(c.salt)
 			if len(saltRaw) != 32 {
 				t.Fatal("Salt length must be 32 bytes")
 			}
@@ -163,8 +157,6 @@ func TestValidateSignatureValues(t *testing.T) {
 }
 
 func TestPrivateKeyRead(t *testing.T) {
-	t.Parallel()
-
 	// Write private keys to disk, check if read is ok
 	testTable := []struct {
 		name               string
@@ -200,11 +192,8 @@ func TestPrivateKeyRead(t *testing.T) {
 	}
 
 	for _, testCase := range testTable {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-
-			privateKey, err := BytesToECDSAPrivateKey([]byte(testCase.privateKeyHex))
+			privateKey, err := BytesToPrivateKey([]byte(testCase.privateKeyHex))
 			if err != nil && !testCase.shouldFail {
 				t.Fatalf("Unable to parse private key, %v", err)
 			}

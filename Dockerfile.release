@@ -2,7 +2,7 @@ FROM alpine:3.14
 
 RUN set -x \
     && apk add --update --no-cache \
-       ca-certificates \
+    ca-certificates \
     && rm -rf /var/cache/apk/*
 COPY kalychain /usr/local/bin/
 

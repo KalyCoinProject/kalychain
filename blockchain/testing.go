@@ -7,13 +7,11 @@ import (
 	"testing"
 
 	"github.com/KalyCoinProject/kalychain/blockchain/storage"
-
 	"github.com/KalyCoinProject/kalychain/chain"
 	"github.com/KalyCoinProject/kalychain/state"
 	itrie "github.com/KalyCoinProject/kalychain/state/immutable-trie"
-	"github.com/hashicorp/go-hclog"
-
 	"github.com/KalyCoinProject/kalychain/types"
+	"github.com/hashicorp/go-hclog"
 )
 
 var (
@@ -262,14 +260,14 @@ func (m *MockVerifier) GetBlockCreator(header *types.Header) (types.Address, err
 		return m.getBlockCreatorFn(header)
 	}
 
-	return types.BytesToAddress(header.Miner), nil
+	return header.Miner, nil
 }
 
 func (m *MockVerifier) HookGetBlockCreator(fn getBlockCreatorDelegate) {
 	m.getBlockCreatorFn = fn
 }
 
-func (m *MockVerifier) PreCommitState(header *types.Header, txn *state.Transition) error {
+func (m *MockVerifier) PreStateCommit(header *types.Header, txn *state.Transition) error {
 	if m.preStateCommitFn != nil {
 		return m.preStateCommitFn(header, txn)
 	}
@@ -277,12 +275,11 @@ func (m *MockVerifier) PreCommitState(header *types.Header, txn *state.Transitio
 	return nil
 }
 
-func (m *MockVerifier) HookPreCommitState(fn preStateCommitDelegate) {
+func (m *MockVerifier) HookPreStateCommit(fn preStateCommitDelegate) {
 	m.preStateCommitFn = fn
 }
 
 // Executor delegators
-
 type processBlockDelegate func(types.Hash, *types.Block, types.Address) (*state.Transition, error)
 
 type mockExecutor struct {
@@ -299,6 +296,10 @@ func (m *mockExecutor) ProcessBlock(
 	}
 
 	return nil, nil
+}
+
+func (m *mockExecutor) Stop() {
+	// do nothing
 }
 
 func (m *mockExecutor) HookProcessBlock(fn processBlockDelegate) {
@@ -330,7 +331,7 @@ func newBlockChain(config *chain.Chain, executor Executor) (*Blockchain, error) 
 		executor = &mockExecutor{}
 	}
 
-	b, err := NewBlockchain(hclog.NewNullLogger(), "", config, &MockVerifier{}, executor)
+	b, err := NewBlockchain(hclog.NewNullLogger(), config, nil, &MockVerifier{}, executor)
 	if err != nil {
 		return nil, err
 	}

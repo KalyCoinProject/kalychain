@@ -1,9 +1,8 @@
 package network
 
 import (
-	"sync/atomic"
-
 	"github.com/libp2p/go-libp2p-core/network"
+	"sync/atomic"
 )
 
 // ConnectionInfo keeps track of current connection information

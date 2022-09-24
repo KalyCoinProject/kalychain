@@ -1,6 +1,8 @@
 package archive
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -11,29 +13,51 @@ import (
 	"github.com/KalyCoinProject/kalychain/helper/common"
 	"github.com/KalyCoinProject/kalychain/helper/progress"
 	"github.com/KalyCoinProject/kalychain/types"
+	"github.com/klauspost/compress/zstd"
 )
 
-const (
-	restore = "restore"
-)
+var zstdMagic = []byte{0x28, 0xb5, 0x2f, 0xfd} // zstd Magic number
 
 type blockchainInterface interface {
 	SubscribeEvents() blockchain.Subscription
 	Genesis() types.Hash
 	GetBlockByNumber(uint64, bool) (*types.Block, bool)
 	GetHashByNumber(uint64) types.Hash
-	WriteBlock(*types.Block, string) error
+	WriteBlock(*types.Block) error
 	VerifyFinalizedBlock(*types.Block) error
 }
 
 // RestoreChain reads blocks from the archive and write to the chain
 func RestoreChain(chain blockchainInterface, filePath string, progression *progress.ProgressionWrapper) error {
-	fp, err := os.Open(filePath)
+	fp, err := os.OpenFile(filePath, os.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer fp.Close()
+
+	fbuf := bufio.NewReaderSize(fp, 1*1024*1024) // 1MB buffer
+
+	// check whether the file is compressed
+	fileMagic, err := fbuf.Peek(len(zstdMagic))
 	if err != nil {
 		return err
 	}
 
-	blockStream := newBlockStream(fp)
+	var readBuf io.Reader
+
+	if bytes.Equal(fileMagic[:], zstdMagic[:]) {
+		zstdReader, err := zstd.NewReader(fbuf)
+		if err != nil {
+			return err
+		}
+		defer zstdReader.Close()
+
+		readBuf = zstdReader
+	} else {
+		readBuf = fbuf
+	}
+
+	blockStream := newBlockStream(readBuf)
 
 	return importBlocks(chain, blockStream, progression)
 }
@@ -82,7 +106,7 @@ func importBlocks(chain blockchainInterface, blockStream *blockStream, progressi
 			return err
 		}
 
-		if err := chain.WriteBlock(nextBlock, restore); err != nil {
+		if err := chain.WriteBlock(nextBlock); err != nil {
 			return err
 		}
 

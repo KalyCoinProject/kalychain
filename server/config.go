@@ -12,19 +12,24 @@ import (
 
 const DefaultGRPCPort int = 9632
 const DefaultJSONRPCPort int = 8545
+const DefaultGraphQLPort int = 9898
+const DefaultPprofPort int = 6060
 
 // Config is used to parametrize the minimal client
 type Config struct {
 	Chain *chain.Chain
 
-	JSONRPC    *JSONRPC
-	GRPCAddr   *net.TCPAddr
-	LibP2PAddr *net.TCPAddr
+	JSONRPC       *JSONRPC
+	EnableGraphQL bool
+	GraphQL       *GraphQL
+	GRPCAddr      *net.TCPAddr
+	LibP2PAddr    *net.TCPAddr
 
-	PriceLimit         uint64
-	MaxAccountEnqueued uint64
-	MaxSlots           uint64
-	BlockTime          uint64
+	PriceLimit            uint64
+	MaxSlots              uint64
+	BlockTime             uint64
+	PruneTickSeconds      uint64
+	PromoteOutdateSeconds uint64
 
 	Telemetry *Telemetry
 	Network   *network.Config
@@ -32,13 +37,26 @@ type Config struct {
 	DataDir     string
 	RestoreFile *string
 
-	Seal bool
+	LeveldbOptions *LeveldbOptions
 
+	Seal           bool
 	SecretsManager *secrets.SecretsManagerConfig
 
-	LogLevel hclog.Level
-
+	LogLevel    hclog.Level
 	LogFilePath string
+
+	Daemon       bool
+	ValidatorKey string
+}
+
+// LeveldbOptions holds the leveldb options
+type LeveldbOptions struct {
+	CacheSize           int
+	Handles             int
+	BloomKeyBits        int
+	CompactionTableSize int
+	CompactionTotalSize int
+	NoSync              bool
 }
 
 // Telemetry holds the config details for metric services
@@ -51,5 +69,12 @@ type JSONRPC struct {
 	JSONRPCAddr              *net.TCPAddr
 	AccessControlAllowOrigin []string
 	BatchLengthLimit         uint64
+	BlockRangeLimit          uint64
+	EnableWS                 bool
+}
+
+type GraphQL struct {
+	GraphQLAddr              *net.TCPAddr
+	AccessControlAllowOrigin []string
 	BlockRangeLimit          uint64
 }

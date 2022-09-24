@@ -68,10 +68,12 @@ func HandleSignals(
 		close(gracefulCh)
 	}()
 
+	timeoutDelay := time.NewTimer(5 * time.Second)
+
 	select {
 	case <-signalCh:
 		return errors.New("shutdown by signal channel")
-	case <-time.After(5 * time.Second):
+	case <-timeoutDelay.C:
 		return errors.New("shutdown by timeout")
 	case <-gracefulCh:
 		return nil
@@ -140,7 +142,13 @@ func GetIBFTOperatorClientConnection(address string) (
 
 // GetGRPCConnection returns a grpc client connection
 func GetGRPCConnection(address string) (*grpc.ClientConn, error) {
-	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(
+		address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(common.MaxGrpcMsgSize),
+			grpc.MaxCallSendMsgSize(common.MaxGrpcMsgSize)))
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
@@ -161,6 +169,11 @@ func GetGRPCAddress(cmd *cobra.Command) string {
 // GetJSONRPCAddress extracts the set JSON-RPC address
 func GetJSONRPCAddress(cmd *cobra.Command) string {
 	return cmd.Flag(command.JSONRPCFlag).Value.String()
+}
+
+// GetGraphQLAddress extracts the set GraphQL address
+func GetGraphQLAddress(cmd *cobra.Command) string {
+	return cmd.Flag(command.GraphQLAddressFlag).Value.String()
 }
 
 // RegisterJSONOutputFlag registers the --json output setting for all child commands
@@ -210,6 +223,35 @@ func RegisterJSONRPCFlag(cmd *cobra.Command) {
 // ParseJSONRPCAddress parses the passed in JSONRPC address
 func ParseJSONRPCAddress(jsonrpcAddress string) (*url.URL, error) {
 	return url.ParseRequestURI(jsonrpcAddress)
+}
+
+// RegisterGraphQLFlag registers the base GraphQL address flag for all child commands
+func RegisterGraphQLFlag(cmd *cobra.Command) {
+	cmd.PersistentFlags().String(
+		command.GraphQLAddressFlag,
+		fmt.Sprintf("%s:%d", LocalHostBinding, server.DefaultGraphQLPort),
+		"the GraphQL interface",
+	)
+}
+
+// RegisterPprofFlag registers the pprof flags
+func RegisterPprofFlag(cmd *cobra.Command) {
+	cmd.PersistentFlags().Bool(
+		command.PprofFlag,
+		false,
+		"enable the pprof server",
+	)
+
+	cmd.PersistentFlags().String(
+		command.PprofAddressFlag,
+		fmt.Sprintf("%s:%d", LocalHostBinding, server.DefaultPprofPort),
+		"the address and port for the pprof service",
+	)
+}
+
+// ParseGraphQLAddress parses the passed in GraphQL address
+func ParseGraphQLAddress(graphqlAddress string) (*url.URL, error) {
+	return url.ParseRequestURI(graphqlAddress)
 }
 
 // ResolveAddr resolves the passed in TCP address

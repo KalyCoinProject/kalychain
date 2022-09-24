@@ -7,18 +7,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashicorp/go-hclog"
-	"github.com/umbracle/fastrlp"
-
 	"github.com/KalyCoinProject/kalychain/chain"
+	"github.com/KalyCoinProject/kalychain/crypto"
 	"github.com/KalyCoinProject/kalychain/helper/hex"
 	"github.com/KalyCoinProject/kalychain/helper/keccak"
 	"github.com/KalyCoinProject/kalychain/state"
 	"github.com/KalyCoinProject/kalychain/state/runtime"
 	"github.com/KalyCoinProject/kalychain/state/runtime/evm"
 	"github.com/KalyCoinProject/kalychain/types"
-
-	"github.com/KalyCoinProject/kalychain/crypto"
+	"github.com/KalyCoinProject/fastrlp"
+	"github.com/hashicorp/go-hclog"
 )
 
 var mainnetChainConfig = chain.Params{
@@ -139,8 +137,6 @@ func rlpHashLogs(logs []*types.Log) (res types.Hash) {
 }
 
 func TestEVM(t *testing.T) {
-	t.Parallel()
-
 	folders, err := listFolders(vmTests)
 	if err != nil {
 		t.Fatal(err)
@@ -159,10 +155,7 @@ func TestEVM(t *testing.T) {
 		}
 
 		for _, file := range files {
-			file := file
 			t.Run(file, func(t *testing.T) {
-				t.Parallel()
-
 				if !strings.HasSuffix(file, ".json") {
 					return
 				}

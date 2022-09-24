@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -23,15 +24,13 @@ const (
 )
 
 const (
-	defaultNodeName       = ""
+	defaultNodeName       = "kalychain-node"
 	defaultConfigFileName = "./secretsManagerConfig.json"
 	defaultNamespace      = "admin"
 )
 
 var (
-	errUnsupportedType = fmt.Errorf(
-		"unsupported service manager type; only %s, %s, %s and %s are supported for now",
-		secrets.Local, secrets.HashicorpVault, secrets.AWSSSM, secrets.GCPSSM)
+	errUnsupportedType = errors.New("unsupported service manager type")
 )
 
 type generateParams struct {

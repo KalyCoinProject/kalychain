@@ -67,6 +67,8 @@ func (txn *Txn) Snapshot() int {
 	id := len(txn.snapshots)
 	txn.snapshots = append(txn.snapshots, t)
 
+	// fmt.Printf("take snapshot ========> %d\n", id)
+
 	return id
 }
 
@@ -191,6 +193,7 @@ func (txn *Txn) SubBalance(addr types.Address, amount *big.Int) error {
 
 // SetBalance sets the balance
 func (txn *Txn) SetBalance(addr types.Address, balance *big.Int) {
+	//fmt.Printf("SET BALANCE: %s %s\n", addr.String(), balance.String())
 	txn.upsertAccount(addr, true, func(object *StateObject) {
 		object.Account.Balance.SetBytes(balance.Bytes())
 	})
@@ -417,7 +420,10 @@ func (txn *Txn) GetCode(addr types.Address) []byte {
 	}
 
 	code, _ := txn.state.GetCode(types.BytesToHash(object.Account.CodeHash))
-	txn.codeCache.Add(addr, code)
+	if len(code) > 0 {
+		// code might be empty when closed
+		txn.codeCache.Add(addr, code)
+	}
 
 	return code
 }

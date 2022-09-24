@@ -2,7 +2,7 @@ package txpool
 
 import (
 	"context"
-	cryptoRand "crypto/rand"
+	"crypto/rand"
 	"math/big"
 	mathRand "math/rand"
 	"sync"
@@ -42,7 +42,8 @@ func shuffleTxPoolEvents(
 
 	randomEventType := func(supported bool) proto.EventType {
 		for {
-			randNum, _ := cryptoRand.Int(cryptoRand.Reader, big.NewInt(int64(len(supportedTypes))))
+			//nolint:gosec
+			randNum, _ := rand.Int(rand.Reader, big.NewInt(int64(len(supportedTypes))))
 
 			randType := allEvents[randNum.Int64()]
 			if tempSubscription.eventSupported(randType) == supported {
@@ -109,6 +110,8 @@ func TestEventSubscription_ProcessedEvents(t *testing.T) {
 	}
 
 	for _, testCase := range testTable {
+		testCase := testCase
+
 		t.Run(testCase.name, func(t *testing.T) {
 			subscription := &eventSubscription{
 				eventTypes: supportedEvents,
@@ -157,8 +160,6 @@ func TestEventSubscription_ProcessedEvents(t *testing.T) {
 }
 
 func TestEventSubscription_EventSupported(t *testing.T) {
-	t.Parallel()
-
 	supportedEvents := []proto.EventType{
 		proto.EventType_ADDED,
 		proto.EventType_PROMOTED,
@@ -190,10 +191,7 @@ func TestEventSubscription_EventSupported(t *testing.T) {
 	}
 
 	for _, testCase := range testTable {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-
 			for _, eventType := range testCase.events {
 				assert.Equal(t, testCase.supported, subscription.eventSupported(eventType))
 			}

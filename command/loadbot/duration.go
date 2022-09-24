@@ -1,16 +1,16 @@
 package loadbot
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/umbracle/ethgo"
+	cmap "github.com/KalyCoinProject/kalychain/helper/concurrentmap"
+	"github.com/umbracle/go-web3"
 )
 
 type ExecDuration struct {
 	// turnAroundMap maps the transaction hash -> turn around time for passing transactions
-	turnAroundMap     sync.Map
+	turnAroundMap     cmap.ConcurrentMap
 	turnAroundMapSize uint64
 
 	// blockTransactions maps how many transactions went into a block
@@ -89,7 +89,7 @@ func (ed *ExecDuration) calcTurnAroundMetrics() {
 // reportTurnAroundTime reports the turn around time for a transaction
 // for a single loadbot run
 func (ed *ExecDuration) reportTurnAroundTime(
-	txHash ethgo.Hash,
+	txHash web3.Hash,
 	data *metadata,
 ) {
 	ed.turnAroundMap.Store(txHash, data)

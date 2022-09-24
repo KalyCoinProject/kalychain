@@ -56,13 +56,9 @@ func expectBatchJSONResult(data []byte, v interface{}) error {
 }
 
 func TestDispatcher_HandleWebsocketConnection_EthSubscribe(t *testing.T) {
-	t.Parallel()
-
 	t.Run("clients should be able to receive \"newHeads\" event thru eth_subscribe", func(t *testing.T) {
-		t.Parallel()
-
 		store := newMockStore()
-		dispatcher := newDispatcher(hclog.NewNullLogger(), store, 0, 0, 20, 1000)
+		dispatcher := newDispatcher(hclog.NewNullLogger(), store, 0, 0, 0, 0)
 
 		mockConnection := &mockWsConn{
 			msgCh: make(chan []byte, 1),
@@ -86,9 +82,11 @@ func TestDispatcher_HandleWebsocketConnection_EthSubscribe(t *testing.T) {
 			},
 		})
 
+		delayTimer := time.NewTimer(2 * time.Second)
+
 		select {
 		case <-mockConnection.msgCh:
-		case <-time.After(2 * time.Second):
+		case <-delayTimer.C:
 			t.Fatal("\"newHeads\" event not received in 2 seconds")
 		}
 	})
@@ -96,7 +94,7 @@ func TestDispatcher_HandleWebsocketConnection_EthSubscribe(t *testing.T) {
 
 func TestDispatcher_WebsocketConnection_RequestFormats(t *testing.T) {
 	store := newMockStore()
-	dispatcher := newDispatcher(hclog.NewNullLogger(), store, 0, 0, 20, 1000)
+	dispatcher := newDispatcher(hclog.NewNullLogger(), store, 0, 0, 0, 0)
 
 	mockConnection := &mockWsConn{
 		msgCh: make(chan []byte, 1),
@@ -181,7 +179,7 @@ func (m *mockService) Type(addr types.Address) (interface{}, error) {
 	return nil, nil
 }
 
-func (m *mockService) BlockPtr(_ string, f *BlockNumber) (interface{}, error) {
+func (m *mockService) BlockPtr(a string, f *BlockNumber) (interface{}, error) {
 	if f == nil {
 		m.msgCh <- nil
 	} else {
@@ -200,7 +198,7 @@ func (m *mockService) Filter(f LogQuery) (interface{}, error) {
 func TestDispatcherFuncDecode(t *testing.T) {
 	srv := &mockService{msgCh: make(chan interface{}, 10)}
 
-	dispatcher := newDispatcher(hclog.NewNullLogger(), newMockStore(), 0, 0, 20, 1000)
+	dispatcher := newDispatcher(hclog.NewNullLogger(), newMockStore(), 0, 0, 0, 0)
 	dispatcher.registerService("mock", srv)
 
 	handleReq := func(typ string, msg string) interface{} {
@@ -253,10 +251,9 @@ func TestDispatcherFuncDecode(t *testing.T) {
 		{
 			"filter",
 			`[{"fromBlock": "pending", "toBlock": "earliest"}]`,
-			LogQuery{fromBlock: PendingBlockNumber, toBlock: EarliestBlockNumber},
+			LogQuery{FromBlock: PendingBlockNumber, ToBlock: EarliestBlockNumber},
 		},
 	}
-
 	for _, c := range cases {
 		res := handleReq(c.typ, c.msg)
 		if !reflect.DeepEqual(res, c.res) {
@@ -283,12 +280,12 @@ func TestDispatcherBatchRequest(t *testing.T) {
 		{
 			"leading-whitespace",
 			"test with leading whitespace (\"  \\t\\n\\n\\r\\)",
-			newDispatcher(hclog.NewNullLogger(), newMockStore(), 0, 0, 20, 1000),
+			newDispatcher(hclog.NewNullLogger(), newMockStore(), 0, 0, 0, 0),
 			append([]byte{0x20, 0x20, 0x09, 0x0A, 0x0A, 0x0D}, []byte(`[
 				{"id":1,"jsonrpc":"2.0","method":"eth_getBalance","params":["0x1", true]},
-				{"id":2,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x2", true]},
-				{"id":3,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x3", true]},
-				{"id":4,"jsonrpc":"2.0","method": "web3_sha3","params": ["0x68656c6c6f20776f726c64"]}]`)...),
+                {"id":2,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x2", true]},
+                {"id":3,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x3", true]},
+                {"id":4,"jsonrpc":"2.0","method":"web3_sha3","params": ["0x68656c6c6f20776f726c64"]}]`)...),
 			nil,
 			[]*SuccessResponse{
 				{Error: &ObjectError{Code: -32602, Message: "Invalid Params"}},
@@ -299,14 +296,14 @@ func TestDispatcherBatchRequest(t *testing.T) {
 		{
 			"valid-batch-req",
 			"test with batch req length within batchRequestLengthLimit",
-			newDispatcher(hclog.NewNullLogger(), newMockStore(), 0, 0, 10, 1000),
+			newDispatcher(hclog.NewNullLogger(), newMockStore(), 0, 0, 0, 0),
 			[]byte(`[
 				{"id":1,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":2,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":3,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":4,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":5,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":6,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]}]`),
+                {"id":2,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":3,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":4,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":5,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":6,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]}]`),
 			nil,
 			[]*SuccessResponse{
 				{Error: nil},
@@ -319,14 +316,14 @@ func TestDispatcherBatchRequest(t *testing.T) {
 		{
 			"invalid-batch-req",
 			"test with batch req length exceeding batchRequestLengthLimit",
-			newDispatcher(hclog.NewNullLogger(), newMockStore(), 0, 0, 3, 1000),
+			newDispatcher(hclog.NewNullLogger(), newMockStore(), 0, 3, 1000, 0),
 			[]byte(`[
-				{"id":1,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":2,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":3,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":4,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":5,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":6,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]}]`),
+                {"id":1,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":2,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":3,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":4,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":5,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":6,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]}]`),
 			&ObjectError{Code: -32600, Message: "Batch request length too long"},
 			nil,
 		},
@@ -335,18 +332,18 @@ func TestDispatcherBatchRequest(t *testing.T) {
 			"test when limits are not set",
 			newDispatcher(hclog.NewNullLogger(), newMockStore(), 0, 0, 0, 0),
 			[]byte(`[
-				{"id":1,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":2,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":3,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":4,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":5,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":6,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":7,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":8,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":9,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":10,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":11,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
-				{"id":12,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]}]`,
+                {"id":1,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":2,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":3,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":4,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":5,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":6,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":7,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":8,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":9,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":10,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":11,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]},
+                {"id":12,"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true]}]`,
 			),
 			nil,
 			[]*SuccessResponse{

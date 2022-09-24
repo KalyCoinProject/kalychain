@@ -12,7 +12,7 @@ func TestFrontierSigner(t *testing.T) {
 	signer := &FrontierSigner{}
 
 	toAddress := types.StringToAddress("1")
-	key, err := GenerateECDSAKey()
+	key, err := GenerateKey()
 	assert.NoError(t, err)
 
 	txn := &types.Transaction{
@@ -29,8 +29,6 @@ func TestFrontierSigner(t *testing.T) {
 }
 
 func TestEIP155Signer_Sender(t *testing.T) {
-	t.Parallel()
-
 	toAddress := types.StringToAddress("1")
 
 	testTable := []struct {
@@ -72,11 +70,8 @@ func TestEIP155Signer_Sender(t *testing.T) {
 	}
 
 	for _, testCase := range testTable {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-
-			key, keyGenError := GenerateECDSAKey()
+			key, keyGenError := GenerateKey()
 			if keyGenError != nil {
 				t.Fatalf("Unable to generate key")
 			}
@@ -109,7 +104,7 @@ func TestEIP155Signer_ChainIDMismatch(t *testing.T) {
 	toAddress := types.StringToAddress("1")
 
 	for _, chainIDTop := range chainIDS {
-		key, keyGenError := GenerateECDSAKey()
+		key, keyGenError := GenerateKey()
 		if keyGenError != nil {
 			t.Fatalf("Unable to generate key")
 		}

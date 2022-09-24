@@ -1,20 +1,30 @@
 package server
 
 import (
+	"bufio"
 	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"strconv"
+	"strings"
 
+	"github.com/KalyCoinProject/kalychain/blockchain/storage/leveldb"
 	"github.com/KalyCoinProject/kalychain/command"
 	"github.com/KalyCoinProject/kalychain/command/helper"
-	"github.com/KalyCoinProject/kalychain/command/server/config"
-	"github.com/KalyCoinProject/kalychain/command/server/export"
+	"github.com/KalyCoinProject/kalychain/crypto"
+	"github.com/KalyCoinProject/kalychain/helper/daemon"
+	"github.com/KalyCoinProject/kalychain/network"
 	"github.com/KalyCoinProject/kalychain/server"
+	"github.com/KalyCoinProject/kalychain/txpool"
+	"github.com/howeyc/gopass"
 	"github.com/spf13/cobra"
 )
 
 func GetCommand() *cobra.Command {
 	serverCmd := &cobra.Command{
 		Use:     "server",
-		Short:   "The default command that starts the Kaly Chain client, by bootstrapping all modules together",
+		Short:   "The default command that starts the KalyCoinProject Kalychain client, by bootstrapping all modules together",
 		PreRunE: runPreRun,
 		Run:     runCommand,
 	}
@@ -22,222 +32,297 @@ func GetCommand() *cobra.Command {
 	helper.RegisterGRPCAddressFlag(serverCmd)
 	helper.RegisterLegacyGRPCAddressFlag(serverCmd)
 	helper.RegisterJSONRPCFlag(serverCmd)
+	helper.RegisterGraphQLFlag(serverCmd)
 
-	registerSubcommands(serverCmd)
 	setFlags(serverCmd)
 
 	return serverCmd
 }
 
-func registerSubcommands(baseCmd *cobra.Command) {
-	baseCmd.AddCommand(
-		// server export
-		export.GetCommand(),
-	)
-}
-
 func setFlags(cmd *cobra.Command) {
-	defaultConfig := config.DefaultConfig()
+	defaultConfig := DefaultConfig()
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.LogLevel,
-		command.LogLevelFlag,
-		defaultConfig.LogLevel,
-		"the log level for console output",
-	)
+	// basic flags
+	{
+		cmd.Flags().StringVar(
+			&params.configPath,
+			configFlag,
+			"",
+			"the path to the CLI config. Supports .json and .hcl",
+		)
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.GenesisPath,
-		genesisPathFlag,
-		defaultConfig.GenesisPath,
-		"the genesis file used for starting the chain",
-	)
+		cmd.Flags().StringVar(
+			&params.rawConfig.DataDir,
+			dataDirFlag,
+			defaultConfig.DataDir,
+			"the data directory used for storing KalyCoinProject Kalychain client data",
+		)
 
-	cmd.Flags().StringVar(
-		&params.configPath,
-		configFlag,
-		"",
-		"the path to the CLI config. Supports .json and .hcl",
-	)
+		cmd.Flags().StringVar(
+			&params.rawConfig.GenesisPath,
+			genesisPathFlag,
+			defaultConfig.GenesisPath,
+			"the genesis file used for starting the chain",
+		)
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.DataDir,
-		dataDirFlag,
-		defaultConfig.DataDir,
-		"the data directory used for storing Kaly Chain client data",
-	)
+		cmd.Flags().StringVar(
+			&params.rawConfig.RestoreFile,
+			restoreFlag,
+			"",
+			"the path to the archive blockchain data to restore on initialization",
+		)
+	}
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.Network.Libp2pAddr,
-		libp2pAddressFlag,
-		defaultConfig.Network.Libp2pAddr,
-		"the address and port for the libp2p service",
-	)
+	// block flags
+	{
+		cmd.Flags().Uint64Var(
+			&params.rawConfig.BlockTime,
+			blockTimeFlag,
+			defaultConfig.BlockTime,
+			"minimum block time in seconds (at least 1s)",
+		)
+	}
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.Telemetry.PrometheusAddr,
-		prometheusAddressFlag,
-		"",
-		"the address and port for the prometheus instrumentation service (address:port). "+
-			"If only port is defined (:port) it will bind to 0.0.0.0:port",
-	)
+	// endpoint flags
+	{
+		cmd.Flags().Uint64Var(
+			&params.rawConfig.JSONRPCBatchRequestLimit,
+			jsonRPCBatchRequestLimitFlag,
+			defaultConfig.JSONRPCBatchRequestLimit,
+			"the max length to be considered when handling json-rpc batch requests",
+		)
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.Network.NatAddr,
-		natFlag,
-		"",
-		"the external IP address without port, as can be seen by peers",
-	)
+		cmd.Flags().Uint64Var(
+			&params.rawConfig.JSONRPCBlockRangeLimit,
+			jsonRPCBlockRangeLimitFlag,
+			defaultConfig.JSONRPCBlockRangeLimit,
+			"the max block range to be considered when executing json-rpc requests "+
+				"that consider fromBlock/toBlock values (e.g. eth_getLogs)",
+		)
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.Network.DNSAddr,
-		dnsFlag,
-		"",
-		"the host DNS address which can be used by a remote peer for connection",
-	)
+		cmd.Flags().BoolVar(
+			&params.rawConfig.EnableWS,
+			enableWSFlag,
+			false,
+			"the flag indicating that node enable websocket service",
+		)
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.BlockGasTarget,
-		blockGasTargetFlag,
-		defaultConfig.BlockGasTarget,
-		"the target block gas limit for the chain. If omitted, the value of the parent block is used",
-	)
+		cmd.Flags().BoolVar(
+			&params.rawConfig.EnableGraphQL,
+			enableGraphQLFlag,
+			false,
+			"the flag indicating that node enable graphql service",
+		)
+	}
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.SecretsConfigPath,
-		secretsConfigFlag,
-		"",
-		"the path to the SecretsManager config file. Used for Hashicorp Vault. "+
-			"If omitted, the local FS secrets manager is used",
-	)
+	// leveldb flags
+	{
+		cmd.Flags().IntVar(
+			&params.leveldbCacheSize,
+			leveldbCacheFlag,
+			leveldb.DefaultCache,
+			"the size of the leveldb cache in MB",
+		)
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.RestoreFile,
-		restoreFlag,
-		"",
-		"the path to the archive blockchain data to restore on initialization",
-	)
+		cmd.Flags().IntVar(
+			&params.leveldbHandles,
+			leveldbHandlesFlag,
+			leveldb.DefaultHandles,
+			"the number of handles to leveldb open files",
+		)
 
-	cmd.Flags().BoolVar(
-		&params.rawConfig.ShouldSeal,
-		sealFlag,
-		defaultConfig.ShouldSeal,
-		"the flag indicating that the client should seal blocks",
-	)
+		cmd.Flags().IntVar(
+			&params.leveldbBloomKeyBits,
+			leveldbBloomKeyBitsFlag,
+			leveldb.DefaultBloomKeyBits,
+			"the bits of leveldb bloom filters",
+		)
 
-	cmd.Flags().BoolVar(
-		&params.rawConfig.Network.NoDiscover,
-		command.NoDiscoverFlag,
-		defaultConfig.Network.NoDiscover,
-		"prevent the client from discovering other peers",
-	)
+		cmd.Flags().IntVar(
+			&params.leveldbTableSize,
+			leveldbTableSizeFlag,
+			leveldb.DefaultCompactionTableSize,
+			"the leveldb 'sorted table' size in MB",
+		)
 
-	cmd.Flags().Int64Var(
-		&params.rawConfig.Network.MaxPeers,
-		maxPeersFlag,
-		-1,
-		"the client's max number of peers allowed",
-	)
-	// override default usage value
-	cmd.Flag(maxPeersFlag).DefValue = fmt.Sprintf("%d", defaultConfig.Network.MaxPeers)
+		cmd.Flags().IntVar(
+			&params.leveldbTotalTableSize,
+			leveldbTotalTableSizeFlag,
+			leveldb.DefaultCompactionTotalSize,
+			"limits leveldb total size of 'sorted table' for each level in MB",
+		)
 
-	cmd.Flags().Int64Var(
-		&params.rawConfig.Network.MaxInboundPeers,
-		maxInboundPeersFlag,
-		-1,
-		"the client's max number of inbound peers allowed",
-	)
-	// override default usage value
-	cmd.Flag(maxInboundPeersFlag).DefValue = fmt.Sprintf("%d", defaultConfig.Network.MaxInboundPeers)
-	cmd.MarkFlagsMutuallyExclusive(maxPeersFlag, maxInboundPeersFlag)
+		cmd.Flags().BoolVar(
+			&params.leveldbNoSync,
+			leveldbNoSyncFlag,
+			leveldb.DefaultNoSync,
+			"leveldb nosync allows completely disable fsync",
+		)
+	}
 
-	cmd.Flags().Int64Var(
-		&params.rawConfig.Network.MaxOutboundPeers,
-		maxOutboundPeersFlag,
-		-1,
-		"the client's max number of outbound peers allowed",
-	)
-	// override default usage value
-	cmd.Flag(maxOutboundPeersFlag).DefValue = fmt.Sprintf("%d", defaultConfig.Network.MaxOutboundPeers)
-	cmd.MarkFlagsMutuallyExclusive(maxPeersFlag, maxOutboundPeersFlag)
+	// log flags
+	{
+		cmd.Flags().StringVar(
+			&params.rawConfig.LogLevel,
+			command.LogLevelFlag,
+			defaultConfig.LogLevel,
+			"the log level for console output",
+		)
 
-	cmd.Flags().Uint64Var(
-		&params.rawConfig.TxPool.PriceLimit,
-		priceLimitFlag,
-		defaultConfig.TxPool.PriceLimit,
-		fmt.Sprintf(
-			"the minimum gas price limit to enforce for acceptance into the pool (default %d)",
-			defaultConfig.TxPool.PriceLimit,
-		),
-	)
+		cmd.Flags().StringVar(
+			&params.rawConfig.LogFilePath,
+			logFileLocationFlag,
+			defaultConfig.LogFilePath,
+			"write all logs to the file at specified location instead of writing them to console",
+		)
+	}
 
-	cmd.Flags().Uint64Var(
-		&params.rawConfig.TxPool.MaxSlots,
-		maxSlotsFlag,
-		defaultConfig.TxPool.MaxSlots,
-		"maximum slots in the pool",
-	)
+	// miner flags
+	{
+		cmd.Flags().BoolVar(
+			&params.rawConfig.ShouldSeal,
+			sealFlag,
+			false,
+			"the flag indicating that the client should seal blocks",
+		)
 
-	cmd.Flags().Uint64Var(
-		&params.rawConfig.TxPool.MaxAccountEnqueued,
-		maxEnqueuedFlag,
-		defaultConfig.TxPool.MaxAccountEnqueued,
-		"maximum number of enqueued transactions per account",
-	)
+		cmd.Flags().StringVar(
+			&params.rawConfig.BlockGasTarget,
+			blockGasTargetFlag,
+			strconv.FormatUint(0, 10),
+			"the target block gas limit for the chain. If omitted, the value of the parent block is used",
+		)
 
-	cmd.Flags().Uint64Var(
-		&params.rawConfig.BlockTime,
-		blockTimeFlag,
-		defaultConfig.BlockTime,
-		"minimum block time in seconds (at least 1s)",
-	)
+		cmd.Flags().BoolVar(
+			&params.isDaemon,
+			daemonFlag,
+			false,
+			"the flag indicating that the server ran as daemon",
+		)
 
-	cmd.Flags().StringArrayVar(
-		&params.corsAllowedOrigins,
-		corsOriginFlag,
-		defaultConfig.Headers.AccessControlAllowOrigins,
-		"the CORS header indicating whether any JSON-RPC response can be shared with the specified origin",
-	)
+		cmd.Flags().StringVar(
+			&params.rawConfig.SecretsConfigPath,
+			secretsConfigFlag,
+			"",
+			"the path to the SecretsManager config file. Used for Hashicorp Vault. "+
+				"If omitted, the local FS secrets manager is used",
+		)
+	}
 
-	cmd.Flags().Uint64Var(
-		&params.rawConfig.JSONRPCBatchRequestLimit,
-		jsonRPCBatchRequestLimitFlag,
-		defaultConfig.JSONRPCBatchRequestLimit,
-		"max length to be considered when handling json-rpc batch requests, value of 0 disables it",
-	)
+	// network flags
+	{
+		cmd.Flags().BoolVar(
+			&params.rawConfig.Network.NoDiscover,
+			command.NoDiscoverFlag,
+			defaultConfig.Network.NoDiscover,
+			"prevent the client from discovering other peers (default: false)",
+		)
 
-	cmd.Flags().Uint64Var(
-		&params.rawConfig.JSONRPCBlockRangeLimit,
-		jsonRPCBlockRangeLimitFlag,
-		defaultConfig.JSONRPCBlockRangeLimit,
-		"max block range to be considered when executing json-rpc requests "+
-			"that consider fromBlock/toBlock values (e.g. eth_getLogs), value of 0 disables it",
-	)
+		cmd.Flags().Int64Var(
+			&params.rawConfig.Network.MaxPeers,
+			maxPeersFlag,
+			-1,
+			"the client's max number of peers allowed",
+		)
+		// override default usage value
+		cmd.Flag(maxPeersFlag).DefValue = fmt.Sprintf("%d", defaultConfig.Network.MaxPeers)
 
-	cmd.Flags().StringVar(
-		&params.rawConfig.LogFilePath,
-		logFileLocationFlag,
-		defaultConfig.LogFilePath,
-		"write all logs to the file at specified location instead of writing them to console",
-	)
+		cmd.Flags().Int64Var(
+			&params.rawConfig.Network.MaxInboundPeers,
+			maxInboundPeersFlag,
+			-1,
+			"the client's max number of inbound peers allowed",
+		)
+		// override default usage value
+		cmd.Flag(maxInboundPeersFlag).DefValue = fmt.Sprintf("%d", defaultConfig.Network.MaxInboundPeers)
 
-	setLegacyFlags(cmd)
+		cmd.Flags().Int64Var(
+			&params.rawConfig.Network.MaxOutboundPeers,
+			maxOutboundPeersFlag,
+			-1,
+			"the client's max number of outbound peers allowed",
+		)
+		// override default usage value
+		cmd.Flag(maxOutboundPeersFlag).DefValue = fmt.Sprintf("%d", defaultConfig.Network.MaxOutboundPeers)
+
+		cmd.Flags().StringVar(
+			&params.rawConfig.Network.Libp2pAddr,
+			libp2pAddressFlag,
+			fmt.Sprintf("127.0.0.1:%d", network.DefaultLibp2pPort),
+			"the address and port for the libp2p service",
+		)
+
+		cmd.Flags().StringVar(
+			&params.rawConfig.Network.NatAddr,
+			natFlag,
+			"",
+			"the external address (address:port), as can be seen by peers",
+		)
+
+		cmd.Flags().StringVar(
+			&params.rawConfig.Network.DNSAddr,
+			dnsFlag,
+			"",
+			"the host DNS address which can be used by a remote peer for connection",
+		)
+
+		cmd.Flags().StringArrayVar(
+			&params.corsAllowedOrigins,
+			corsOriginFlag,
+			defaultConfig.Headers.AccessControlAllowOrigins,
+			"the CORS header indicating whether any JSON-RPC response can be shared with the specified origin",
+		)
+	}
+
+	// telemetry flags
+	{
+		cmd.Flags().StringVar(
+			&params.rawConfig.Telemetry.PrometheusAddr,
+			prometheusAddressFlag,
+			"",
+			"the address and port for the prometheus instrumentation service (address:port). "+
+				"If only port is defined (:port) it will bind to 0.0.0.0:port",
+		)
+	}
+
+	// txpool flags
+	{
+		cmd.Flags().Uint64Var(
+			&params.rawConfig.TxPool.PriceLimit,
+			priceLimitFlag,
+			0,
+			fmt.Sprintf(
+				"the minimum gas price limit to enforce for acceptance into the pool (default %d)",
+				defaultConfig.TxPool.PriceLimit,
+			),
+		)
+
+		cmd.Flags().Uint64Var(
+			&params.rawConfig.TxPool.MaxSlots,
+			maxSlotsFlag,
+			txpool.DefaultMaxSlots,
+			"maximum slots in the pool",
+		)
+
+		// pruning outdated account flags
+		{
+			cmd.Flags().Uint64Var(
+				&params.rawConfig.TxPool.PruneTickSeconds,
+				pruneTickSecondsFlag,
+				txpool.DefaultPruneTickSeconds,
+				"tick seconds for pruning account future transactions in the pool",
+			)
+
+			cmd.Flags().Uint64Var(
+				&params.rawConfig.TxPool.PromoteOutdateSeconds,
+				promoteOutdateSecondsFlag,
+				txpool.DefaultPromoteOutdateSeconds,
+				"account in the pool not promoted for a long time would be pruned",
+			)
+		}
+	}
 
 	setDevFlags(cmd)
-}
-
-// setLegacyFlags sets the legacy flags to preserve backwards compatibility
-// with running partners
-func setLegacyFlags(cmd *cobra.Command) {
-	// Legacy IBFT base timeout flag
-	cmd.Flags().Uint64Var(
-		&params.ibftBaseTimeoutLegacy,
-		ibftBaseTimeoutFlagLEGACY,
-		0,
-		"",
-	)
-
-	_ = cmd.Flags().MarkHidden(ibftBaseTimeoutFlagLEGACY)
 }
 
 func setDevFlags(cmd *cobra.Command) {
@@ -257,14 +342,17 @@ func setDevFlags(cmd *cobra.Command) {
 		"the client's dev notification interval in seconds (default 1)",
 	)
 
+	helper.RegisterPprofFlag(cmd)
+
 	_ = cmd.Flags().MarkHidden(devIntervalFlag)
 }
 
 func runPreRun(cmd *cobra.Command, _ []string) error {
-	// Set the grpc and json ip:port bindings
+	// Set the grpc, json and graphql ip:port bindings
 	// The config file will have precedence over --flag
 	params.setRawGRPCAddress(helper.GetGRPCAddress(cmd))
 	params.setRawJSONRPCAddress(helper.GetJSONRPCAddress(cmd))
+	params.setRawGraphQLAddress(helper.GetGraphQLAddress(cmd))
 
 	// Check if the config file has been specified
 	// Config file settings will override JSON-RPC and GRPC address values
@@ -272,6 +360,10 @@ func runPreRun(cmd *cobra.Command, _ []string) error {
 		if err := params.initConfigFromFile(); err != nil {
 			return err
 		}
+	}
+
+	if err := params.validateFlags(); err != nil {
+		return err
 	}
 
 	if err := params.initRawParams(); err != nil {
@@ -285,8 +377,79 @@ func isConfigFileSpecified(cmd *cobra.Command) bool {
 	return cmd.Flags().Changed(configFlag)
 }
 
+func askForConfirmation() string {
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		privateKeyRaw, err := gopass.GetPasswdPrompt("Enter ValidatorKey:", true, os.Stdin, os.Stdout)
+		if err != nil {
+			log.Println("Parent process ", os.Getpid(), " passwd prompt err:", err)
+		}
+
+		privateKey, err := crypto.BytesToPrivateKey(privateKeyRaw)
+		if err != nil {
+			log.Println("Parent process ", os.Getpid(), " input to private key, err:", err)
+		}
+
+		validatorKeyAddr := crypto.PubKeyToAddress(&privateKey.PublicKey)
+
+		log.Println("Parent process ", os.Getpid(), " passwd prompt, ValidatorKey len:", len(params.validatorKey),
+			", ValidatorKeyAddr: ", validatorKeyAddr.String())
+
+		fmt.Printf("ValidatorKey Address: %s [y/n]: ", validatorKeyAddr.String())
+
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		response = strings.ToLower(strings.TrimSpace(response))
+
+		if response == "y" || response == "yes" {
+			return string(privateKeyRaw)
+		} else if response == "n" || response == "no" {
+			continue
+		}
+	}
+}
+
 func runCommand(cmd *cobra.Command, _ []string) {
+	command.InitializePprofServer(cmd)
 	outputter := command.InitializeOutputter(cmd)
+
+	log.Println("Main process run isDaemon:", params.isDaemon)
+
+	// Launch daemons
+	if params.isDaemon {
+		// First time, daemonIdx is empty
+		daemonIdx := os.Getenv(daemon.EnvDaemonIdx)
+		if len(daemonIdx) == 0 {
+			params.validatorKey = askForConfirmation()
+		} else {
+			data, err := ioutil.ReadAll(os.Stdin)
+			if err != nil {
+				log.Println("Child process ", os.Getpid(), " read pipe data err: ", err)
+			} else {
+				log.Println("Child process ", os.Getpid(), " read pipe data: ", len(string(data)))
+				params.validatorKey = string(data)
+			}
+		}
+
+		// Create a daemon object
+		newDaemon := daemon.NewDaemon(daemon.DaemonLog)
+		newDaemon.MaxCount = daemon.MaxCount
+		newDaemon.ValidatorKey = params.validatorKey
+
+		// Execute daemon mode
+		newDaemon.Run()
+
+		// When params.isDaemon = true,
+		// the following code will only be executed by the final child process,
+		// and neither the main process nor the daemon will execute
+		log.Println("Child process ", os.Getpid(), "start...")
+		log.Println("Child process ", os.Getpid(), "isDaemon: ", params.isDaemon)
+		log.Println("Child process ", os.Getpid(), "ValidatorKey len: ", len(params.validatorKey))
+	}
 
 	if err := runServerLoop(params.generateConfig(), outputter); err != nil {
 		outputter.SetError(err)

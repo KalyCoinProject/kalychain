@@ -13,171 +13,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Test_GetLogsForQuery(t *testing.T) {
-	t.Parallel()
-
-	blockHash := types.StringToHash("1")
-
-	// Topics we're searching for
-	topic1 := types.StringToHash("4")
-	topic2 := types.StringToHash("5")
-	topic3 := types.StringToHash("6")
-
-	var topics = [][]types.Hash{{topic1}, {topic2}, {topic3}}
-
-	testTable := []struct {
-		name           string
-		query          *LogQuery
-		expectedLength int
-		expectedError  error
-	}{
-		{
-			"Found matching logs, fromBlock < toBlock",
-			&LogQuery{
-				fromBlock: 1,
-				toBlock:   3,
-				Topics:    topics,
-			},
-			3,
-			nil,
-		},
-		{
-			"Found matching logs, fromBlock == toBlock",
-			&LogQuery{
-				fromBlock: 2,
-				toBlock:   2,
-				Topics:    topics,
-			},
-			1,
-			nil,
-		},
-		{
-			"Found matching logs, BlockHash present",
-			&LogQuery{
-				BlockHash: &blockHash,
-				Topics:    topics,
-			},
-			1,
-			nil,
-		},
-		{
-			"No logs found",
-			&LogQuery{
-				fromBlock: 4,
-				toBlock:   5,
-				Topics:    topics,
-			},
-			0,
-			nil,
-		},
-		{
-			"Invalid block range",
-			&LogQuery{
-				fromBlock: 10,
-				toBlock:   5,
-				Topics:    topics,
-			},
-			0,
-			ErrIncorrectBlockRange,
-		},
-		{
-			"Block range too high",
-			&LogQuery{
-				fromBlock: 10,
-				toBlock:   1012,
-				Topics:    topics,
-			},
-			0,
-			ErrBlockRangeTooHigh,
-		},
-	}
-
-	// setup test
-	store := &mockBlockStore{
-		topics: []types.Hash{topic1, topic2, topic3},
-	}
-	store.setupLogs()
-
-	blocks := make([]*types.Block, 5)
-
-	for i := range blocks {
-		blocks[i] = &types.Block{
-			Header: &types.Header{
-				Number: uint64(i),
-				Hash:   types.StringToHash(strconv.Itoa(i)),
-			},
-			Transactions: []*types.Transaction{
-				{
-					Value: big.NewInt(10),
-				},
-				{
-					Value: big.NewInt(11),
-				},
-				{
-					Value: big.NewInt(12),
-				},
-			},
-		}
-	}
-
-	store.appendBlocksToStore(blocks)
-
-	f := NewFilterManager(hclog.NewNullLogger(), store, 1000)
-
-	t.Cleanup(func() {
-		defer f.Close()
-	})
-
-	for _, testCase := range testTable {
-		testCase := testCase
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-
-			foundLogs, logError := f.GetLogsForQuery(testCase.query)
-
-			if logError != nil && testCase.expectedError == nil {
-				// If there is an error and test isn't expected to fail
-				t.Fatalf("Error: %v", logError)
-			}
-
-			if testCase.expectedError != nil {
-				assert.Lenf(t, foundLogs, testCase.expectedLength, "Invalid number of logs found")
-			}
-
-			assert.ErrorIs(t, logError, testCase.expectedError)
-		})
-	}
-}
-
-func Test_GetLogFilterFromID(t *testing.T) {
-	t.Parallel()
-
-	store := newMockStore()
-
-	m := NewFilterManager(hclog.NewNullLogger(), store, 1000)
-	defer m.Close()
-
-	go m.Run()
-
-	logFilter := &LogQuery{
-		Addresses: []types.Address{addr1},
-		toBlock:   10,
-		fromBlock: 0,
-	}
-
-	retrivedLogFilter, err := m.GetLogFilterFromID(
-		m.NewLogFilter(logFilter, &MockClosedWSConnection{}),
-	)
-	assert.NoError(t, err)
-	assert.Equal(t, logFilter, retrivedLogFilter.query)
-}
-
 func TestFilterLog(t *testing.T) {
 	t.Parallel()
 
 	store := newMockStore()
 
 	m := NewFilterManager(hclog.NewNullLogger(), store, 1000)
+	// filter manager should Close(), but mock one might crash on writing on a closed channel
+	//nolint:errcheck
+	defer recover()
 	defer m.Close()
 
 	go m.Run()
@@ -242,6 +86,9 @@ func TestFilterBlock(t *testing.T) {
 	store := newMockStore()
 
 	m := NewFilterManager(hclog.NewNullLogger(), store, 1000)
+	// filter manager should Close(), but mock one might crash on writing on a closed channel
+	//nolint:errcheck
+	defer recover()
 	defer m.Close()
 
 	go m.Run()
@@ -301,12 +148,177 @@ func TestFilterBlock(t *testing.T) {
 	}
 }
 
+func Test_GetLogsForQuery(t *testing.T) {
+	t.Parallel()
+
+	blockHash := types.StringToHash("1")
+
+	// Topics we're searching for
+	topic1 := types.StringToHash("4")
+	topic2 := types.StringToHash("5")
+	topic3 := types.StringToHash("6")
+
+	var topics = [][]types.Hash{{topic1}, {topic2}, {topic3}}
+
+	// setup test
+	store := &mockBlockStore{
+		topics: []types.Hash{topic1, topic2, topic3},
+	}
+	store.setupLogs()
+
+	blocks := make([]*types.Block, 5)
+
+	for i := range blocks {
+		blocks[i] = &types.Block{
+			Header: &types.Header{
+				Number: uint64(i),
+				Hash:   types.StringToHash(strconv.Itoa(i)),
+			},
+			Transactions: []*types.Transaction{
+				{
+					Value: big.NewInt(10),
+				},
+				{
+					Value: big.NewInt(11),
+				},
+				{
+					Value: big.NewInt(12),
+				},
+			},
+		}
+	}
+
+	store.appendBlocksToStore(blocks)
+
+	f := NewFilterManager(hclog.NewNullLogger(), store, 1000)
+
+	t.Cleanup(func() {
+		f.Close() // prevent memory leak
+	})
+
+	testTable := []struct {
+		name           string
+		query          *LogQuery
+		expectedLength int
+		expectedError  error
+	}{
+		{
+			"Found matching logs, fromBlock < toBlock",
+			&LogQuery{
+				FromBlock: 1,
+				ToBlock:   3,
+				Topics:    topics,
+			},
+			3,
+			nil,
+		},
+		{
+			"Found matching logs, fromBlock == toBlock",
+			&LogQuery{
+				FromBlock: 2,
+				ToBlock:   2,
+				Topics:    topics,
+			},
+			1,
+			nil,
+		},
+		{
+			"Found matching logs, BlockHash present",
+			&LogQuery{
+				BlockHash: &blockHash,
+				Topics:    topics,
+			},
+			1,
+			nil,
+		},
+		{
+			"No logs found",
+			&LogQuery{
+				FromBlock: 4,
+				ToBlock:   5,
+				Topics:    topics,
+			},
+			0,
+			nil,
+		},
+		{
+			"Invalid block range",
+			&LogQuery{
+				FromBlock: 10,
+				ToBlock:   5,
+				Topics:    topics,
+			},
+			0,
+			ErrIncorrectBlockRange,
+		},
+		{
+			"Block range too high",
+			&LogQuery{
+				FromBlock: 10,
+				ToBlock:   1012,
+				Topics:    topics,
+			},
+			0,
+			ErrBlockRangeTooHigh,
+		},
+	}
+
+	for _, testCase := range testTable {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			foundLogs, logError := f.GetLogs(testCase.query)
+
+			if (testCase.expectedError == nil) != (logError == nil) {
+				t.Fatalf("expected error %v but got %v", testCase.expectedError, logError)
+			}
+
+			if testCase.expectedError != nil {
+				assert.ErrorIs(t, logError, testCase.expectedError)
+			} else {
+				assert.Lenf(t, foundLogs, testCase.expectedLength, "Invalid number of logs found")
+			}
+		})
+	}
+}
+
+func Test_GetLogFilterFromID(t *testing.T) {
+	t.Parallel() // speed it up
+
+	store := newMockStore()
+
+	m := NewFilterManager(hclog.NewNullLogger(), store, 1000)
+	// filter manager should Close(), but mock one might crash on writing on a closed channel
+	//nolint:errcheck
+	defer recover()
+	defer m.Close()
+
+	go m.Run()
+
+	logFilter := &LogQuery{
+		Addresses: []types.Address{addr1},
+		ToBlock:   10,
+		FromBlock: 0,
+	}
+
+	retrivedLogFilter, err := m.GetLogFilterFromID(
+		m.NewLogFilter(logFilter, &MockClosedWSConnection{}),
+	)
+
+	assert.NoError(t, err)
+	assert.Equal(t, logFilter, retrivedLogFilter.query)
+}
+
 func TestFilterTimeout(t *testing.T) {
 	t.Parallel()
 
 	store := newMockStore()
 
 	m := NewFilterManager(hclog.NewNullLogger(), store, 1000)
+	// filter manager should Close(), but mock one might crash on writing on a closed channel
+	//nolint:errcheck
+	defer recover()
 	defer m.Close()
 
 	m.timeout = 2 * time.Second
@@ -331,6 +343,9 @@ func TestRemoveFilterByWebsocket(t *testing.T) {
 	}
 
 	m := NewFilterManager(hclog.NewNullLogger(), store, 1000)
+	// filter manager should Close(), but mock one might crash on writing on a closed channel
+	//nolint:errcheck
+	defer recover()
 	defer m.Close()
 
 	go m.Run()
@@ -353,6 +368,9 @@ func TestFilterWebsocket(t *testing.T) {
 	}
 
 	m := NewFilterManager(hclog.NewNullLogger(), store, 1000)
+	// filter manager should Close(), but mock one might crash on writing on a closed channel
+	//nolint:errcheck
+	defer recover()
 	defer m.Close()
 
 	go m.Run()
@@ -362,23 +380,6 @@ func TestFilterWebsocket(t *testing.T) {
 	// we cannot call get filter changes for a websocket filter
 	_, err := m.GetFilterChanges(id)
 	assert.Equal(t, err, ErrWSFilterDoesNotSupportGetChanges)
-
-	// emit two events
-	store.emitEvent(&mockEvent{
-		NewChain: []*mockHeader{
-			{
-				header: &types.Header{
-					Hash: types.StringToHash("1"),
-				},
-			},
-		},
-	})
-
-	select {
-	case <-mock.msgCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("bad")
-	}
 }
 
 type mockWsConn struct {
@@ -442,6 +443,9 @@ func TestClosedFilterDeletion(t *testing.T) {
 	store := newMockStore()
 
 	m := NewFilterManager(hclog.NewNullLogger(), store, 1000)
+	// filter manager should Close(), but mock one might crash on writing on a closed channel
+	//nolint:errcheck
+	defer recover()
 	defer m.Close()
 
 	go m.Run()
@@ -460,7 +464,7 @@ func TestClosedFilterDeletion(t *testing.T) {
 		},
 	})
 
-	// should not return error when the error is websocket.ErrCloseSen because filter is removed instead
+	// should not return error when the error is websocket.ErrCloseSent because filter is removed instead
 	assert.NoError(t, err)
 
 	// false because filter was removed automatically

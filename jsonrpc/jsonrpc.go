@@ -33,7 +33,7 @@ func (s serverType) String() string {
 	}
 }
 
-// JSONRPC is an API consensus
+// JSONRPC is an API backend
 type JSONRPC struct {
 	logger     hclog.Logger
 	config     *Config
@@ -60,9 +60,10 @@ type Config struct {
 	Addr                     *net.TCPAddr
 	ChainID                  uint64
 	AccessControlAllowOrigin []string
-	PriceLimit               uint64
 	BatchLengthLimit         uint64
 	BlockRangeLimit          uint64
+	EnableWS                 bool
+	PriceLimit               uint64
 }
 
 // NewJSONRPC returns the JSONRPC http server
@@ -70,8 +71,14 @@ func NewJSONRPC(logger hclog.Logger, config *Config) (*JSONRPC, error) {
 	srv := &JSONRPC{
 		logger: logger.Named("jsonrpc"),
 		config: config,
-		dispatcher: newDispatcher(logger, config.Store, config.ChainID, config.PriceLimit,
-			config.BatchLengthLimit, config.BlockRangeLimit),
+		dispatcher: newDispatcher(
+			logger,
+			config.Store,
+			config.ChainID,
+			config.BatchLengthLimit,
+			config.BlockRangeLimit,
+			config.PriceLimit,
+		),
 	}
 
 	// start http server
@@ -96,11 +103,14 @@ func (j *JSONRPC) setupHTTP() error {
 	jsonRPCHandler := http.HandlerFunc(j.handle)
 	mux.Handle("/", middlewareFactory(j.config)(jsonRPCHandler))
 
-	mux.HandleFunc("/ws", j.handleWs)
+	// would only enable websocket when set
+	if j.config.EnableWS {
+		mux.HandleFunc("/ws", j.handleWs)
+	}
 
 	srv := http.Server{
 		Handler:           mux,
-		ReadHeaderTimeout: 60 * time.Second,
+		ReadHeaderTimeout: time.Minute,
 	}
 
 	go func() {
@@ -148,7 +158,7 @@ var wsUpgrader = websocket.Upgrader{
 
 // wsWrapper is a wrapping object for the web socket connection and logger
 type wsWrapper struct {
-	sync.Mutex
+	sync.Mutex // basic r/w lock
 
 	ws       *websocket.Conn // the actual WS connection
 	logger   hclog.Logger    // module logger
@@ -226,6 +236,7 @@ func (j *JSONRPC) handleWs(w http.ResponseWriter, req *http.Request) {
 				j.logger.Info("Closing WS connection with error")
 			}
 
+			// remove websocket connection when closed
 			j.dispatcher.RemoveFilterByWs(wrapConn)
 
 			break
@@ -262,13 +273,15 @@ func (j *JSONRPC) handle(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if req.Method == "GET" {
-		_, _ = w.Write([]byte("Kaly Chain JSON-RPC"))
+		//nolint
+		w.Write([]byte("KalyCoinProject Kalychain JSON-RPC"))
 
 		return
 	}
 
 	if req.Method != "POST" {
-		_, _ = w.Write([]byte("method " + req.Method + " not allowed"))
+		//nolint
+		w.Write([]byte("method " + req.Method + " not allowed"))
 
 		return
 	}
@@ -276,7 +289,8 @@ func (j *JSONRPC) handle(w http.ResponseWriter, req *http.Request) {
 	data, err := ioutil.ReadAll(req.Body)
 
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
+		//nolint
+		w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -287,9 +301,11 @@ func (j *JSONRPC) handle(w http.ResponseWriter, req *http.Request) {
 	resp, err := j.dispatcher.Handle(data)
 
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
+		//nolint
+		w.Write([]byte(err.Error()))
 	} else {
-		_, _ = w.Write(resp)
+		//nolint
+		w.Write(resp)
 	}
 
 	j.logger.Debug("handle", "response", string(resp))

@@ -138,10 +138,8 @@ func stringToInt64T(t *testing.T, str string) int64 {
 func (e *env) ToHeader(t *testing.T) *types.Header {
 	t.Helper()
 
-	miner := stringToAddressT(t, e.Coinbase)
-
 	return &types.Header{
-		Miner:      miner[:],
+		Miner:      stringToAddressT(t, e.Coinbase),
 		Difficulty: stringToUint64T(t, e.Difficulty),
 		GasLimit:   stringToUint64T(t, e.GasLimit),
 		Number:     stringToUint64T(t, e.Number),
@@ -306,13 +304,14 @@ func (t *stTransaction) At(i indexes) (*types.Transaction, error) {
 		return nil, fmt.Errorf("value index %d out of bounds (%d)", i.Value, len(t.Value))
 	}
 
+	input, _ := hex.DecodeHex(t.Data[i.Data])
 	msg := &types.Transaction{
 		To:       t.To,
 		Nonce:    t.Nonce,
 		Value:    new(big.Int).Set(t.Value[i.Value]),
 		Gas:      t.GasLimit[i.Gas],
 		GasPrice: new(big.Int).Set(t.GasPrice),
-		Input:    hex.MustDecodeHex(t.Data[i.Data]),
+		Input:    input,
 	}
 
 	msg.From = t.From
@@ -382,7 +381,7 @@ func (t *stTransaction) UnmarshalJSON(input []byte) error {
 			return err
 		}
 
-		key, err := crypto.ParseECDSAPrivateKey(secretKey)
+		key, err := crypto.ParsePrivateKey(secretKey)
 		if err != nil {
 			return fmt.Errorf("invalid private key: %w", err)
 		}

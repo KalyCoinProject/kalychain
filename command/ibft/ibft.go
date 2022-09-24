@@ -4,7 +4,6 @@ import (
 	"github.com/KalyCoinProject/kalychain/command/helper"
 	"github.com/KalyCoinProject/kalychain/command/ibft/candidates"
 	"github.com/KalyCoinProject/kalychain/command/ibft/propose"
-	"github.com/KalyCoinProject/kalychain/command/ibft/quorum"
 	"github.com/KalyCoinProject/kalychain/command/ibft/snapshot"
 	"github.com/KalyCoinProject/kalychain/command/ibft/status"
 	_switch "github.com/KalyCoinProject/kalychain/command/ibft/switch"
@@ -36,7 +35,5 @@ func registerSubcommands(baseCmd *cobra.Command) {
 		candidates.GetCommand(),
 		// ibft switch
 		_switch.GetCommand(),
-		// ibft quorum
-		quorum.GetCommand(),
 	)
 }

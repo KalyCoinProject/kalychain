@@ -12,9 +12,10 @@ import (
 	"github.com/KalyCoinProject/kalychain/network/dial"
 	"github.com/KalyCoinProject/kalychain/network/discovery"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p/p2p/security/noise"
+	noise "github.com/libp2p/go-libp2p-noise"
 	rawGrpc "google.golang.org/grpc"
 
+	cmap "github.com/KalyCoinProject/kalychain/helper/concurrentmap"
 	peerEvent "github.com/KalyCoinProject/kalychain/network/event"
 	"github.com/KalyCoinProject/kalychain/secrets"
 	"github.com/hashicorp/go-hclog"
@@ -84,7 +85,7 @@ type Server struct {
 
 	connectionCounts *ConnectionInfo
 
-	temporaryDials sync.Map // map of temporary connections; peerID -> bool
+	temporaryDials cmap.ConcurrentMap // map of temporary connections; peerID -> bool
 
 	bootnodes *bootnodesWrapper // reference of all bootnodes for the node
 }
@@ -105,11 +106,14 @@ func NewServer(logger hclog.Logger, config *Config) (*Server, error) {
 
 	addrsFactory := func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 		if config.NatAddr != nil {
-			addr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", config.NatAddr.String(), config.Addr.Port))
+			addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", config.NatAddr.IP.String(), config.NatAddr.Port))
+			if err != nil {
+				logger.Error("failed to create NAT address", "error", err)
 
-			if addr != nil {
-				addrs = []multiaddr.Multiaddr{addr}
+				return addrs
 			}
+
+			addrs = []multiaddr.Multiaddr{addr}
 		} else if config.DNS != nil {
 			addrs = []multiaddr.Multiaddr{config.DNS}
 		}
@@ -154,6 +158,7 @@ func NewServer(logger hclog.Logger, config *Config) (*Server, error) {
 			config.MaxInboundPeers,
 			config.MaxOutboundPeers,
 		),
+		temporaryDials: cmap.NewConcurrentMap(),
 	}
 
 	// start gossip protocol
@@ -320,16 +325,20 @@ func (s *Server) setupBootnodes() error {
 
 // checkPeerCount will attempt to make new connections if the active peer count is lesser than the specified limit.
 func (s *Server) checkPeerConnections() {
+	delay := time.NewTimer(10 * time.Second)
+
 	for {
+		delay.Reset(10 * time.Second)
+
 		select {
-		case <-time.After(10 * time.Second):
+		case <-delay.C:
 		case <-s.closeCh:
 			return
 		}
 
 		if s.numPeers() < MinimumPeerConnections {
 			if s.config.NoDiscover || !s.bootnodes.hasBootnodes() {
-				// TODO: dial peers from the peerstore
+				//TODO: dial peers from the peerstore
 			} else {
 				randomNode := s.GetRandomBootnode()
 				s.addToDialQueue(randomNode, common.PriorityRandomDial)
@@ -393,7 +402,7 @@ func (s *Server) runDial() {
 
 			s.logger.Debug(fmt.Sprintf("Dialing peer [%s] as local [%s]", peerInfo.String(), s.host.ID()))
 
-			if !s.IsConnected(peerInfo.ID) {
+			if !s.isConnected(peerInfo.ID) {
 				// the connection process is async because it involves connection (here) +
 				// the handshake done in the identity service.
 				if err := s.host.Connect(context.Background(), *peerInfo); err != nil {
@@ -446,8 +455,8 @@ func (s *Server) hasPeer(peerID peer.ID) bool {
 	return ok
 }
 
-// IsConnected checks if the networking server is connected to a peer
-func (s *Server) IsConnected(peerID peer.ID) bool {
+// isConnected checks if the networking server is connected to a peer
+func (s *Server) isConnected(peerID peer.ID) bool {
 	return s.host.Network().Connectedness(peerID) == network.Connected
 }
 
@@ -575,7 +584,7 @@ func (s *Server) Close() error {
 	err := s.host.Close()
 	s.dialQueue.Close()
 
-	if !s.config.NoDiscover {
+	if s.discovery != nil {
 		s.discovery.Close()
 	}
 
@@ -584,9 +593,9 @@ func (s *Server) Close() error {
 	return err
 }
 
-// NewProtoConnection opens up a new stream on the set protocol to the peer,
+// newProtoConnection opens up a new stream on the set protocol to the peer,
 // and returns a reference to the connection
-func (s *Server) NewProtoConnection(protocol string, peerID peer.ID) (*rawGrpc.ClientConn, error) {
+func (s *Server) newProtoConnection(protocol string, peerID peer.ID) (*rawGrpc.ClientConn, error) {
 	s.protocolsLock.Lock()
 	defer s.protocolsLock.Unlock()
 

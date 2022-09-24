@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"testing"
 
 	"github.com/KalyCoinProject/kalychain/blockchain"
-	"github.com/KalyCoinProject/kalychain/helper/hex"
 	"github.com/KalyCoinProject/kalychain/helper/progress"
 	"github.com/KalyCoinProject/kalychain/state/runtime"
 	"github.com/KalyCoinProject/kalychain/types"
@@ -101,11 +101,7 @@ func TestEth_Block_GetBlockTransactionCountByNumber(t *testing.T) {
 }
 
 func TestEth_GetTransactionByHash(t *testing.T) {
-	t.Parallel()
-
 	t.Run("returns correct transaction data if transaction is found in a sealed block", func(t *testing.T) {
-		t.Parallel()
-
 		store := &mockBlockStore{}
 		eth := newTestEthEndpoint(store)
 		block := newTestBlock(1, hash1)
@@ -132,8 +128,6 @@ func TestEth_GetTransactionByHash(t *testing.T) {
 	})
 
 	t.Run("returns correct transaction data if transaction is found in tx pool (pending)", func(t *testing.T) {
-		t.Parallel()
-
 		store := &mockBlockStore{}
 		eth := newTestEthEndpoint(store)
 
@@ -157,8 +151,6 @@ func TestEth_GetTransactionByHash(t *testing.T) {
 	})
 
 	t.Run("returns nil if transaction is nowhere to be found", func(t *testing.T) {
-		t.Parallel()
-
 		eth := newTestEthEndpoint(&mockBlockStore{})
 
 		res, err := eth.GetTransactionByHash(types.StringToHash("abcdef"))
@@ -169,11 +161,7 @@ func TestEth_GetTransactionByHash(t *testing.T) {
 }
 
 func TestEth_GetTransactionReceipt(t *testing.T) {
-	t.Parallel()
-
 	t.Run("returns nil if transaction with same hash not found", func(t *testing.T) {
-		t.Parallel()
-
 		store := &mockBlockStore{}
 		eth := newTestEthEndpoint(store)
 
@@ -184,8 +172,6 @@ func TestEth_GetTransactionReceipt(t *testing.T) {
 	})
 
 	t.Run("returns correct receipt data for found transaction", func(t *testing.T) {
-		t.Parallel()
-
 		store := newMockBlockStore()
 		eth := newTestEthEndpoint(store)
 		block := newTestBlock(1, hash4)
@@ -248,50 +234,22 @@ func TestEth_Syncing(t *testing.T) {
 	})
 }
 
-// if price-limit flag is set its value should be returned if it is higher than avg gas price
-func TestEth_GetPrice_PriceLimitSet(t *testing.T) {
-	priceLimit := uint64(100333)
-	store := newMockBlockStore()
-	// not using newTestEthEndpoint as we need to set priceLimit
-	eth := newTestEthEndpointWithPriceLimit(store, priceLimit)
-
-	t.Run("returns price limit flag value when it is larger than average gas price", func(t *testing.T) {
-		res, err := eth.GasPrice()
-		store.averageGasPrice = 0
-		assert.NoError(t, err)
-		assert.NotNil(t, res)
-
-		assert.Equal(t, hex.EncodeUint64(priceLimit), res)
-	})
-
-	t.Run("returns average gas price when it is larger than set price limit flag", func(t *testing.T) {
-		store.averageGasPrice = 500000
-		res, err := eth.GasPrice()
-		assert.NoError(t, err)
-		assert.NotNil(t, res)
-
-		assert.GreaterOrEqual(t, res, hex.EncodeUint64(priceLimit))
-	})
-}
-
 func TestEth_GasPrice(t *testing.T) {
 	store := newMockBlockStore()
-	store.averageGasPrice = 9999
+	store.averageGasPrice, _ = strconv.ParseInt(defaultMinGasPrice, 0, 64)
 	eth := newTestEthEndpoint(store)
 
 	res, err := eth.GasPrice()
 	assert.NoError(t, err)
 	assert.NotNil(t, res)
 
-	assert.Equal(t, fmt.Sprintf("0x%x", store.averageGasPrice), res)
+	//nolint:forcetypeassert
+	response := res.(string)
+	assert.Equal(t, fmt.Sprintf("0x%x", store.averageGasPrice), response)
 }
 
 func TestEth_Call(t *testing.T) {
-	t.Parallel()
-
 	t.Run("returns error if transaction execution fails", func(t *testing.T) {
-		t.Parallel()
-
 		store := newMockBlockStore()
 		store.add(newTestBlock(100, hash1))
 		store.ethCallError = errors.New("an arbitrary error")
@@ -314,8 +272,6 @@ func TestEth_Call(t *testing.T) {
 	})
 
 	t.Run("returns a value representing result of the successful transaction execution", func(t *testing.T) {
-		t.Parallel()
-
 		store := newMockBlockStore()
 		store.add(newTestBlock(100, hash1))
 		store.ethCallError = nil

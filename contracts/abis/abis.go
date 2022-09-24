@@ -1,13 +1,21 @@
 package abis
 
 import (
-	"github.com/umbracle/ethgo/abi"
+	"github.com/umbracle/go-web3/abi"
 )
 
+// Predeployed system contract ABI
 var (
-	// ABI for Staking Contract
-	StakingABI = abi.MustNewABI(StakingJSONABI)
+	// ValidatorSet contract abi
+	ValidatorSetABI = abi.MustNewABI(ValidatorSetJSONABI)
+	// bridge contract abi
+	BridgeABI = abi.MustNewABI(BridgeJSONABI)
+	// vault contract abi
+	VaultABI = abi.MustNewABI(VaultJSONABI)
+)
 
-	// ABI for Contract used in e2e stress test
+// Temporarily deployed contract ABI
+var (
+	// StressTest contract abi
 	StressTestABI = abi.MustNewABI(StressTestJSONABI)
 )

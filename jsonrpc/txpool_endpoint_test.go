@@ -11,11 +11,7 @@ import (
 )
 
 func TestContentEndpoint(t *testing.T) {
-	t.Parallel()
-
 	t.Run("returns empty ContentResponse if tx pool has no transactions", func(t *testing.T) {
-		t.Parallel()
-
 		mockStore := newMockTxPoolStore()
 		txPoolEndpoint := &TxPool{mockStore}
 
@@ -30,8 +26,6 @@ func TestContentEndpoint(t *testing.T) {
 
 	//nolint:dupl
 	t.Run("returns correct data for pending transaction", func(t *testing.T) {
-		t.Parallel()
-
 		mockStore := newMockTxPoolStore()
 		address1 := types.Address{0x1}
 		testTx := newTestTransaction(2, address1)
@@ -60,8 +54,6 @@ func TestContentEndpoint(t *testing.T) {
 
 	//nolint:dupl
 	t.Run("returns correct data for queued transaction", func(t *testing.T) {
-		t.Parallel()
-
 		mockStore := newMockTxPoolStore()
 		address1 := types.Address{0x1}
 		testTx := newTestTransaction(2, address1)
@@ -89,8 +81,6 @@ func TestContentEndpoint(t *testing.T) {
 	})
 
 	t.Run("returns correct ContentResponse data for multiple transactions", func(t *testing.T) {
-		t.Parallel()
-
 		mockStore := newMockTxPoolStore()
 		address1 := types.Address{0x1}
 		testTx1 := newTestTransaction(2, address1)
@@ -118,11 +108,7 @@ func TestContentEndpoint(t *testing.T) {
 }
 
 func TestInspectEndpoint(t *testing.T) {
-	t.Parallel()
-
 	t.Run("returns empty InspectResponse if tx pool has no transactions", func(t *testing.T) {
-		t.Parallel()
-
 		mockStore := newMockTxPoolStore()
 		mockStore.maxSlots = 1024
 		txPoolEndpoint := &TxPool{mockStore}
@@ -139,8 +125,6 @@ func TestInspectEndpoint(t *testing.T) {
 	})
 
 	t.Run("returns correct data for queued transactions", func(t *testing.T) {
-		t.Parallel()
-
 		mockStore := newMockTxPoolStore()
 		mockStore.capacity = 1
 		address1 := types.Address{0x1}
@@ -161,8 +145,6 @@ func TestInspectEndpoint(t *testing.T) {
 	})
 
 	t.Run("returns correct data for pending transactions", func(t *testing.T) {
-		t.Parallel()
-
 		mockStore := newMockTxPoolStore()
 		mockStore.capacity = 2
 		address1 := types.Address{0x1}
@@ -186,11 +168,7 @@ func TestInspectEndpoint(t *testing.T) {
 }
 
 func TestStatusEndpoint(t *testing.T) {
-	t.Parallel()
-
 	t.Run("returns empty StatusResponse if tx pool has no transactions", func(t *testing.T) {
-		t.Parallel()
-
 		mockStore := newMockTxPoolStore()
 		txPoolEndpoint := &TxPool{mockStore}
 
@@ -203,8 +181,6 @@ func TestStatusEndpoint(t *testing.T) {
 	})
 
 	t.Run("returns correct count of pending/queued transactions", func(t *testing.T) {
-		t.Parallel()
-
 		mockStore := newMockTxPoolStore()
 		address1 := types.Address{0x1}
 		testTx1 := newTestTransaction(2, address1)

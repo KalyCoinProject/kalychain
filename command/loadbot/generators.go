@@ -6,9 +6,10 @@ import (
 	"strings"
 
 	"github.com/KalyCoinProject/kalychain/crypto"
+	"github.com/KalyCoinProject/kalychain/helper/common"
 	txpoolOp "github.com/KalyCoinProject/kalychain/txpool/proto"
 	"github.com/KalyCoinProject/kalychain/types"
-	"github.com/umbracle/ethgo/jsonrpc"
+	"github.com/umbracle/go-web3/jsonrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -25,7 +26,12 @@ func createJSONRPCClient(endpoint string, maxConns int) (*jsonrpc.Client, error)
 }
 
 func createGRPCClient(endpoint string) (txpoolOp.TxnPoolOperatorClient, error) {
-	conn, err := grpc.Dial(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(
+		endpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(common.MaxGrpcMsgSize),
+			grpc.MaxCallSendMsgSize(common.MaxGrpcMsgSize)))
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +47,7 @@ func extractSenderAccount(address types.Address) (*Account, error) {
 
 	privateKeyRaw := os.Getenv("LOADBOT_" + address.String())
 	privateKeyRaw = strings.TrimPrefix(privateKeyRaw, "0x")
-	privateKey, err := crypto.BytesToECDSAPrivateKey([]byte(privateKeyRaw))
+	privateKey, err := crypto.BytesToPrivateKey([]byte(privateKeyRaw))
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract ECDSA private key from bytes: %w", err)

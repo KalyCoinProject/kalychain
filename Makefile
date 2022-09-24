@@ -20,20 +20,17 @@ protoc:
 build:
 	$(eval LATEST_VERSION = $(shell git describe --tags --abbrev=0))
 	$(eval COMMIT_HASH = $(shell git rev-parse --short HEAD))
-	go build -ldflags="-X 'github.com/KalyCoinProject/kalychain/versioning.Version=$(LATEST_VERSION)+$(COMMIT_HASH)'" main.go
+	$(eval DATE = $(shell date +'%Y-%m-%d_%T'))
+	go build -o kalychain -ldflags="-X 'github.com/KalyCoinProject/kalychain/versioning.Version=$(LATEST_VERSION)+$(COMMIT_HASH)+$(DATE)'" main.go
 
 .PHONY: lint
 lint:
-	golangci-lint run -E whitespace -E wsl -E wastedassign -E unconvert -E tparallel -E thelper -E stylecheck -E prealloc \
-	-E predeclared -E nlreturn -E misspell -E makezero -E lll -E importas -E gosec -E  gofmt -E goconst \
-	-E forcetypeassert -E dogsled -E dupl -E errname -E errorlint -E nolintlint --timeout 2m
+	golangci-lint run -c lint-rule.yaml --timeout=2m
+
+.PHONY: test
+test: build
+	PATH=$(shell pwd):${PATH} go test -count=1 -coverprofile coverage.out -timeout 28m ./...
 
 .PHONY: generate-bsd-licenses
 generate-bsd-licenses:
 	./generate_dependency_licenses.sh BSD-3-Clause,BSD-2-Clause > ./licenses/bsd_licenses.json
-
-.PHONY: test
-test:
-	go build -o artifacts/kalychain .
-	$(eval export PATH=$(shell pwd)/artifacts:$(PATH))
-	go test -timeout 28m ./...

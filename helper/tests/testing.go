@@ -5,22 +5,20 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
-	"math/big"
 	"net"
 	"testing"
 	"time"
 
-	"github.com/golang/protobuf/ptypes/any"
 	libp2pCrypto "github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/multiformats/go-multiaddr"
-	"github.com/umbracle/ethgo"
 
 	"github.com/KalyCoinProject/kalychain/crypto"
 	txpoolOp "github.com/KalyCoinProject/kalychain/txpool/proto"
 	"github.com/KalyCoinProject/kalychain/types"
 	"github.com/stretchr/testify/assert"
-	"github.com/umbracle/ethgo/jsonrpc"
+	"github.com/umbracle/go-web3"
+	"github.com/umbracle/go-web3/jsonrpc"
 	empty "google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -31,7 +29,7 @@ var (
 func GenerateKeyAndAddr(t *testing.T) (*ecdsa.PrivateKey, types.Address) {
 	t.Helper()
 
-	key, err := crypto.GenerateECDSAKey()
+	key, err := crypto.GenerateKey()
 
 	assert.NoError(t, err)
 
@@ -60,6 +58,40 @@ func GenerateTestMultiAddr(t *testing.T) multiaddr.Multiaddr {
 	assert.NoError(t, err)
 
 	return addr
+}
+
+func GenerateTestBridgeAssociatedAddress(t *testing.T, signerCount int) (owner types.Address, signers []types.Address) {
+	t.Helper()
+
+	if signerCount <= 0 {
+		t.Fatalf("Bridge contract must have signers")
+	}
+
+	ownerKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("Unable to generate private key, %v", err)
+	}
+
+	owner, err = crypto.GetAddressFromKey(ownerKey)
+	if err != nil {
+		t.Fatalf("Unable to get address from private key, %v", err)
+	}
+
+	for i := 0; i < signerCount; i++ {
+		priv, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatalf("Unable to generate private key, %v", err)
+		}
+
+		address, err := crypto.GetAddressFromKey(priv)
+		if err != nil {
+			t.Fatalf("Unable to get address from private key, %v", err)
+		}
+
+		signers = append(signers, address)
+	}
+
+	return owner, signers
 }
 
 func RetryUntilTimeout(ctx context.Context, f func() (interface{}, bool)) (interface{}, error) {
@@ -131,7 +163,7 @@ func WaitUntilTxPoolEmpty(
 func WaitForNonce(
 	ctx context.Context,
 	ethClient *jsonrpc.Eth,
-	addr ethgo.Address,
+	addr web3.Address,
 	expectedNonce uint64,
 ) (
 	interface{},
@@ -143,18 +175,18 @@ func WaitForNonce(
 	}
 
 	resObj, err := RetryUntilTimeout(ctx, func() (interface{}, bool) {
-		nonce, err := ethClient.GetNonce(addr, ethgo.Latest)
+		nonce, err := ethClient.GetNonce(addr, web3.Latest)
 		if err != nil {
-			// error -> stop retrying
+			//	error -> stop retrying
 			return result{nonce, err}, false
 		}
 
 		if nonce >= expectedNonce {
-			// match -> return result
+			//	match -> return result
 			return result{nonce, nil}, false
 		}
 
-		// continue retrying
+		//	continue retrying
 		return nil, true
 	})
 
@@ -171,9 +203,9 @@ func WaitForNonce(
 }
 
 // WaitForReceipt waits transaction receipt
-func WaitForReceipt(ctx context.Context, client *jsonrpc.Eth, hash ethgo.Hash) (*ethgo.Receipt, error) {
+func WaitForReceipt(ctx context.Context, client *jsonrpc.Eth, hash web3.Hash) (*web3.Receipt, error) {
 	type result struct {
-		receipt *ethgo.Receipt
+		receipt *web3.Receipt
 		err     error
 	}
 
@@ -223,51 +255,4 @@ func GetFreePort() (port int, err error) {
 	}
 
 	return
-}
-
-type GenerateTxReqParams struct {
-	Nonce         uint64
-	ReferenceAddr types.Address
-	ReferenceKey  *ecdsa.PrivateKey
-	ToAddress     types.Address
-	GasPrice      *big.Int
-	Value         *big.Int
-	Input         []byte
-}
-
-func generateTx(params GenerateTxReqParams) (*types.Transaction, error) {
-	signer := crypto.NewEIP155Signer(100)
-
-	signedTx, signErr := signer.SignTx(&types.Transaction{
-		Nonce:    params.Nonce,
-		From:     params.ReferenceAddr,
-		To:       &params.ToAddress,
-		GasPrice: params.GasPrice,
-		Gas:      1000000,
-		Value:    params.Value,
-		Input:    params.Input,
-		V:        big.NewInt(27), // it is necessary to encode in rlp
-	}, params.ReferenceKey)
-
-	if signErr != nil {
-		return nil, fmt.Errorf("unable to sign transaction, %w", signErr)
-	}
-
-	return signedTx, nil
-}
-
-func GenerateAddTxnReq(params GenerateTxReqParams) (*txpoolOp.AddTxnReq, error) {
-	txn, err := generateTx(params)
-	if err != nil {
-		return nil, err
-	}
-
-	msg := &txpoolOp.AddTxnReq{
-		Raw: &any.Any{
-			Value: txn.MarshalRLP(),
-		},
-		From: types.ZeroAddress.String(),
-	}
-
-	return msg, nil
 }

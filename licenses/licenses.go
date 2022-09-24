@@ -14,7 +14,7 @@ type DepLicense struct {
 }
 
 var (
-	// Kaly Chain License
+	// KalyCoinProject Kalychain License
 	License string
 
 	// Dependency Licenses

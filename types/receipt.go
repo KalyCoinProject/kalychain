@@ -53,7 +53,7 @@ const BloomByteLength = 256
 type Bloom [BloomByteLength]byte
 
 func (b *Bloom) UnmarshalText(input []byte) error {
-	input = hex.DropHexPrefix(input)
+	input = input[2:]
 	if _, err := goHex.Decode(b[:], input); err != nil {
 		return err
 	}
@@ -75,9 +75,9 @@ func (b *Bloom) Scan(src interface{}) error {
 		return errors.New("invalid type assert")
 	}
 
-	bb, decodeErr := hex.DecodeHex(string(stringVal))
-	if decodeErr != nil {
-		return fmt.Errorf("unable to decode value, %w", decodeErr)
+	bb, err := hex.DecodeHex(string(stringVal))
+	if err != nil {
+		return fmt.Errorf("decode hex err: %w", err)
 	}
 
 	copy(b[:], bb[:])

@@ -3,7 +3,7 @@ package types
 import (
 	"fmt"
 
-	"github.com/umbracle/fastrlp"
+	"github.com/KalyCoinProject/fastrlp"
 )
 
 type RLPStoreUnmarshaler interface {
@@ -21,7 +21,8 @@ func (b *Body) UnmarshalRLPFrom(p *fastrlp.Parser, v *fastrlp.Value) error {
 	}
 
 	if len(tuple) < 2 {
-		return fmt.Errorf("incorrect number of elements to decode header, expected 2 but found %d", len(tuple))
+		return fmt.Errorf("incorrect number of elements to decode body, expected at least 2 but found %d",
+			len(tuple))
 	}
 
 	// transactions
@@ -68,7 +69,8 @@ func (t *Transaction) UnmarshalStoreRLPFrom(p *fastrlp.Parser, v *fastrlp.Value)
 	}
 
 	if len(elems) < 2 {
-		return fmt.Errorf("incorrect number of elements to decode transaction, expected 2 but found %d", len(elems))
+		return fmt.Errorf("incorrect number of elements to decode transaction, expected at least 2 but found %d",
+			len(elems))
 	}
 
 	// consensus part
@@ -116,7 +118,8 @@ func (r *Receipt) UnmarshalStoreRLPFrom(p *fastrlp.Parser, v *fastrlp.Value) err
 	}
 
 	if len(elems) < 3 {
-		return fmt.Errorf("incorrect number of elements to decode receipt, expected at least 3 but found %d", len(elems))
+		return fmt.Errorf("incorrect number of elements to decode receipt, expected at least 3 but found %d",
+			len(elems))
 	}
 
 	if err := r.UnmarshalRLPFrom(p, elems[0]); err != nil {

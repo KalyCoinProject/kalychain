@@ -12,8 +12,8 @@ import (
 	"github.com/KalyCoinProject/kalychain/state"
 	"github.com/KalyCoinProject/kalychain/state/runtime"
 	"github.com/KalyCoinProject/kalychain/types"
+	"github.com/KalyCoinProject/fastrlp"
 	"github.com/stretchr/testify/assert"
-	"github.com/umbracle/fastrlp"
 )
 
 var (
@@ -619,8 +619,6 @@ func getExampleStore() *mockSpecialStore {
 // the latest block gas limit for the upper bound, or the specified
 // gas limit in the transaction
 func TestEth_EstimateGas_GasLimit(t *testing.T) {
-	// TODO Make this test run in parallel when the race
-	// condition is fixed in gas estimation
 	store := getExampleStore()
 	ethEndpoint := newTestEthEndpoint(store)
 

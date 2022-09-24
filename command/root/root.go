@@ -17,7 +17,6 @@ import (
 	"github.com/KalyCoinProject/kalychain/command/status"
 	"github.com/KalyCoinProject/kalychain/command/txpool"
 	"github.com/KalyCoinProject/kalychain/command/version"
-	"github.com/KalyCoinProject/kalychain/command/whitelist"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +27,7 @@ type RootCommand struct {
 func NewRootCommand() *RootCommand {
 	rootCommand := &RootCommand{
 		baseCmd: &cobra.Command{
-			Short: "Kaly Chain is a framework for building Ethereum-compatible Blockchain networks",
+			Short: "KalyCoinProject Kalychain is a framework for building Ethereum-compatible Blockchain networks",
 		},
 	}
 
@@ -52,7 +51,6 @@ func (rc *RootCommand) registerSubCommands() {
 		backup.GetCommand(),
 		genesis.GetCommand(),
 		server.GetCommand(),
-		whitelist.GetCommand(),
 		license.GetCommand(),
 	)
 }

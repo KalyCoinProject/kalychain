@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/KalyCoinProject/kalychain/helper/common"
 	manet "github.com/multiformats/go-multiaddr/net"
 
 	"github.com/libp2p/go-libp2p-core/network"
@@ -25,9 +26,12 @@ type GrpcStream struct {
 
 func NewGrpcStream() *GrpcStream {
 	return &GrpcStream{
-		ctx:        context.Background(),
-		streamCh:   make(chan network.Stream),
-		grpcServer: grpc.NewServer(grpc.UnaryInterceptor(interceptor)),
+		ctx:      context.Background(),
+		streamCh: make(chan network.Stream),
+		grpcServer: grpc.NewServer(
+			grpc.UnaryInterceptor(interceptor),
+			grpc.MaxRecvMsgSize(common.MaxGrpcMsgSize),
+			grpc.MaxSendMsgSize(common.MaxGrpcMsgSize)),
 	}
 }
 
@@ -37,7 +41,7 @@ type Context struct {
 }
 
 // interceptor is the middleware function that wraps
-// gRPC peer data to custom Kaly Chain structures
+// gRPC peer data to custom KalyCoinProject Kalychain structures
 func interceptor(
 	ctx context.Context,
 	req interface{},
@@ -122,7 +126,13 @@ func WrapClient(s network.Stream) *grpc.ClientConn {
 	opts := grpc.WithContextDialer(func(ctx context.Context, peerIdStr string) (net.Conn, error) {
 		return &streamConn{s}, nil
 	})
-	conn, err := grpc.Dial("", grpc.WithTransportCredentials(insecure.NewCredentials()), opts)
+	conn, err := grpc.Dial(
+		"",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(common.MaxGrpcMsgSize),
+			grpc.MaxCallSendMsgSize(common.MaxGrpcMsgSize)),
+		opts)
 
 	if err != nil {
 		// TODO: this should not fail at all

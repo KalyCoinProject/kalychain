@@ -6,8 +6,6 @@ import (
 	"math"
 	"net"
 
-	"github.com/KalyCoinProject/kalychain/command/server/config"
-
 	"github.com/KalyCoinProject/kalychain/network/common"
 
 	"github.com/KalyCoinProject/kalychain/chain"
@@ -26,7 +24,7 @@ var (
 func (p *serverParams) initConfigFromFile() error {
 	var parseErr error
 
-	if p.rawConfig, parseErr = config.ReadConfigFile(p.configPath); parseErr != nil {
+	if p.rawConfig, parseErr = readConfigFile(p.configPath); parseErr != nil {
 		return parseErr
 	}
 
@@ -123,11 +121,6 @@ func (p *serverParams) initGenesisConfig() error {
 		return parseErr
 	}
 
-	// if block-gas-target flag is set override genesis.json value
-	if p.blockGasTarget != 0 {
-		p.genesisConfig.Params.BlockGasTarget = p.blockGasTarget
-	}
-
 	return nil
 }
 
@@ -217,6 +210,7 @@ func (p *serverParams) initAddresses() error {
 		return err
 	}
 
+	// need libp2p address to be set before initializing nat address
 	if err := p.initNATAddress(); err != nil {
 		return err
 	}
@@ -226,6 +220,10 @@ func (p *serverParams) initAddresses() error {
 	}
 
 	if err := p.initJSONRPCAddress(); err != nil {
+		return err
+	}
+
+	if err := p.initGraphQLAddress(); err != nil {
 		return err
 	}
 
@@ -267,9 +265,23 @@ func (p *serverParams) initNATAddress() error {
 		return nil
 	}
 
-	if p.natAddress = net.ParseIP(
-		p.rawConfig.Network.NatAddr,
-	); p.natAddress == nil {
+	var parseErr error
+	p.natAddress, parseErr = net.ResolveTCPAddr("tcp", p.rawConfig.Network.NatAddr)
+
+	if parseErr != nil {
+		//compatible with no port setups
+		fmt.Printf("%s, use libp2p port\n", parseErr)
+
+		oldNatAddrCfg := net.ParseIP(p.rawConfig.Network.NatAddr)
+		if oldNatAddrCfg != nil {
+			p.natAddress, parseErr = net.ResolveTCPAddr("tcp",
+				fmt.Sprintf("%s:%d", oldNatAddrCfg.String(), p.libp2pAddress.Port),
+			)
+			if parseErr == nil {
+				return nil
+			}
+		}
+
 		return errInvalidNATAddress
 	}
 
@@ -298,6 +310,19 @@ func (p *serverParams) initJSONRPCAddress() error {
 	if p.jsonRPCAddress, parseErr = helper.ResolveAddr(
 		p.rawConfig.JSONRPCAddr,
 		helper.AllInterfacesBinding,
+	); parseErr != nil {
+		return parseErr
+	}
+
+	return nil
+}
+
+func (p *serverParams) initGraphQLAddress() error {
+	var parseErr error
+
+	if p.graphqlAddress, parseErr = helper.ResolveAddr(
+		p.rawConfig.GraphQLAddr,
+		helper.LocalHostBinding,
 	); parseErr != nil {
 		return parseErr
 	}

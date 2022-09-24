@@ -6,8 +6,6 @@ import (
 	"github.com/KalyCoinProject/kalychain/command"
 	"github.com/KalyCoinProject/kalychain/command/helper"
 	"github.com/KalyCoinProject/kalychain/consensus/ibft"
-	"github.com/KalyCoinProject/kalychain/helper/common"
-	"github.com/KalyCoinProject/kalychain/validators"
 	"github.com/spf13/cobra"
 )
 
@@ -23,7 +21,6 @@ func GetCommand() *cobra.Command {
 
 	setFlags(genesisCmd)
 	setLegacyFlags(genesisCmd)
-
 	helper.SetRequiredFlags(genesisCmd, params.getRequiredFlags())
 
 	return genesisCmd
@@ -34,14 +31,7 @@ func setFlags(cmd *cobra.Command) {
 		&params.genesisPath,
 		dirFlag,
 		fmt.Sprintf("./%s", command.DefaultGenesisFileName),
-		"the directory for the Kaly Chain genesis data",
-	)
-
-	cmd.Flags().Uint64Var(
-		&params.chainID,
-		chainIDFlag,
-		command.DefaultChainID,
-		"the ID of the chain",
+		"the directory for the KalyCoinProject Kalychain genesis data",
 	)
 
 	cmd.Flags().StringVar(
@@ -49,6 +39,13 @@ func setFlags(cmd *cobra.Command) {
 		nameFlag,
 		command.DefaultChainName,
 		"the name for the chain",
+	)
+
+	cmd.Flags().StringVar(
+		&params.consensusRaw,
+		command.ConsensusFlag,
+		string(command.DefaultConsensus),
+		"the consensus protocol to be used",
 	)
 
 	cmd.Flags().StringArrayVar(
@@ -61,13 +58,6 @@ func setFlags(cmd *cobra.Command) {
 		),
 	)
 
-	cmd.Flags().Uint64Var(
-		&params.blockGasLimit,
-		blockGasLimitFlag,
-		command.DefaultGenesisGasLimit,
-		"the maximum amount of gas used by all transactions in a block",
-	)
-
 	cmd.Flags().StringArrayVar(
 		&params.bootnodes,
 		command.BootnodeFlag,
@@ -75,11 +65,41 @@ func setFlags(cmd *cobra.Command) {
 		"multiAddr URL for p2p discovery bootstrap. This flag can be used multiple times",
 	)
 
-	cmd.Flags().StringVar(
-		&params.consensusRaw,
-		command.ConsensusFlag,
-		string(command.DefaultConsensus),
-		"the consensus protocol to be used",
+	// IBFT Validators
+	{
+		cmd.Flags().StringVar(
+			&params.validatorPrefixPath,
+			ibftValidatorPrefixFlag,
+			"",
+			"prefix path for validator folder directory. "+
+				"Needs to be present if ibft-validator is omitted",
+		)
+
+		cmd.Flags().StringArrayVar(
+			&params.ibftValidatorsRaw,
+			ibftValidatorFlag,
+			[]string{},
+			"addresses to be used as IBFT validators, can be used multiple times. "+
+				"Needs to be present if ibft-validators-prefix-path is omitted",
+		)
+
+		// --ibft-validator-prefix-path & --ibft-validator can't be given at same time
+		cmd.MarkFlagsMutuallyExclusive(ibftValidatorPrefixFlag, ibftValidatorFlag)
+	}
+
+	cmd.Flags().BoolVar(
+		&params.isPos,
+		posFlag,
+		false,
+		"the flag indicating that the client should use Proof of Stake IBFT. Defaults to "+
+			"Proof of Authority if flag is not provided or false",
+	)
+
+	cmd.Flags().Uint64Var(
+		&params.chainID,
+		chainIDFlag,
+		command.DefaultChainID,
+		"the ID of the chain",
 	)
 
 	cmd.Flags().Uint64Var(
@@ -89,59 +109,40 @@ func setFlags(cmd *cobra.Command) {
 		"the epoch size for the chain",
 	)
 
-	// IBFT Validators
-	{
-		cmd.Flags().StringVar(
-			&params.rawIBFTValidatorType,
-			command.IBFTValidatorTypeFlag,
-			string(validators.BLSValidatorType),
-			"the type of validators in IBFT",
-		)
+	cmd.Flags().Uint64Var(
+		&params.blockGasLimit,
+		blockGasLimitFlag,
+		command.DefaultGenesisGasLimit,
+		"the maximum amount of gas used by all transactions in a block",
+	)
 
-		cmd.Flags().StringVar(
-			&params.validatorPrefixPath,
-			command.IBFTValidatorPrefixFlag,
-			"",
-			"prefix path for validator folder directory. "+
-				"Needs to be present if ibft-validator is omitted",
-		)
+	cmd.Flags().StringVar(
+		&params.validatorsetOwner,
+		validatorsetOwner,
+		"",
+		"the system ValidatorSet contract owner address",
+	)
 
-		cmd.Flags().StringArrayVar(
-			&params.ibftValidatorsRaw,
-			command.IBFTValidatorFlag,
-			[]string{},
-			"addresses to be used as IBFT validators, can be used multiple times. "+
-				"Needs to be present if ibft-validators-prefix-path is omitted",
-		)
+	cmd.Flags().StringVar(
+		&params.bridgeOwner,
+		bridgeOwner,
+		"",
+		"the system bridge contract owner address",
+	)
 
-		// --ibft-validator-prefix-path & --ibft-validator can't be given at same time
-		cmd.MarkFlagsMutuallyExclusive(command.IBFTValidatorPrefixFlag, command.IBFTValidatorFlag)
-	}
+	cmd.Flags().StringArrayVar(
+		&params.bridgeSignersRaw,
+		bridgeSigner,
+		[]string{},
+		"the system bridge contract signer address. This flag can be used multiple times",
+	)
 
-	// PoS
-	{
-		cmd.Flags().BoolVar(
-			&params.isPos,
-			posFlag,
-			false,
-			"the flag indicating that the client should use Proof of Stake IBFT. Defaults to "+
-				"Proof of Authority if flag is not provided or false",
-		)
-
-		cmd.Flags().Uint64Var(
-			&params.minNumValidators,
-			minValidatorCount,
-			1,
-			"the minimum number of validators in the validator set for PoS",
-		)
-
-		cmd.Flags().Uint64Var(
-			&params.maxNumValidators,
-			maxValidatorCount,
-			common.MaxSafeJSInt,
-			"the maximum number of validators in the validator set for PoS",
-		)
-	}
+	cmd.Flags().StringVar(
+		&params.vaultOwner,
+		vaultOwner,
+		"",
+		"the system vault contract owner address",
+	)
 }
 
 // setLegacyFlags sets the legacy flags to preserve backwards compatibility
@@ -152,7 +153,10 @@ func setLegacyFlags(cmd *cobra.Command) {
 		&params.chainID,
 		chainIDFlagLEGACY,
 		command.DefaultChainID,
-		"the ID of the chain",
+		fmt.Sprintf(
+			"the ID of the chain. Default: %d",
+			command.DefaultChainID,
+		),
 	)
 
 	_ = cmd.Flags().MarkHidden(chainIDFlagLEGACY)

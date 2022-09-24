@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/KalyCoinProject/fastrlp"
 	iradix "github.com/hashicorp/go-immutable-radix"
-	"github.com/umbracle/fastrlp"
 
 	"github.com/KalyCoinProject/kalychain/crypto"
 	"github.com/KalyCoinProject/kalychain/types"
@@ -65,7 +65,8 @@ func (a *Account) UnmarshalRlp(b []byte) error {
 	}
 
 	if len(elems) < 4 {
-		return fmt.Errorf("incorrect number of elements to decode account, expected 4 but found %d", len(elems))
+		return fmt.Errorf("incorrect number of elements to decode account, expected at least 4 but found %d",
+			len(elems))
 	}
 
 	// nonce

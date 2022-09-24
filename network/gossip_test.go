@@ -8,7 +8,6 @@ import (
 	"time"
 
 	testproto "github.com/KalyCoinProject/kalychain/network/proto"
-	"github.com/libp2p/go-libp2p-core/peer"
 )
 
 func NumSubscribers(srv *Server, topic string) int {
@@ -20,10 +19,13 @@ func WaitForSubscribers(ctx context.Context, srv *Server, topic string, expected
 		if n := NumSubscribers(srv, topic); n >= expectedNumPeers {
 			return nil
 		}
+
+		delay := time.NewTimer(100 * time.Millisecond)
+
 		select {
 		case <-ctx.Done():
 			return errors.New("canceled")
-		case <-time.After(100 * time.Millisecond):
+		case <-delay.C:
 			continue
 		}
 	}
@@ -61,7 +63,7 @@ func TestSimpleGossip(t *testing.T) {
 
 		serverTopics[i] = topic
 
-		if subscribeErr := topic.Subscribe(func(obj interface{}, _ peer.ID) {
+		if subscribeErr := topic.Subscribe(func(obj interface{}) {
 			// Everyone should relay they got the message
 			genericMessage, ok := obj.(*testproto.GenericMessage)
 			if !ok {
@@ -94,9 +96,11 @@ func TestSimpleGossip(t *testing.T) {
 	messagesGossiped := 0
 
 	for {
+		delay := time.NewTimer(15 * time.Second)
+
 		select {
-		case <-time.After(time.Second * 15):
-			t.Fatalf("Multicast messages not received before timeout")
+		case <-delay.C:
+			t.Fatalf("Gossip messages not received before timeout")
 		case message := <-messageCh:
 			if message.Message == sentMessage {
 				messagesGossiped++

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/KalyCoinProject/kalychain/e2e/framework"
 	"github.com/KalyCoinProject/kalychain/jsonrpc"
@@ -60,6 +61,7 @@ func TestWS_Response(t *testing.T) {
 	srvs := framework.NewTestServers(t, 1, func(config *framework.TestServerConfig) {
 		config.SetConsensus(framework.ConsensusDev)
 		config.SetSeal(true)
+		config.EnableWebSocket()
 
 		for _, account := range preminedAccounts {
 			config.Premine(account.address, account.balance)
@@ -109,7 +111,7 @@ func TestWS_Response(t *testing.T) {
 	})
 
 	t.Run("Valid block number after transfer", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), framework.DefaultTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		_, err = srv.SendRawTx(ctx, &framework.PreparedTransaction{

@@ -10,14 +10,18 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/btcsuite/btcd/btcec"
 	"github.com/KalyCoinProject/kalychain/helper/hex"
 	"github.com/KalyCoinProject/kalychain/helper/keystore"
 	"github.com/KalyCoinProject/kalychain/secrets"
 	"github.com/KalyCoinProject/kalychain/types"
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/coinbase/kryptology/pkg/signatures/bls/bls_sig"
-	"github.com/umbracle/fastrlp"
 	"golang.org/x/crypto/sha3"
+
+	"github.com/KalyCoinProject/fastrlp"
+)
+
+var (
+	ErrEmptySignature = errors.New("empty signature")
 )
 
 var (
@@ -28,21 +32,8 @@ var (
 var S256 = btcec.S256()
 
 var (
-	secp256k1N = hex.MustDecodeHex("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141")
-	one        = []byte{0x01}
-
-	ErrInvalidBLSSignature = errors.New("invalid BLS Signature")
-)
-
-type KeyType string
-
-const (
-	KeyECDSA KeyType = "ecdsa"
-	KeyBLS   KeyType = "bls"
-)
-
-var (
-	errInvalidSignature = errors.New("invalid signature")
+	secp256k1N, _ = hex.DecodeHex("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141")
+	one           = []byte{0x01}
 )
 
 func trimLeftZeros(b []byte) []byte {
@@ -108,19 +99,19 @@ func CreateAddress2(addr types.Address, salt [32]byte, inithash []byte) types.Ad
 	return types.BytesToAddress(Keccak256(create2Prefix, addr.Bytes(), salt[:], Keccak256(inithash))[12:])
 }
 
-func ParseECDSAPrivateKey(buf []byte) (*ecdsa.PrivateKey, error) {
+func ParsePrivateKey(buf []byte) (*ecdsa.PrivateKey, error) {
 	prv, _ := btcec.PrivKeyFromBytes(S256, buf)
 
 	return prv.ToECDSA(), nil
 }
 
-// MarshalECDSAPrivateKey serializes the private key's D value to a []byte
-func MarshalECDSAPrivateKey(priv *ecdsa.PrivateKey) ([]byte, error) {
+// MarshalPrivateKey serializes the private key's D value to a []byte
+func MarshalPrivateKey(priv *ecdsa.PrivateKey) ([]byte, error) {
 	return (*btcec.PrivateKey)(priv).Serialize(), nil
 }
 
-// GenerateECDSAKey generates a new key based on the secp256k1 elliptic curve.
-func GenerateECDSAKey() (*ecdsa.PrivateKey, error) {
+// GenerateKey generates a new key based on the secp256k1 elliptic curve.
+func GenerateKey() (*ecdsa.PrivateKey, error) {
 	return ecdsa.GenerateKey(S256, rand.Reader)
 }
 
@@ -151,13 +142,13 @@ func Ecrecover(hash, sig []byte) ([]byte, error) {
 // RecoverPubkey verifies the compact signature "signature" of "hash" for the
 // secp256k1 curve.
 func RecoverPubkey(signature, hash []byte) (*ecdsa.PublicKey, error) {
+	if len(signature) == 0 {
+		// would not handle invalid signature and hash, which might from faulty nodes
+		return nil, ErrEmptySignature
+	}
+
 	size := len(signature)
 	term := byte(27)
-
-	// Make sure the signature is present
-	if signature == nil || size < 1 {
-		return nil, errInvalidSignature
-	}
 
 	if signature[size-1] == 1 {
 		term = 28
@@ -187,45 +178,6 @@ func Sign(priv *ecdsa.PrivateKey, hash []byte) ([]byte, error) {
 	}
 
 	return append(sig, term)[1:], nil
-}
-
-// SignByBLS signs the given data by BLS
-func SignByBLS(prv *bls_sig.SecretKey, msg []byte) ([]byte, error) {
-	signature, err := bls_sig.NewSigPop().Sign(prv, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	return signature.MarshalBinary()
-}
-
-// VerifyBLSSignature verifies the given signature from Public Key and original message
-func VerifyBLSSignature(pubkey *bls_sig.PublicKey, sig *bls_sig.Signature, message []byte) error {
-	ok, err := bls_sig.NewSigPop().Verify(pubkey, message, sig)
-	if err != nil {
-		return err
-	}
-
-	if !ok {
-		return ErrInvalidBLSSignature
-	}
-
-	return nil
-}
-
-// VerifyBLSSignatureFromBytes verifies BLS Signature from BLS PublicKey, signature, and original message in bytes
-func VerifyBLSSignatureFromBytes(rawPubkey, rawSig, message []byte) error {
-	pubkey, err := UnmarshalBLSPublicKey(rawPubkey)
-	if err != nil {
-		return err
-	}
-
-	signature, err := UnmarshalBLSSignature(rawSig)
-	if err != nil {
-		return err
-	}
-
-	return VerifyBLSSignature(pubkey, signature, message)
 }
 
 // SigToPub returns the public key that created the given signature.
@@ -269,14 +221,14 @@ func GetAddressFromKey(key goCrypto.PrivateKey) (types.Address, error) {
 	return PubKeyToAddress(&publicKey), nil
 }
 
-// generateECDSAKeyAndMarshal generates a new ECDSA private key and serializes it to a byte array
-func generateECDSAKeyAndMarshal() ([]byte, error) {
-	key, err := GenerateECDSAKey()
+// generateKeyAndMarshal generates a new private key and serializes it to a byte array
+func generateKeyAndMarshal() ([]byte, error) {
+	key, err := GenerateKey()
 	if err != nil {
 		return nil, err
 	}
 
-	buf, err := MarshalECDSAPrivateKey(key)
+	buf, err := MarshalPrivateKey(key)
 	if err != nil {
 		return nil, err
 	}
@@ -284,8 +236,8 @@ func generateECDSAKeyAndMarshal() ([]byte, error) {
 	return buf, nil
 }
 
-// BytesToECDSAPrivateKey reads the input byte array and constructs a private key if possible
-func BytesToECDSAPrivateKey(input []byte) (*ecdsa.PrivateKey, error) {
+// BytesToPrivateKey reads the input byte array and constructs a private key if possible
+func BytesToPrivateKey(input []byte) (*ecdsa.PrivateKey, error) {
 	// The key file on disk should be encoded in Base64,
 	// so it must be decoded before it can be parsed by ParsePrivateKey
 	decoded, err := hex.DecodeString(string(input))
@@ -300,7 +252,7 @@ func BytesToECDSAPrivateKey(input []byte) (*ecdsa.PrivateKey, error) {
 	}
 
 	// Convert decoded bytes to a private key
-	key, err := ParseECDSAPrivateKey(decoded)
+	key, err := ParsePrivateKey(decoded)
 	if err != nil {
 		return nil, err
 	}
@@ -308,106 +260,15 @@ func BytesToECDSAPrivateKey(input []byte) (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
-// GenerateBLSKey generates a new BLS key
-func GenerateBLSKey() (*bls_sig.SecretKey, error) {
-	blsPop := bls_sig.NewSigPop()
-
-	_, sk, err := blsPop.Keygen()
-	if err != nil {
-		return nil, err
-	}
-
-	return sk, nil
-}
-
-// generateBLSKeyAndMarshal generates a new BLS secret key and serializes it to a byte array
-func generateBLSKeyAndMarshal() ([]byte, error) {
-	key, err := GenerateBLSKey()
-	if err != nil {
-		return nil, err
-	}
-
-	buf, err := key.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-
-	return buf, nil
-}
-
-// BytesToECDSAPrivateKey reads the input byte array and constructs a private key if possible
-func BytesToBLSSecretKey(input []byte) (*bls_sig.SecretKey, error) {
-	// The key file on disk should be encoded in Base64,
-	// so it must be decoded before it can be parsed by ParsePrivateKey
-	decoded, err := hex.DecodeString(string(input))
-	if err != nil {
-		return nil, err
-	}
-
-	sk := &bls_sig.SecretKey{}
-	if err := sk.UnmarshalBinary(decoded); err != nil {
-		return nil, err
-	}
-
-	return sk, nil
-}
-
-// BLSSecretKeyToPubkeyBytes returns bytes of BLS Public Key corresponding to the given secret key
-func BLSSecretKeyToPubkeyBytes(key *bls_sig.SecretKey) ([]byte, error) {
-	pubKey, err := key.GetPublicKey()
-	if err != nil {
-		return nil, err
-	}
-
-	marshalled, err := pubKey.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-
-	return marshalled, nil
-}
-
-// BytesToBLSPublicKey decodes given hex string and returns BLS Public Key
-func BytesToBLSPublicKey(input string) (*bls_sig.PublicKey, error) {
-	// The key file on disk should be encoded in Base64,
-	// so it must be decoded before it can be parsed by ParsePrivateKey
-	decoded, err := hex.DecodeString(input)
-	if err != nil {
-		return nil, err
-	}
-
-	return UnmarshalBLSPublicKey(decoded)
-}
-
-// UnmarshalBLSPublicKey unmarshal bytes data into BLS Public Key
-func UnmarshalBLSPublicKey(input []byte) (*bls_sig.PublicKey, error) {
-	pk := &bls_sig.PublicKey{}
-	if err := pk.UnmarshalBinary(input); err != nil {
-		return nil, err
-	}
-
-	return pk, nil
-}
-
-// UnmarshalBLSSignature unmarshal bytes data into BLS Signature
-func UnmarshalBLSSignature(input []byte) (*bls_sig.Signature, error) {
-	sig := &bls_sig.Signature{}
-	if err := sig.UnmarshalBinary(input); err != nil {
-		return nil, err
-	}
-
-	return sig, nil
-}
-
 // GenerateOrReadPrivateKey generates a private key at the specified path,
 // or reads it if a key file is present
 func GenerateOrReadPrivateKey(path string) (*ecdsa.PrivateKey, error) {
-	keyBuff, err := keystore.CreateIfNotExists(path, generateECDSAKeyAndMarshal)
+	keyBuff, err := keystore.CreateIfNotExists(path, generateKeyAndMarshal)
 	if err != nil {
 		return nil, err
 	}
 
-	privateKey, err := BytesToECDSAPrivateKey(keyBuff)
+	privateKey, err := BytesToPrivateKey(keyBuff)
 	if err != nil {
 		return nil, fmt.Errorf("unable to execute byte array -> private key conversion, %w", err)
 	}
@@ -415,33 +276,19 @@ func GenerateOrReadPrivateKey(path string) (*ecdsa.PrivateKey, error) {
 	return privateKey, nil
 }
 
-// GenerateAndEncodeECDSAPrivateKey returns a newly generated private key and the Base64 encoding of that private key
-func GenerateAndEncodeECDSAPrivateKey() (*ecdsa.PrivateKey, []byte, error) {
-	keyBuff, err := keystore.CreatePrivateKey(generateECDSAKeyAndMarshal)
+// GenerateAndEncodePrivateKey returns a newly generated private key and the Base64 encoding of that private key
+func GenerateAndEncodePrivateKey() (*ecdsa.PrivateKey, []byte, error) {
+	keyBuff, err := keystore.CreatePrivateKey(generateKeyAndMarshal)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	privateKey, err := BytesToECDSAPrivateKey(keyBuff)
+	privateKey, err := BytesToPrivateKey(keyBuff)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to execute byte array -> private key conversion, %w", err)
 	}
 
 	return privateKey, keyBuff, nil
-}
-
-func GenerateAndEncodeBLSSecretKey() (*bls_sig.SecretKey, []byte, error) {
-	keyBuff, err := keystore.CreatePrivateKey(generateBLSKeyAndMarshal)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	secretKey, err := BytesToBLSSecretKey(keyBuff)
-	if err != nil {
-		return nil, nil, fmt.Errorf("unable to execute byte array -> private key conversion, %w", err)
-	}
-
-	return secretKey, keyBuff, nil
 }
 
 func ReadConsensusKey(manager secrets.SecretsManager) (*ecdsa.PrivateKey, error) {
@@ -450,5 +297,5 @@ func ReadConsensusKey(manager secrets.SecretsManager) (*ecdsa.PrivateKey, error)
 		return nil, err
 	}
 
-	return BytesToECDSAPrivateKey(validatorKey)
+	return BytesToPrivateKey(validatorKey)
 }

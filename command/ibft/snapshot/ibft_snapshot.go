@@ -37,12 +37,5 @@ func runCommand(cmd *cobra.Command, _ []string) {
 		return
 	}
 
-	result, err := newIBFTSnapshotResult(params.snapshot)
-	if err != nil {
-		outputter.SetError(err)
-
-		return
-	}
-
-	outputter.SetCommandResult(result)
+	outputter.SetCommandResult(params.getResult())
 }

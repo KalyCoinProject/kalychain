@@ -9,7 +9,7 @@ import (
 func GetCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Returns the current Kaly Chain version",
+		Short: "Returns the current KalyCoinProject Kalychain version",
 		Args:  cobra.NoArgs,
 		Run:   runCommand,
 	}

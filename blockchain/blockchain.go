@@ -4,30 +4,29 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 
 	"github.com/KalyCoinProject/kalychain/blockchain/storage"
-	"github.com/KalyCoinProject/kalychain/blockchain/storage/leveldb"
 	"github.com/KalyCoinProject/kalychain/blockchain/storage/memory"
 	"github.com/KalyCoinProject/kalychain/chain"
+	"github.com/KalyCoinProject/kalychain/contracts/upgrader"
 	"github.com/KalyCoinProject/kalychain/helper/common"
 	"github.com/KalyCoinProject/kalychain/state"
 	"github.com/KalyCoinProject/kalychain/types"
 	"github.com/KalyCoinProject/kalychain/types/buildroot"
-
 	"github.com/hashicorp/go-hclog"
 	lru "github.com/hashicorp/golang-lru"
 )
 
 const (
 	BlockGasTargetDivisor uint64 = 1024 // The bound divisor of the gas limit, used in update calculations
-	defaultCacheSize      int    = 100  // The default size for Blockchain LRU cache structures
+	defaultCacheSize      int    = 10   // The default size for Blockchain LRU cache structures
 )
 
 var (
 	ErrNoBlock              = errors.New("no block data passed in")
+	ErrNoBlockHeader        = errors.New("no block header data passed in")
 	ErrParentNotFound       = errors.New("parent block not found")
 	ErrInvalidParentHash    = errors.New("parent block hash is invalid")
 	ErrParentHashMismatch   = errors.New("invalid parent block hash")
@@ -38,6 +37,7 @@ var (
 	ErrInvalidStateRoot     = errors.New("invalid block state root")
 	ErrInvalidGasUsed       = errors.New("invalid block gas used")
 	ErrInvalidReceiptsRoot  = errors.New("invalid block receipts root")
+	ErrClosed               = errors.New("blockchain is closed")
 )
 
 // Blockchain is a blockchain reference
@@ -47,6 +47,7 @@ type Blockchain struct {
 	db        storage.Storage // The Storage object (database)
 	consensus Verifier
 	executor  Executor
+	stopped   uint32 // used in executor halting
 
 	config  *chain.Chain // Config containing chain information
 	genesis types.Hash   // The hash of the genesis block
@@ -71,8 +72,6 @@ type Blockchain struct {
 	stream *eventStream // Event subscriptions
 
 	gpAverage *gasPriceAverage // A reference to the average gas price
-
-	writeLock sync.Mutex
 }
 
 // gasPriceAverage keeps track of the average gas price (rolling average)
@@ -83,15 +82,20 @@ type gasPriceAverage struct {
 	count *big.Int // Param used in the avg. gas price calculation
 }
 
+type StorageBuilder interface {
+	Build() (storage.Storage, error)
+}
+
 type Verifier interface {
 	VerifyHeader(header *types.Header) error
 	ProcessHeaders(headers []*types.Header) error
 	GetBlockCreator(header *types.Header) (types.Address, error)
-	PreCommitState(header *types.Header, txn *state.Transition) error
+	PreStateCommit(header *types.Header, txn *state.Transition) error
 }
 
 type Executor interface {
 	ProcessBlock(parentRoot types.Hash, block *types.Block, blockCreator types.Address) (*state.Transition, error)
+	Stop()
 }
 
 type BlockResult struct {
@@ -105,7 +109,7 @@ func (b *Blockchain) updateGasPriceAvg(newValues []*big.Int) {
 	b.gpAverage.Lock()
 	defer b.gpAverage.Unlock()
 
-	// Sum the values for quick reference
+	//	Sum the values for quick reference
 	sum := big.NewInt(0)
 	for _, val := range newValues {
 		sum = sum.Add(sum, val)
@@ -181,8 +185,8 @@ func (b *Blockchain) GetAvgGasPrice() *big.Int {
 // NewBlockchain creates a new blockchain object
 func NewBlockchain(
 	logger hclog.Logger,
-	dataDir string,
 	config *chain.Chain,
+	storageBuilder StorageBuilder,
 	consensus Verifier,
 	executor Executor,
 ) (*Blockchain, error) {
@@ -203,15 +207,12 @@ func NewBlockchain(
 		err error
 	)
 
-	if dataDir == "" {
+	if storageBuilder == nil {
 		if db, err = memory.NewMemoryStorage(nil); err != nil {
 			return nil, err
 		}
 	} else {
-		if db, err = leveldb.NewLevelDBStorage(
-			filepath.Join(dataDir, "blockchain"),
-			logger,
-		); err != nil {
+		if db, err = storageBuilder.Build(); err != nil {
 			return nil, err
 		}
 	}
@@ -670,6 +671,14 @@ func (b *Blockchain) VerifyPotentialBlock(block *types.Block) error {
 // VerifyFinalizedBlock verifies that the block is valid by performing a series of checks.
 // It is assumed that the block status is sealed (committed)
 func (b *Blockchain) VerifyFinalizedBlock(block *types.Block) error {
+	if block == nil {
+		return ErrNoBlock
+	}
+
+	if block.Header == nil {
+		return ErrNoBlockHeader
+	}
+
 	// Make sure the consensus layer verifies this block header
 	if err := b.consensus.VerifyHeader(block.Header); err != nil {
 		return fmt.Errorf("failed to verify the header: %w", err)
@@ -843,8 +852,22 @@ func (b *Blockchain) executeBlockTransactions(block *types.Block) (*BlockResult,
 		return nil, err
 	}
 
-	if err := b.consensus.PreCommitState(header, txn); err != nil {
+	if err := b.consensus.PreStateCommit(header, txn); err != nil {
 		return nil, err
+	}
+
+	// upgrade system if needed
+	upgrader.UpgradeSystem(
+		b.Config().ChainID,
+		b.Config().Forks,
+		block.Number(),
+		txn.Txn(),
+		b.logger,
+	)
+
+	if b.isStopped() {
+		// execute stop, should not commit
+		return nil, ErrClosed
 	}
 
 	_, root := txn.Commit()
@@ -859,27 +882,21 @@ func (b *Blockchain) executeBlockTransactions(block *types.Block) (*BlockResult,
 	}, nil
 }
 
-// WriteBlock writes a single block to the local blockchain.
-// It doesn't do any kind of verification, only commits the block to the DB
-func (b *Blockchain) WriteBlock(block *types.Block, source string) error {
-	b.writeLock.Lock()
-	defer b.writeLock.Unlock()
+// WriteBlock writes a single block
+func (b *Blockchain) WriteBlock(block *types.Block) error {
+	// Log the information
+	b.logger.Info(
+		"write block",
+		"num",
+		block.Number(),
+		"parent",
+		block.ParentHash(),
+	)
 
-	if block.Number() <= b.Header().Number {
-		b.logger.Info("block already inserted", "block", block.Number(), "source", source)
-
-		return nil
-	}
-
+	// nil checked by verify functions
 	header := block.Header
 
 	if err := b.writeBody(block); err != nil {
-		return err
-	}
-
-	// Write the header to the chain
-	evnt := &Event{Source: source}
-	if err := b.writeHeaderImpl(evnt, header); err != nil {
 		return err
 	}
 
@@ -896,8 +913,14 @@ func (b *Blockchain) WriteBlock(block *types.Block, source string) error {
 		return err
 	}
 
-	// update snapshot
+	//	update snapshot
 	if err := b.consensus.ProcessHeaders([]*types.Header{header}); err != nil {
+		return err
+	}
+
+	// Write the header to the chain
+	evnt := &Event{}
+	if err := b.writeHeaderImpl(evnt, header); err != nil {
 		return err
 	}
 
@@ -908,9 +931,8 @@ func (b *Blockchain) WriteBlock(block *types.Block, source string) error {
 
 	logArgs := []interface{}{
 		"number", header.Number,
-		"txs", len(block.Transactions),
 		"hash", header.Hash,
-		"parent", header.ParentHash,
+		"txns", len(block.Transactions),
 	}
 
 	if prevHeader, ok := b.GetHeaderByNumber(header.Number - 1); ok {
@@ -991,7 +1013,7 @@ func (b *Blockchain) ReadTxLookup(hash types.Hash) (types.Hash, bool) {
 }
 
 // verifyGasLimit is a helper function for validating a gas limit in a header
-func (b *Blockchain) verifyGasLimit(header *types.Header, parentHeader *types.Header) error {
+func (b *Blockchain) verifyGasLimit(header, parentHeader *types.Header) error {
 	if header.GasUsed > header.GasLimit {
 		return fmt.Errorf(
 			"block gas used exceeds gas limit, limit = %d, used=%d",
@@ -1071,16 +1093,6 @@ func (b *Blockchain) dispatchEvent(evnt *Event) {
 func (b *Blockchain) writeHeaderImpl(evnt *Event, header *types.Header) error {
 	currentHeader := b.Header()
 
-	// Write the data
-	if header.ParentHash == currentHeader.Hash {
-		// Fast path to save the new canonical header
-		return b.writeCanonicalHeader(evnt, header)
-	}
-
-	if err := b.db.WriteHeader(header); err != nil {
-		return err
-	}
-
 	currentTD, ok := b.readTotalDifficulty(currentHeader.Hash)
 	if !ok {
 		panic("failed to get header difficulty")
@@ -1105,6 +1117,17 @@ func (b *Blockchain) writeHeaderImpl(evnt *Event, header *types.Header) error {
 		),
 	); err != nil {
 		return err
+	}
+
+	// Write header
+	if err := b.db.WriteHeader(header); err != nil {
+		return err
+	}
+
+	// Write canonical header
+	if header.ParentHash == currentHeader.Hash {
+		// Fast path to save the new canonical header
+		return b.writeCanonicalHeader(evnt, header)
 	}
 
 	// Update the headers cache
@@ -1288,5 +1311,17 @@ func (b *Blockchain) GetBlockByNumber(blockNumber uint64, full bool) (*types.Blo
 
 // Close closes the DB connection
 func (b *Blockchain) Close() error {
+	b.executor.Stop()
+	b.stop()
+
+	// close db at last
 	return b.db.Close()
+}
+
+func (b *Blockchain) stop() {
+	atomic.StoreUint32(&b.stopped, 1)
+}
+
+func (b *Blockchain) isStopped() bool {
+	return atomic.LoadUint32(&b.stopped) > 0
 }

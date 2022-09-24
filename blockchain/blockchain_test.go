@@ -7,14 +7,12 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/KalyCoinProject/kalychain/state"
-
-	"github.com/KalyCoinProject/kalychain/chain"
-	"github.com/stretchr/testify/assert"
-
 	"github.com/KalyCoinProject/kalychain/blockchain/storage"
 	"github.com/KalyCoinProject/kalychain/blockchain/storage/memory"
+	"github.com/KalyCoinProject/kalychain/chain"
+	"github.com/KalyCoinProject/kalychain/state"
 	"github.com/KalyCoinProject/kalychain/types"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGenesis(t *testing.T) {

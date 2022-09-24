@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/KalyCoinProject/kalychain/secrets"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ssm"
+	"github.com/KalyCoinProject/kalychain/secrets"
 	"github.com/hashicorp/go-hclog"
 )
 
@@ -42,7 +42,7 @@ func SecretsManagerFactory(
 		return nil, errors.New("required extra map containing 'region' and 'ssm-parameter-path' not found for aws-ssm")
 	}
 
-	// / Set up the base object
+	/// Set up the base object
 	awsSsmManager := &AwsSsmManager{
 		logger: params.Logger.Named(string(secrets.AWSSSM)),
 		region: fmt.Sprintf("%v", config.Extra["region"]),

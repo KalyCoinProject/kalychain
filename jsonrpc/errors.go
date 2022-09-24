@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/KalyCoinProject/kalychain/state/runtime"
-	"github.com/umbracle/ethgo/abi"
+	"github.com/umbracle/go-web3/abi"
 )
 
 var (

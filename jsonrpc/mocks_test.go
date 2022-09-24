@@ -1,7 +1,6 @@
 package jsonrpc
 
 import (
-	"errors"
 	"math/big"
 	"sync"
 
@@ -73,6 +72,9 @@ func (m *mockStore) emitEvent(evnt *mockEvent) {
 		OldChain: []*types.Header{},
 	}
 
+	m.receiptsLock.Lock()
+	defer m.receiptsLock.Unlock()
+
 	for _, i := range evnt.NewChain {
 		m.receipts[i.header.Hash] = i.receipts
 		bEvnt.NewChain = append(bEvnt.NewChain, i.header)
@@ -91,7 +93,7 @@ func (m *mockStore) GetAccount(root types.Hash, addr types.Address) (*state.Acco
 		return acc, nil
 	}
 
-	return nil, errors.New("given root and slot not found in storage")
+	return nil, ErrStateNotFound
 }
 
 func (m *mockStore) SetAccount(addr types.Address, account *state.Account) {

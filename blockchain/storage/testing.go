@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"math/big"
 	"reflect"
 	"testing"
@@ -228,13 +229,14 @@ func testHeader(t *testing.T, m PlaceholderStorage) {
 	s, closeFn := m(t)
 	defer closeFn()
 
+	extraData, _ := hex.DecodeHex("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa")
 	header := &types.Header{
 		Number:     5,
 		Difficulty: 17179869184,
 		ParentHash: types.StringToHash("11"),
 		Timestamp:  10,
 		// if not set it will fail
-		ExtraData: hex.MustDecodeHex("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa"),
+		ExtraData: extraData,
 	}
 	header.ComputeHash()
 
@@ -415,6 +417,11 @@ func testWriteCanonicalHeader(t *testing.T, m PlaceholderStorage) {
 	assert.NoError(t, err)
 
 	if !reflect.DeepEqual(h, hh) {
+		fmt.Println("-- valid --")
+		fmt.Println(h)
+		fmt.Println("-- found --")
+		fmt.Println(hh)
+
 		t.Fatal("bad header")
 	}
 

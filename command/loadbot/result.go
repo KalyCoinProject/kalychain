@@ -6,11 +6,10 @@ import (
 	"math"
 	"sort"
 
-	"github.com/umbracle/ethgo"
-
 	"github.com/KalyCoinProject/kalychain/command/helper"
 	"github.com/KalyCoinProject/kalychain/command/loadbot/generator"
 	"github.com/KalyCoinProject/kalychain/helper/common"
+	"github.com/umbracle/go-web3"
 )
 
 const (
@@ -53,7 +52,7 @@ type LoadbotResult struct {
 	BlockData              TxnBlockData         `json:"block_data"`
 	DetailedErrorData      TxnDetailedErrorData `json:"detailed_error_data,omitempty"`
 	ApproxTPS              uint64               `json:"approx_tps"`
-	ContractAddress        ethgo.Address        `json:"contract_address,omitempty"`
+	ContractAddress        web3.Address         `json:"contract_address,omitempty"`
 	ContractBlockData      TxnBlockData         `json:"contract_block_data,omitempty"`
 }
 
@@ -140,6 +139,7 @@ func (lr *LoadbotResult) initDetailedErrors(gen generator.TransactionGenerator) 
 }
 
 func (lr *LoadbotResult) writeBlockData(buffer *bytes.Buffer) {
+	//nolint:ifshort
 	blockData := &lr.BlockData
 
 	buffer.WriteString("\n\n[BLOCK DATA]\n")
@@ -185,7 +185,7 @@ func (lr *LoadbotResult) writeErrorData(buffer *bytes.Buffer) {
 		buffer.WriteString("\n\n[DETAILED ERRORS]\n")
 
 		addToBuffer := func(detailedError *generator.FailedTxnInfo) {
-			if detailedError.TxHash != ethgo.ZeroHash.String() {
+			if detailedError.TxHash != web3.ZeroHash.String() {
 				buffer.WriteString(fmt.Sprintf("\n\n[%s]\n", detailedError.TxHash))
 			} else {
 				buffer.WriteString("\n\n[Tx Hash Unavailable]\n")
@@ -244,7 +244,7 @@ func (lr *LoadbotResult) writeLoadbotResults(buffer *bytes.Buffer) {
 func (lr *LoadbotResult) writeAverageBlockUtilization(buffer *bytes.Buffer) {
 	buffer.WriteString("\n\n[AVERAGE BLOCK UTILIZATION]\n")
 	buffer.WriteString(helper.FormatKV([]string{
-		fmt.Sprintf("Average utilization across all blocks|%.2f%%", calculateAvgBlockUtil(lr.BlockData.GasData)),
+		fmt.Sprintf("Average utilization acorss all blocks|%.2f%%", calculateAvgBlockUtil(lr.BlockData.GasData)),
 	}))
 }
 
@@ -275,7 +275,7 @@ func (lr *LoadbotResult) writeTurnAroundData(buffer *bytes.Buffer) {
 
 func (lr *LoadbotResult) writeContractDeploymentData(buffer *bytes.Buffer) {
 	// skip if contract was not deployed
-	if lr.ContractAddress == ethgo.ZeroAddress {
+	if lr.ContractAddress == web3.ZeroAddress {
 		return
 	}
 

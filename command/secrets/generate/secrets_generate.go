@@ -13,7 +13,7 @@ import (
 func GetCommand() *cobra.Command {
 	secretsGenerateCmd := &cobra.Command{
 		Use:   "generate",
-		Short: "Initializes the secrets manager configuration in the provided directory.",
+		Short: "Initializes the secrets manager configuration in the provided directory. Used for Hashicorp Vault",
 		Run:   runCommand,
 	}
 
@@ -28,7 +28,10 @@ func setFlags(cmd *cobra.Command) {
 		&params.dir,
 		dirFlag,
 		defaultConfigFileName,
-		"the directory for the secrets manager configuration file",
+		fmt.Sprintf(
+			"the directory for the secrets manager configuration file Default: %s",
+			defaultConfigFileName,
+		),
 	)
 
 	cmd.Flags().StringVar(
@@ -50,10 +53,8 @@ func setFlags(cmd *cobra.Command) {
 		typeFlag,
 		string(secrets.HashicorpVault),
 		fmt.Sprintf(
-			"the type of the secrets manager. Available types: %s, %s and %s",
+			"the type of the secrets manager. Default: %s",
 			secrets.HashicorpVault,
-			secrets.AWSSSM,
-			secrets.GCPSSM,
 		),
 	)
 
@@ -61,14 +62,20 @@ func setFlags(cmd *cobra.Command) {
 		&params.name,
 		nameFlag,
 		defaultNodeName,
-		"the name of the node for on-service record keeping",
+		fmt.Sprintf(
+			"the name of the node for on-service record keeping. Default: %s",
+			defaultNodeName,
+		),
 	)
 
 	cmd.Flags().StringVar(
 		&params.namespace,
 		namespaceFlag,
 		defaultNamespace,
-		"the namespace for the service",
+		fmt.Sprintf(
+			"the namespace for the service. Default %s",
+			defaultNamespace,
+		),
 	)
 
 	cmd.Flags().StringVar(

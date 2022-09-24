@@ -22,8 +22,6 @@ func newTestTransition(preState map[types.Address]*PreState) *Transition {
 }
 
 func TestSubGasLimitPrice(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name        string
 		preState    map[types.Address]*PreState
@@ -63,10 +61,7 @@ func TestSubGasLimitPrice(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			transition := newTestTransition(tt.preState)
 			msg := &types.Transaction{
 				From:     tt.from,
@@ -89,8 +84,6 @@ func TestSubGasLimitPrice(t *testing.T) {
 }
 
 func TestTransfer(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name        string
 		preState    map[types.Address]*PreState
@@ -134,10 +127,7 @@ func TestTransfer(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			transition := newTestTransition(tt.preState)
 
 			amount := big.NewInt(tt.amount)

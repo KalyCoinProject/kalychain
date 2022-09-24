@@ -9,15 +9,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/umbracle/ethgo"
-
 	"github.com/KalyCoinProject/kalychain/command/loadbot/generator"
+	cmap "github.com/KalyCoinProject/kalychain/helper/concurrentmap"
 	"github.com/KalyCoinProject/kalychain/helper/tests"
 	txpoolOp "github.com/KalyCoinProject/kalychain/txpool/proto"
 	"github.com/golang/protobuf/ptypes/any"
-	"github.com/umbracle/ethgo/jsonrpc"
+	"github.com/umbracle/go-web3/jsonrpc"
 
 	"github.com/KalyCoinProject/kalychain/types"
+	"github.com/umbracle/go-web3"
 )
 
 const (
@@ -77,23 +77,14 @@ type GasMetrics struct {
 }
 
 type BlockGasMetrics struct {
-	sync.Mutex
-
-	Blocks map[uint64]GasMetrics
-}
-
-// AddBlockMetric adds a block gas metric for the specified block number [Thread safe]
-func (b *BlockGasMetrics) AddBlockMetric(blockNum uint64, gasMetric GasMetrics) {
-	b.Lock()
-	defer b.Unlock()
-
-	b.Blocks[blockNum] = gasMetric
+	Blocks        map[uint64]GasMetrics
+	BlockGasMutex *sync.Mutex
 }
 
 type ContractMetricsData struct {
 	FailedContractTransactionsCount uint64
 	ContractDeploymentDuration      ExecDuration
-	ContractAddress                 ethgo.Address
+	ContractAddress                 web3.Address
 	ContractGasMetrics              *BlockGasMetrics
 }
 
@@ -101,7 +92,7 @@ type Metrics struct {
 	TotalTransactionsSentCount uint64
 	FailedTransactionsCount    uint64
 	TransactionDuration        ExecDuration
-	ContractMetrics            *ContractMetricsData
+	ContractMetrics            ContractMetricsData
 	GasMetrics                 *BlockGasMetrics
 }
 
@@ -112,47 +103,30 @@ type Loadbot struct {
 }
 
 func NewLoadbot(cfg *Configuration) *Loadbot {
-	loadbot := &Loadbot{
+	return &Loadbot{
 		cfg: cfg,
 		metrics: &Metrics{
 			TotalTransactionsSentCount: 0,
 			FailedTransactionsCount:    0,
 			TransactionDuration: ExecDuration{
 				blockTransactions: make(map[uint64]uint64),
+				turnAroundMap:     cmap.NewConcurrentMap(),
+			},
+			ContractMetrics: ContractMetricsData{
+				ContractDeploymentDuration: ExecDuration{
+					blockTransactions: make(map[uint64]uint64),
+				},
+				ContractGasMetrics: &BlockGasMetrics{
+					Blocks:        make(map[uint64]GasMetrics),
+					BlockGasMutex: &sync.Mutex{},
+				},
 			},
 			GasMetrics: &BlockGasMetrics{
-				Blocks: make(map[uint64]GasMetrics),
+				Blocks:        make(map[uint64]GasMetrics),
+				BlockGasMutex: &sync.Mutex{},
 			},
 		},
 	}
-
-	// Attempt to initialize contract metrics if needed
-	loadbot.initContractMetricsIfNeeded()
-
-	return loadbot
-}
-
-// initContractMetrics initializes contract metrics for
-// the loadbot instance
-func (l *Loadbot) initContractMetricsIfNeeded() {
-	if !l.needsContractMetrics() {
-		return
-	}
-
-	l.metrics.ContractMetrics = &ContractMetricsData{
-		ContractDeploymentDuration: ExecDuration{
-			blockTransactions: make(map[uint64]uint64),
-		},
-		ContractGasMetrics: &BlockGasMetrics{
-			Blocks: make(map[uint64]GasMetrics),
-		},
-	}
-}
-
-func (l *Loadbot) needsContractMetrics() bool {
-	return l.cfg.GeneratorMode == deploy ||
-		l.cfg.GeneratorMode == erc20 ||
-		l.cfg.GeneratorMode == erc721
 }
 
 func (l *Loadbot) GetMetrics() *Metrics {
@@ -263,18 +237,7 @@ func (l *Loadbot) Run() error {
 		}
 	}
 
-	var (
-		seenBlockNums     = make(map[uint64]struct{})
-		seenBlockNumsLock sync.Mutex
-		wg                sync.WaitGroup
-	)
-
-	markSeenBlock := func(blockNum uint64) {
-		seenBlockNumsLock.Lock()
-		defer seenBlockNumsLock.Unlock()
-
-		seenBlockNums[blockNum] = struct{}{}
-	}
+	var wg sync.WaitGroup
 
 	for i := uint64(0); i < l.cfg.Count; i++ {
 		<-ticker.C
@@ -323,9 +286,7 @@ func (l *Loadbot) Run() error {
 				return
 			}
 
-			// Mark the block as seen so data on it
-			// is gathered later
-			markSeenBlock(receipt.BlockNumber)
+			l.initGasMetricsBlocksMap(receipt.BlockNumber)
 
 			// Stop the performance timer
 			end := time.Now()
@@ -344,9 +305,7 @@ func (l *Loadbot) Run() error {
 
 	endTime := time.Now()
 
-	// Fetch the block gas metrics for seen blocks
-	l.metrics.GasMetrics, err = getBlockGasMetrics(jsonClient, seenBlockNums)
-	if err != nil {
+	if err := l.calculateGasMetrics(jsonClient, l.metrics.GasMetrics); err != nil {
 		return fmt.Errorf("unable to calculate block gas metrics: %w", err)
 	}
 
@@ -359,10 +318,10 @@ func (l *Loadbot) Run() error {
 
 func (l *Loadbot) executeTxn(
 	client txpoolOp.TxnPoolOperatorClient,
-) (ethgo.Hash, error) {
+) (web3.Hash, error) {
 	txn, err := l.generator.GenerateTransaction()
 	if err != nil {
-		return ethgo.Hash{}, err
+		return web3.Hash{}, err
 	}
 
 	addReq := &txpoolOp.AddTxnReq{
@@ -374,8 +333,8 @@ func (l *Loadbot) executeTxn(
 
 	addRes, addErr := client.AddTxn(context.Background(), addReq)
 	if addErr != nil {
-		return ethgo.Hash{}, fmt.Errorf("unable to add transaction, %w", addErr)
+		return web3.Hash{}, fmt.Errorf("unable to add transaction, %w", addErr)
 	}
 
-	return ethgo.Hash(types.StringToHash(addRes.TxHash)), nil
+	return web3.Hash(types.StringToHash(addRes.TxHash)), nil
 }

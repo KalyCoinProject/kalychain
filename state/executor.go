@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-
-	"github.com/hashicorp/go-hclog"
+	"sync/atomic"
 
 	"github.com/KalyCoinProject/kalychain/chain"
+	"github.com/KalyCoinProject/kalychain/contracts/bridge"
+	"github.com/KalyCoinProject/kalychain/contracts/systemcontracts"
 	"github.com/KalyCoinProject/kalychain/crypto"
 	"github.com/KalyCoinProject/kalychain/state/runtime"
 	"github.com/KalyCoinProject/kalychain/types"
+	"github.com/hashicorp/go-hclog"
 )
 
 const (
@@ -35,6 +37,7 @@ type Executor struct {
 	runtimes []runtime.Runtime
 	state    State
 	GetHash  GetHashByNumberHelper
+	stopped  uint32 // atomic flag for stopping
 
 	PostHook func(txn *Transition)
 }
@@ -101,6 +104,11 @@ func (e *Executor) ProcessBlock(
 	txn.block = block
 
 	for _, t := range block.Transactions {
+		if e.IsStopped() {
+			// halt more elegantly
+			return nil, ErrExecutionStop
+		}
+
 		if t.ExceedsBlockGasLimit(block.Header.GasLimit) {
 			if err := txn.WriteFailedReceipt(t); err != nil {
 				return nil, err
@@ -115,6 +123,14 @@ func (e *Executor) ProcessBlock(
 	}
 
 	return txn, nil
+}
+
+func (e *Executor) IsStopped() bool {
+	return atomic.LoadUint32(&e.stopped) > 0
+}
+
+func (e *Executor) Stop() {
+	atomic.StoreUint32(&e.stopped, 1)
 }
 
 // StateAt returns snapshot at given root
@@ -289,10 +305,67 @@ func (t *Transition) Write(txn *types.Transaction) error {
 		receipt.ContractAddress = crypto.CreateAddress(msg.From, txn.Nonce).Ptr()
 	}
 
+	// handle cross bridge logs from|to kalycoin blockchain
+	if err := t.handleBridgeLogs(msg, logs); err != nil {
+		return err
+	}
+
 	// Set the receipt logs and create a bloom for filtering
 	receipt.Logs = logs
 	receipt.LogsBloom = types.CreateBloom([]*types.Receipt{receipt})
 	t.receipts = append(t.receipts, receipt)
+
+	return nil
+}
+
+func (t *Transition) handleBridgeLogs(msg *types.Transaction, logs []*types.Log) error {
+	// filter bridge contract logs
+	if len(logs) == 0 ||
+		msg.To == nil ||
+		*msg.To != systemcontracts.AddrBridgeContract {
+		return nil
+	}
+
+	for _, log := range logs {
+		if len(log.Topics) == 0 {
+			continue
+		}
+
+		switch log.Topics[0] {
+		case bridge.BridgeDepositedEventID:
+			parsedLog, err := bridge.ParseBridgeDepositedLog(log)
+			if err != nil {
+				return err
+			}
+
+			t.state.AddBalance(parsedLog.Receiver, parsedLog.Amount)
+		case bridge.BridgeWithdrawnEventID:
+			parsedLog, err := bridge.ParseBridgeWithdrawnLog(log)
+			if err != nil {
+				return err
+			}
+
+			// the total one is the real amount of Withdrawn event
+			realAmount := big.NewInt(0).Add(parsedLog.Amount, parsedLog.Fee)
+
+			if err := t.state.SubBalance(parsedLog.Contract, realAmount); err != nil {
+				return err
+			}
+
+			// the fee goes to system Vault contract
+			t.state.AddBalance(systemcontracts.AddrVaultContract, parsedLog.Fee)
+		case bridge.BridgeBurnedEventID:
+			parsedLog, err := bridge.ParseBridgeBurnedLog(log)
+			if err != nil {
+				return err
+			}
+
+			// burn
+			if err := t.state.SubBalance(parsedLog.Sender, parsedLog.Amount); err != nil {
+				return err
+			}
+		}
+	}
 
 	return nil
 }
@@ -332,7 +405,7 @@ func (t *Transition) GetTxnHash() types.Hash {
 
 // Apply applies a new transaction
 func (t *Transition) Apply(msg *types.Transaction) (*runtime.ExecutionResult, error) {
-	s := t.state.Snapshot()
+	s := t.state.Snapshot() //nolint:ifshort
 	result, err := t.apply(msg)
 
 	if err != nil {
@@ -371,8 +444,10 @@ func (t *Transition) subGasLimitPrice(msg *types.Transaction) error {
 func (t *Transition) nonceCheck(msg *types.Transaction) error {
 	nonce := t.state.GetNonce(msg.From)
 
-	if nonce != msg.Nonce {
-		return ErrNonceIncorrect
+	if msg.Nonce < nonce {
+		return NewNonceTooLowError(fmt.Errorf("%w, actual: %d, wanted: %d", ErrNonceIncorrect, msg.Nonce, nonce), nonce)
+	} else if msg.Nonce > nonce {
+		return NewNonceTooHighError(fmt.Errorf("%w, actual: %d, wanted: %d", ErrNonceIncorrect, msg.Nonce, nonce), nonce)
 	}
 
 	return nil
@@ -382,12 +457,14 @@ func (t *Transition) nonceCheck(msg *types.Transaction) error {
 // surfacing of these errors reject the transaction thus not including it in the block
 
 var (
-	ErrNonceIncorrect        = fmt.Errorf("incorrect nonce")
-	ErrNotEnoughFundsForGas  = fmt.Errorf("not enough funds to cover gas costs")
-	ErrBlockLimitReached     = fmt.Errorf("gas limit reached in the pool")
-	ErrIntrinsicGasOverflow  = fmt.Errorf("overflow in intrinsic gas calculation")
-	ErrNotEnoughIntrinsicGas = fmt.Errorf("not enough gas supplied for intrinsic gas costs")
-	ErrNotEnoughFunds        = fmt.Errorf("not enough funds for transfer with given value")
+	ErrNonceIncorrect        = errors.New("incorrect nonce")
+	ErrNotEnoughFundsForGas  = errors.New("not enough funds to cover gas costs")
+	ErrBlockLimitReached     = errors.New("gas limit reached in the pool")
+	ErrIntrinsicGasOverflow  = errors.New("overflow in intrinsic gas calculation")
+	ErrNotEnoughIntrinsicGas = errors.New("not enough gas supplied for intrinsic gas costs")
+	ErrNotEnoughFunds        = errors.New("not enough funds for transfer with given value")
+	ErrAllGasUsed            = errors.New("all gas used")
+	ErrExecutionStop         = errors.New("execution stop")
 )
 
 type TransitionApplicationError struct {
@@ -406,6 +483,30 @@ func NewTransitionApplicationError(err error, isRecoverable bool) *TransitionApp
 	}
 }
 
+type NonceTooLowError struct {
+	TransitionApplicationError
+	CorrectNonce uint64
+}
+
+func NewNonceTooLowError(err error, correctNonce uint64) *NonceTooLowError {
+	return &NonceTooLowError{
+		*NewTransitionApplicationError(err, false),
+		correctNonce,
+	}
+}
+
+type NonceTooHighError struct {
+	TransitionApplicationError
+	CorrectNonce uint64
+}
+
+func NewNonceTooHighError(err error, correctNonce uint64) *NonceTooHighError {
+	return &NonceTooHighError{
+		*NewTransitionApplicationError(err, false),
+		correctNonce,
+	}
+}
+
 type GasLimitReachedTransitionApplicationError struct {
 	TransitionApplicationError
 }
@@ -416,10 +517,21 @@ func NewGasLimitReachedTransitionApplicationError(err error) *GasLimitReachedTra
 	}
 }
 
+type AllGasUsedError struct {
+	TransitionApplicationError
+}
+
+func NewAllGasUsedError(err error) *AllGasUsedError {
+	return &AllGasUsedError{
+		*NewTransitionApplicationError(err, true),
+	}
+}
+
 func (t *Transition) apply(msg *types.Transaction) (*runtime.ExecutionResult, error) {
 	// First check this message satisfies all consensus rules before
 	// applying the message. The rules include these clauses
 	//
+	// 0. the basic amount of gas is required
 	// 1. the nonce of the message caller is correct
 	// 2. caller has enough balance to cover transaction fee(gaslimit * gasprice)
 	// 3. the amount of gas required is available in the block
@@ -428,13 +540,23 @@ func (t *Transition) apply(msg *types.Transaction) (*runtime.ExecutionResult, er
 	// 6. caller has enough balance to cover asset transfer for **topmost** call
 	txn := t.state
 
+	t.logger.Debug("try to apply transaction",
+		"hash", msg.Hash, "from", msg.From, "nonce", msg.Nonce, "price", msg.GasPrice.String(),
+		"remainingGas", t.gasPool, "wantGas", msg.Gas)
+
+	// 0. the basic amount of gas is required
+	if t.gasPool < TxGas {
+		return nil, NewAllGasUsedError(ErrAllGasUsed)
+	}
+
 	// 1. the nonce of the message caller is correct
 	if err := t.nonceCheck(msg); err != nil {
-		return nil, NewTransitionApplicationError(err, true)
+		return nil, err // the error already formatted
 	}
 
 	// 2. caller has enough balance to cover transaction fee(gaslimit * gasprice)
 	if err := t.subGasLimitPrice(msg); err != nil {
+		// It is not recoverable. All the transactions after that should be dropped
 		return nil, NewTransitionApplicationError(err, true)
 	}
 
@@ -449,6 +571,8 @@ func (t *Transition) apply(msg *types.Transaction) (*runtime.ExecutionResult, er
 		return nil, NewTransitionApplicationError(err, false)
 	}
 
+	t.logger.Debug("apply transaction would uses gas", "hash", msg.Hash, "gas", intrinsicGasCost)
+
 	// 5. the purchased gas is enough to cover intrinsic usage
 	gasLeft := msg.Gas - intrinsicGasCost
 	// Because we are working with unsigned integers for gas, the `>` operator is used instead of the more intuitive `<`
@@ -458,6 +582,7 @@ func (t *Transition) apply(msg *types.Transaction) (*runtime.ExecutionResult, er
 
 	// 6. caller has enough balance to cover asset transfer for **topmost** call
 	if balance := txn.GetBalance(msg.From); balance.Cmp(msg.Value) < 0 {
+		// It is not recoverable. All the transactions after that should be dropped
 		return nil, NewTransitionApplicationError(ErrNotEnoughFunds, true)
 	}
 
@@ -512,7 +637,8 @@ func (t *Transition) Call2(
 	value *big.Int,
 	gas uint64,
 ) *runtime.ExecutionResult {
-	c := runtime.NewContractCall(1, caller, caller, to, value, gas, t.state.GetCode(to), input)
+	code := t.state.GetCode(to)
+	c := runtime.NewContractCall(1, caller, caller, to, value, gas, code, input)
 
 	return t.applyCall(c, runtime.Call, t)
 }
@@ -559,6 +685,7 @@ func (t *Transition) applyCall(
 		}
 	}
 
+	//nolint:ifshort
 	snapshot := t.state.Snapshot()
 	t.state.TouchAccount(c.Address)
 
@@ -760,18 +887,6 @@ func (t *Transition) SetAccountDirectly(addr types.Address, account *chain.Genes
 
 	t.state.SetBalance(addr, account.Balance)
 	t.state.SetNonce(addr, account.Nonce)
-
-	return nil
-}
-
-// SetCodeDirectly sets new code into the account with the specified address
-// NOTE: SetCodeDirectly changes the world state without a transaction
-func (t *Transition) SetCodeDirectly(addr types.Address, code []byte) error {
-	if !t.AccountExists(addr) {
-		return fmt.Errorf("account doesn't exist at %s", addr)
-	}
-
-	t.state.SetCode(addr, code)
 
 	return nil
 }

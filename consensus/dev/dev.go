@@ -1,20 +1,18 @@
 package dev
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/KalyCoinProject/kalychain/blockchain"
 	"github.com/KalyCoinProject/kalychain/consensus"
+	"github.com/KalyCoinProject/kalychain/contracts/upgrader"
 	"github.com/KalyCoinProject/kalychain/helper/progress"
 	"github.com/KalyCoinProject/kalychain/state"
 	"github.com/KalyCoinProject/kalychain/txpool"
 	"github.com/KalyCoinProject/kalychain/types"
 	"github.com/hashicorp/go-hclog"
-)
-
-const (
-	devConsensus = "dev-consensus"
 )
 
 // Dev consensus protocol seals any new transaction immediately
@@ -33,7 +31,7 @@ type Dev struct {
 
 // Factory implements the base factory method
 func Factory(
-	params *consensus.Params,
+	params *consensus.ConsensusParams,
 ) (consensus.Consensus, error) {
 	logger := params.Logger.Named("dev")
 
@@ -43,7 +41,7 @@ func Factory(
 		closeCh:    make(chan struct{}),
 		blockchain: params.Blockchain,
 		executor:   params.Executor,
-		txpool:     params.TxPool,
+		txpool:     params.Txpool,
 	}
 
 	rawInterval, ok := params.Config.Config["interval"]
@@ -76,8 +74,10 @@ func (d *Dev) nextNotify() chan struct{} {
 		d.interval = 1
 	}
 
+	delay := time.NewTimer(time.Duration(d.interval) * time.Second)
+
 	go func() {
-		<-time.After(time.Duration(d.interval) * time.Second)
+		<-delay.C
 		d.notifyCh <- struct{}{}
 	}()
 
@@ -113,8 +113,10 @@ func (d *Dev) writeTransactions(gasLimit uint64, transition transitionInterface)
 	d.txpool.Prepare()
 
 	for {
-		tx := d.txpool.Peek()
+		tx := d.txpool.Pop()
 		if tx == nil {
+			d.logger.Debug("no more transactions")
+
 			break
 		}
 
@@ -125,11 +127,27 @@ func (d *Dev) writeTransactions(gasLimit uint64, transition transitionInterface)
 		}
 
 		if err := transition.Write(tx); err != nil {
-			if _, ok := err.(*state.GasLimitReachedTransitionApplicationError); ok { //nolint:errorlint
+			d.logger.Debug("write transaction failed", "hash", tx.Hash, "from", tx.From,
+				"nonce", tx.Nonce, "err", err)
+
+			//nolint:errorlint
+			if _, ok := err.(*state.GasLimitReachedTransitionApplicationError); ok {
+				// Ignore those out-of-gas transaction whose gas limit too large
+			} else if _, ok := err.(*state.AllGasUsedError); ok {
+				// no more transaction could be packed
 				break
-			} else if appErr, ok := err.(*state.TransitionApplicationError); ok && appErr.IsRecoverable { //nolint:errorlint
-				d.txpool.Demote(tx)
+			} else if nonceErr, ok := err.(*state.NonceTooLowError); ok {
+				// lower nonce tx, demote all promotable transactions
+				d.txpool.DemoteAllPromoted(tx, nonceErr.CorrectNonce)
+				d.logger.Error("write transaction nonce too low", "hash", tx.Hash, "from", tx.From,
+					"nonce", tx.Nonce, "err", err)
+			} else if nonceErr, ok := err.(*state.NonceTooHighError); ok {
+				// higher nonce tx, demote all promotable transactions
+				d.txpool.DemoteAllPromoted(tx, nonceErr.CorrectNonce)
+				d.logger.Error("write miss some transactions with higher nonce", tx.Hash, "from", tx.From,
+					"nonce", tx.Nonce, "err", err)
 			} else {
+				// no matter what kind of failure, drop is reasonable for not executed it yet
 				d.txpool.Drop(tx)
 			}
 
@@ -137,7 +155,7 @@ func (d *Dev) writeTransactions(gasLimit uint64, transition transitionInterface)
 		}
 
 		// no errors, pop the tx from the pool
-		d.txpool.Pop(tx)
+		d.txpool.RemoveExecuted(tx)
 
 		successful = append(successful, tx)
 	}
@@ -180,6 +198,15 @@ func (d *Dev) writeNewBlock(parent *types.Header) error {
 
 	txns := d.writeTransactions(gasLimit, transition)
 
+	// upgrade system if needed
+	upgrader.UpgradeSystem(
+		d.blockchain.Config().ChainID,
+		d.blockchain.Config().Forks,
+		header.Number,
+		transition.Txn(),
+		d.logger,
+	)
+
 	// Commit the changes
 	_, root := transition.Commit()
 
@@ -200,7 +227,7 @@ func (d *Dev) writeNewBlock(parent *types.Header) error {
 	}
 
 	// Write the block to the blockchain
-	if err := d.blockchain.WriteBlock(block, devConsensus); err != nil {
+	if err := d.blockchain.WriteBlock(block); err != nil {
 		return err
 	}
 
@@ -223,16 +250,26 @@ func (d *Dev) ProcessHeaders(headers []*types.Header) error {
 }
 
 func (d *Dev) GetBlockCreator(header *types.Header) (types.Address, error) {
-	return types.BytesToAddress(header.Miner), nil
+	return header.Miner, nil
 }
 
-// PreCommitState a hook to be called before finalizing state transition on inserting block
-func (d *Dev) PreCommitState(_header *types.Header, _txn *state.Transition) error {
+// PreStateCommit a hook to be called before finalizing state transition on inserting block
+func (d *Dev) PreStateCommit(_header *types.Header, _txn *state.Transition) error {
 	return nil
 }
 
 func (d *Dev) GetSyncProgression() *progress.Progression {
 	return nil
+}
+
+func (d *Dev) Prepare(header *types.Header) error {
+	// TODO: Remove
+	return nil
+}
+
+func (d *Dev) Seal(block *types.Block, ctx context.Context) (*types.Block, error) {
+	// TODO: Remove
+	return nil, nil
 }
 
 func (d *Dev) Close() error {

@@ -16,8 +16,7 @@ builds:
     env:
       - CC=o64-clang
       - CXX=o64-clang++
-    ldflags:
-      -s -w -X 'github.com/KalyCoinProject/kalychain/versioning.Version=v{{ .Version }}'
+    ldflags: -s -w -X 'github.com/KalyCoinProject/kalychain/versioning.Version=v{{ .Version }}'
 
   - id: darwin-arm64
     main: ./main.go
@@ -29,8 +28,7 @@ builds:
     env:
       - CC=oa64-clang
       - CXX=oa64-clang++
-    ldflags:
-      -s -w -X 'github.com/KalyCoinProject/kalychain/versioning.Version=v{{ .Version }}'
+    ldflags: -s -w -X 'github.com/KalyCoinProject/kalychain/versioning.Version=v{{ .Version }}'
 
   - id: linux-amd64
     main: ./main.go
@@ -61,39 +59,18 @@ builds:
       -s -w -linkmode external -extldflags "-static" -X 'github.com/KalyCoinProject/kalychain/versioning.Version=v{{ .Version }}'
 
 archives:
-  -
-    files:
-    - LICENSE
-    - README.md
-
-#nfpms:
-#  - vendor: KalyCoinProject
-#    homepage: https://kalycoin.io
-#    maintainer: Kaly Chain Team <edge@kalycoin.io>
-#    description:  A Framework for Building Ethereum-compatible Blockchain Networks
-#    license: GPLv3 LGPLv3
-#
-#    formats:
-#      - apk
-#      - deb
-#      - rpm
-#
-#    contents:
-#      - src: kalychain.service
-#        dst: /lib/systemd/system/kalychain.service
-#        type: config
-#
-#    overrides:
-#      rpm:
-#        replacements:
-#          amd64: x86_64
+  - files:
+      - LICENSE
+      - README.md
+      - src: mainnet-genesis.json
+        dst: genesis.json
 
 snapshot:
   name_template: "{{ .Tag }}.next"
 
 dockers:
   - image_templates:
-      - kalychain/{{ .ProjectName }}:{{ .Version }}-amd64
+      - kalychainlab/{{ .ProjectName }}:{{ .Version }}-amd64
     dockerfile: Dockerfile.release
     use: buildx
     goarch: amd64
@@ -104,7 +81,7 @@ dockers:
     skip_push: false
 
   - image_templates:
-      - kalychain/{{ .ProjectName }}:{{ .Version }}-arm64
+      - kalychainlab/{{ .ProjectName }}:{{ .Version }}-arm64
     dockerfile: Dockerfile.release
     use: buildx
     goarch: arm64
@@ -115,14 +92,14 @@ dockers:
     skip_push: false
 
 docker_manifests:
-  - name_template: kalychain/{{ .ProjectName }}:{{ .Version }}
+  - name_template: kalychainlab/{{ .ProjectName }}:{{ .Version }}
     image_templates:
-      - kalychain/{{ .ProjectName }}:{{ .Version }}-amd64
-      - kalychain/{{ .ProjectName }}:{{ .Version }}-arm64
+      - kalychainlab/{{ .ProjectName }}:{{ .Version }}-amd64
+      - kalychainlab/{{ .ProjectName }}:{{ .Version }}-arm64
     skip_push: false
 
-  - name_template: kalychain/{{ .ProjectName }}:latest
+  - name_template: kalychainlab/{{ .ProjectName }}:latest
     image_templates:
-      - kalychain/{{ .ProjectName }}:{{ .Version }}-amd64
-      - kalychain/{{ .ProjectName }}:{{ .Version }}-arm64
+      - kalychainlab/{{ .ProjectName }}:{{ .Version }}-amd64
+      - kalychainlab/{{ .ProjectName }}:{{ .Version }}-arm64
     skip_push: false

@@ -10,7 +10,7 @@ import (
 func GetCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "license",
-		Short: "Returns Kaly Chain license and dependency attributions",
+		Short: "Returns KalyCoinProject Kalychain license and dependency attributions",
 		Args:  cobra.NoArgs,
 		Run:   runCommand,
 	}

@@ -2,7 +2,6 @@ package secrets
 
 import (
 	"errors"
-
 	"github.com/hashicorp/go-hclog"
 )
 
@@ -26,18 +25,14 @@ const (
 	// ValidatorKey is the private key secret of the validator node
 	ValidatorKey = "validator-key"
 
-	// ValidatorBLSKey is the bls secret key of the validator node
-	ValidatorBLSKey = "validator-bls-key"
-
 	// NetworkKey is the libp2p private key secret used for networking
 	NetworkKey = "network-key"
 )
 
 // Define constant file names for the local StorageManager
 const (
-	ValidatorKeyLocal    = "validator.key"
-	ValidatorBLSKeyLocal = "validator-bls.key"
-	NetworkKeyLocal      = "libp2p.key"
+	ValidatorKeyLocal = "validator.key"
+	NetworkKeyLocal   = "libp2p.key"
 )
 
 // Define constant folder names for the local StorageManager
@@ -62,9 +57,6 @@ const (
 
 	// AWSSSM pertains to AWS SSM using configured EC2 instance role
 	AWSSSM SecretsManagerType = "aws-ssm"
-
-	// GCPSSM pertains to the Google Cloud Computing secret store manager
-	GCPSSM SecretsManagerType = "gcp-ssm"
 )
 
 // SecretsManager defines the base public interface that all
@@ -94,6 +86,9 @@ type SecretsManagerParams struct {
 
 	// Extra contains additional data needed for the SecretsManager to function
 	Extra map[string]interface{}
+
+	IsDaemon           bool
+	DaemonValidatorKey string
 }
 
 // SecretsManagerFactory is the factory method for secrets managers
@@ -110,5 +105,5 @@ type SecretsManagerFactory func(
 // SupportedServiceManager checks if the passed in service manager type is supported
 func SupportedServiceManager(service SecretsManagerType) bool {
 	return service == HashicorpVault || service == AWSSSM ||
-		service == Local || service == GCPSSM
+		service == Local
 }

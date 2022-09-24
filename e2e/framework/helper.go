@@ -14,10 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/umbracle/ethgo"
-
 	"github.com/KalyCoinProject/kalychain/contracts/abis"
-	"github.com/KalyCoinProject/kalychain/contracts/staking"
+	"github.com/KalyCoinProject/kalychain/contracts/systemcontracts"
+	"github.com/KalyCoinProject/kalychain/contracts/validatorset"
 	"github.com/KalyCoinProject/kalychain/crypto"
 	"github.com/KalyCoinProject/kalychain/helper/hex"
 	"github.com/KalyCoinProject/kalychain/helper/tests"
@@ -25,7 +24,8 @@ import (
 	txpoolProto "github.com/KalyCoinProject/kalychain/txpool/proto"
 	"github.com/KalyCoinProject/kalychain/types"
 	"github.com/stretchr/testify/assert"
-	"github.com/umbracle/ethgo/jsonrpc"
+	"github.com/umbracle/go-web3"
+	"github.com/umbracle/go-web3/jsonrpc"
 	"golang.org/x/crypto/sha3"
 	empty "google.golang.org/protobuf/types/known/emptypb"
 )
@@ -33,31 +33,6 @@ import (
 var (
 	DefaultTimeout = time.Minute
 )
-
-type AtomicErrors struct {
-	sync.RWMutex
-	errors []error
-}
-
-func NewAtomicErrors(capacity int) AtomicErrors {
-	return AtomicErrors{
-		errors: make([]error, 0, capacity),
-	}
-}
-
-func (a *AtomicErrors) Append(err error) {
-	a.Lock()
-	defer a.Unlock()
-
-	a.errors = append(a.errors, err)
-}
-
-func (a *AtomicErrors) Errors() []error {
-	a.RLock()
-	defer a.RUnlock()
-
-	return a.errors
-}
 
 func EthToWei(ethValue int64) *big.Int {
 	return EthToWeiPrecise(ethValue, 18)
@@ -74,8 +49,8 @@ func GetAccountBalance(t *testing.T, address types.Address, rpcClient *jsonrpc.C
 	t.Helper()
 
 	accountBalance, err := rpcClient.Eth().GetBalance(
-		ethgo.Address(address),
-		ethgo.Latest,
+		web3.Address(address),
+		web3.Latest,
 	)
 
 	assert.NoError(t, err)
@@ -85,26 +60,26 @@ func GetAccountBalance(t *testing.T, address types.Address, rpcClient *jsonrpc.C
 
 // GetValidatorSet returns the validator set from the SC
 func GetValidatorSet(from types.Address, rpcClient *jsonrpc.Client) ([]types.Address, error) {
-	validatorsMethod, ok := abis.StakingABI.Methods["validators"]
+	validatorsMethod, ok := abis.ValidatorSetABI.Methods["validators"]
 	if !ok {
-		return nil, errors.New("validators method doesn't exist in Staking contract ABI")
+		return nil, errors.New("validators method doesn't exist in ValidatorSet contract ABI")
 	}
 
-	toAddress := ethgo.Address(staking.AddrStakingContract)
+	toAddress := web3.Address(systemcontracts.AddrValidatorSetContract)
 	selector := validatorsMethod.ID()
 	response, err := rpcClient.Eth().Call(
-		&ethgo.CallMsg{
-			From:     ethgo.Address(from),
+		&web3.CallMsg{
+			From:     web3.Address(from),
 			To:       &toAddress,
 			Data:     selector,
 			GasPrice: 100000000,
 			Value:    big.NewInt(0),
 		},
-		ethgo.Latest,
+		web3.Latest,
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("unable to call Staking contract method validators, %w", err)
+		return nil, fmt.Errorf("unable to call ValidatorSet contract method validators, %w", err)
 	}
 
 	byteResponse, decodeError := hex.DecodeHex(response)
@@ -112,10 +87,10 @@ func GetValidatorSet(from types.Address, rpcClient *jsonrpc.Client) ([]types.Add
 		return nil, fmt.Errorf("unable to decode hex response, %w", decodeError)
 	}
 
-	return staking.DecodeValidators(validatorsMethod, byteResponse)
+	return validatorset.DecodeValidators(validatorsMethod, byteResponse)
 }
 
-// StakeAmount is a helper function for staking an amount on the Staking SC
+// StakeAmount is a helper function for staking an amount on the ValidatorSet SC
 func StakeAmount(
 	from types.Address,
 	senderKey *ecdsa.PrivateKey,
@@ -125,75 +100,75 @@ func StakeAmount(
 	// Stake Balance
 	txn := &PreparedTransaction{
 		From:     from,
-		To:       &staking.AddrStakingContract,
+		To:       &systemcontracts.AddrValidatorSetContract,
 		GasPrice: big.NewInt(10000),
 		Gas:      1000000,
 		Value:    amount,
 		Input:    MethodSig("stake"),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	_, err := srv.SendRawTx(ctx, txn, senderKey)
 
 	if err != nil {
-		return fmt.Errorf("unable to call Staking contract method stake, %w", err)
+		return fmt.Errorf("unable to call ValidatorSet contract method stake, %w", err)
 	}
 
 	return nil
 }
 
-// UnstakeAmount is a helper function for unstaking the entire amount on the Staking SC
+// UnstakeAmount is a helper function for unstaking the entire amount on the ValidatorSet SC
 func UnstakeAmount(
 	from types.Address,
 	senderKey *ecdsa.PrivateKey,
 	srv *TestServer,
-) (*ethgo.Receipt, error) {
+) (*web3.Receipt, error) {
 	// Stake Balance
 	txn := &PreparedTransaction{
 		From:     from,
-		To:       &staking.AddrStakingContract,
+		To:       &systemcontracts.AddrValidatorSetContract,
 		GasPrice: big.NewInt(DefaultGasPrice),
 		Gas:      DefaultGasLimit,
 		Value:    big.NewInt(0),
 		Input:    MethodSig("unstake"),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	receipt, err := srv.SendRawTx(ctx, txn, senderKey)
 
 	if err != nil {
-		return nil, fmt.Errorf("unable to call Staking contract method unstake, %w", err)
+		return nil, fmt.Errorf("unable to call ValidatorSet contract method unstake, %w", err)
 	}
 
 	return receipt, nil
 }
 
-// GetStakedAmount is a helper function for getting the staked amount on the Staking SC
+// GetStakedAmount is a helper function for getting the staked amount on the ValidatorSet SC
 func GetStakedAmount(from types.Address, rpcClient *jsonrpc.Client) (*big.Int, error) {
-	stakedAmountMethod, ok := abis.StakingABI.Methods["stakedAmount"]
+	stakedAmountMethod, ok := abis.ValidatorSetABI.Methods["stakedAmount"]
 	if !ok {
-		return nil, errors.New("stakedAmount method doesn't exist in Staking contract ABI")
+		return nil, errors.New("stakedAmount method doesn't exist in ValidatorSet contract ABI")
 	}
 
-	toAddress := ethgo.Address(staking.AddrStakingContract)
+	toAddress := web3.Address(systemcontracts.AddrValidatorSetContract)
 	selector := stakedAmountMethod.ID()
 	response, err := rpcClient.Eth().Call(
-		&ethgo.CallMsg{
-			From:     ethgo.Address(from),
+		&web3.CallMsg{
+			From:     web3.Address(from),
 			To:       &toAddress,
 			Data:     selector,
 			GasPrice: 100000000,
 			Value:    big.NewInt(0),
 		},
-		ethgo.Latest,
+		web3.Latest,
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("unable to call Staking contract method stakedAmount, %w", err)
+		return nil, fmt.Errorf("unable to call ValidatorSet contract method stakedAmount, %w", err)
 	}
 
 	bigResponse, decodeErr := types.ParseUint256orHex(&response)
@@ -232,53 +207,41 @@ func MultiJoin(t *testing.T, srvs ...*TestServer) {
 		t.Fatal("not an even number")
 	}
 
-	errors := NewAtomicErrors(len(srvs) / 2)
-
-	var wg sync.WaitGroup
+	errCh := make(chan error, len(srvs)/2)
 
 	for i := 0; i < len(srvs); i += 2 {
 		src, dst := srvs[i], srvs[i+1]
-		srcIndex, dstIndex := i, i+1
-
-		wg.Add(1)
 
 		go func() {
-			defer wg.Done()
-
 			srcClient, dstClient := src.Operator(), dst.Operator()
-			ctxFotStatus, cancelForStatus := context.WithTimeout(context.Background(), DefaultTimeout)
+			dstStatus, err := dstClient.GetStatus(context.Background(), &empty.Empty{})
 
-			defer cancelForStatus()
-
-			dstStatus, err := dstClient.GetStatus(ctxFotStatus, &empty.Empty{})
 			if err != nil {
-				errors.Append(fmt.Errorf("failed to get status from server %d, error=%w", dstIndex, err))
+				errCh <- err
 
 				return
 			}
 
 			dstAddr := strings.Split(dstStatus.P2PAddr, ",")[0]
-			ctxForConnecting, cancelForConnecting := context.WithTimeout(context.Background(), DefaultTimeout)
-
-			defer cancelForConnecting()
-
-			_, err = srcClient.PeersAdd(ctxForConnecting, &proto.PeersAddRequest{
+			_, err = srcClient.PeersAdd(context.Background(), &proto.PeersAddRequest{
 				Id: dstAddr,
 			})
 
-			if err != nil {
-				errors.Append(fmt.Errorf("failed to connect from %d to %d, error=%w", srcIndex, dstIndex, err))
-			}
+			errCh <- err
 		}()
 	}
 
-	wg.Wait()
+	errCount := 0
 
-	for _, err := range errors.Errors() {
-		t.Error(err)
+	for i := 0; i < len(srvs)/2; i++ {
+		if err := <-errCh; err != nil {
+			errCount++
+
+			t.Errorf("failed to connect from %d to %d, error=%+v ", 2*i, 2*i+1, err)
+		}
 	}
 
-	if len(errors.Errors()) > 0 {
+	if errCount > 0 {
 		t.Fail()
 	}
 }
@@ -368,13 +331,8 @@ func WaitUntilBlockMined(ctx context.Context, srv *TestServer, desiredHeight uin
 
 // MethodSig returns the signature of a non-parametrized function
 func MethodSig(name string) []byte {
-	return MethodSigWithParams(fmt.Sprintf("%s()", name))
-}
-
-// MethodSigWithParams returns the signature of a function
-func MethodSigWithParams(nameWithParams string) []byte {
 	h := sha3.NewLegacyKeccak256()
-	h.Write([]byte(nameWithParams))
+	h.Write([]byte(name + "()"))
 	b := h.Sum(nil)
 
 	return b[:4]
@@ -427,18 +385,15 @@ func FindAvailablePort(from, to int) *ReservedPort {
 }
 
 func FindAvailablePorts(n, from, to int) ([]ReservedPort, error) {
-	ports := make([]ReservedPort, 0, n)
+	ports := []ReservedPort{}
 	nextFrom := from
 
 	for i := 0; i < n; i++ {
 		newPort := FindAvailablePort(nextFrom, to)
 		if newPort == nil {
-			// Close current reserved ports
-			for _, p := range ports {
-				p.Close()
-			}
+			nextFrom++
 
-			return nil, errors.New("couldn't reserve required number of ports")
+			continue
 		}
 
 		ports = append(ports, *newPort)
@@ -467,6 +422,9 @@ func NewTestServers(t *testing.T, num int, conf func(*TestServerConfig)) []*Test
 	// This method needs to be standardized in the future
 	bootnodes := []string{tests.GenerateTestMultiAddr(t).String()}
 
+	// It is safe to set contract configs here, since this init method is called for Dev consensus modes.
+	owner, signers := tests.GenerateTestBridgeAssociatedAddress(t, 1)
+
 	for i := 0; i < num; i++ {
 		dataDir, err := tempDir()
 		if err != nil {
@@ -475,45 +433,22 @@ func NewTestServers(t *testing.T, num int, conf func(*TestServerConfig)) []*Test
 
 		srv := NewTestServer(t, dataDir, conf)
 		srv.Config.SetBootnodes(bootnodes)
+		// do not forget to set the must options
+		srv.Config.SetBridgeOwner(owner)
+		srv.Config.SetBridgeSigners(signers)
+
+		if genesisErr := srv.GenerateGenesis(); genesisErr != nil {
+			t.Fatal(genesisErr)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
 
 		srvs = append(srvs, srv)
-	}
-
-	errors := NewAtomicErrors(len(srvs))
-
-	var wg sync.WaitGroup
-
-	for i, srv := range srvs {
-		i, srv := i, srv
-
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
-			if err := srv.GenerateGenesis(); err != nil {
-				errors.Append(fmt.Errorf("server %d failed genesis command, error=%w", i, err))
-
-				return
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
-			defer cancel()
-
-			if err := srv.Start(ctx); err != nil {
-				errors.Append(fmt.Errorf("server %d failed to start, error=%w", i, err))
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	for _, err := range errors.Errors() {
-		t.Error(err)
-	}
-
-	if len(errors.Errors()) > 0 {
-		t.Fail()
 	}
 
 	return srvs

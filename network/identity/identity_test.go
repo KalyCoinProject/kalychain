@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	cmap "github.com/KalyCoinProject/kalychain/helper/concurrentmap"
 	"github.com/KalyCoinProject/kalychain/network/proto"
 	networkTesting "github.com/KalyCoinProject/kalychain/network/testing"
 	"github.com/hashicorp/go-hclog"
@@ -25,8 +26,9 @@ func newIdentityService(
 	}
 
 	return &IdentityService{
-		baseServer: baseServer,
-		logger:     hclog.NewNullLogger(),
+		baseServer:             baseServer,
+		logger:                 hclog.NewNullLogger(),
+		pendingPeerConnections: cmap.NewConcurrentMap(),
 	}
 }
 

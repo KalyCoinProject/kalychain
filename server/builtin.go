@@ -7,7 +7,6 @@ import (
 	consensusIBFT "github.com/KalyCoinProject/kalychain/consensus/ibft"
 	"github.com/KalyCoinProject/kalychain/secrets"
 	"github.com/KalyCoinProject/kalychain/secrets/awsssm"
-	"github.com/KalyCoinProject/kalychain/secrets/gcpssm"
 	"github.com/KalyCoinProject/kalychain/secrets/hashicorpvault"
 	"github.com/KalyCoinProject/kalychain/secrets/local"
 )
@@ -32,7 +31,6 @@ var secretsManagerBackends = map[secrets.SecretsManagerType]secrets.SecretsManag
 	secrets.Local:          local.SecretsManagerFactory,
 	secrets.HashicorpVault: hashicorpvault.SecretsManagerFactory,
 	secrets.AWSSSM:         awsssm.SecretsManagerFactory,
-	secrets.GCPSSM:         gcpssm.SecretsManagerFactory,
 }
 
 func ConsensusSupported(value string) bool {

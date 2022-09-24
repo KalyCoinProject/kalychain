@@ -10,7 +10,6 @@ import (
 	"text/template"
 
 	"github.com/KalyCoinProject/kalychain/helper/hex"
-
 	"github.com/KalyCoinProject/kalychain/types"
 	"github.com/stretchr/testify/assert"
 )

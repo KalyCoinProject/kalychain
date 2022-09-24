@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,10 +22,10 @@ import (
 	ibftSwitch "github.com/KalyCoinProject/kalychain/command/ibft/switch"
 	initCmd "github.com/KalyCoinProject/kalychain/command/secrets/init"
 	"github.com/KalyCoinProject/kalychain/command/server"
-	"github.com/KalyCoinProject/kalychain/consensus/ibft/fork"
+	"github.com/KalyCoinProject/kalychain/consensus/ibft"
 	ibftOp "github.com/KalyCoinProject/kalychain/consensus/ibft/proto"
 	"github.com/KalyCoinProject/kalychain/crypto"
-	stakingHelper "github.com/KalyCoinProject/kalychain/helper/staking"
+	"github.com/KalyCoinProject/kalychain/helper/common"
 	"github.com/KalyCoinProject/kalychain/helper/tests"
 	"github.com/KalyCoinProject/kalychain/network"
 	"github.com/KalyCoinProject/kalychain/secrets"
@@ -34,11 +33,10 @@ import (
 	"github.com/KalyCoinProject/kalychain/server/proto"
 	txpoolProto "github.com/KalyCoinProject/kalychain/txpool/proto"
 	"github.com/KalyCoinProject/kalychain/types"
-	"github.com/KalyCoinProject/kalychain/validators"
 	"github.com/hashicorp/go-hclog"
 	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/umbracle/ethgo"
-	"github.com/umbracle/ethgo/jsonrpc"
+	"github.com/umbracle/go-web3"
+	"github.com/umbracle/go-web3/jsonrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	empty "google.golang.org/protobuf/types/known/emptypb"
@@ -47,10 +45,12 @@ import (
 type TestServerConfigCallback func(*TestServerConfig)
 
 const (
-	serverIP    = "127.0.0.1"
-	initialPort = 12000
-	binaryName  = "kalychain"
+	serverIP   = "127.0.0.1"
+	binaryName = "kalychain"
 )
+
+var lock sync.Mutex
+var initialPort = 12000
 
 type TestServer struct {
 	t *testing.T
@@ -62,11 +62,16 @@ type TestServer struct {
 func NewTestServer(t *testing.T, rootDir string, callback TestServerConfigCallback) *TestServer {
 	t.Helper()
 
-	// Reserve ports
-	ports, err := FindAvailablePorts(3, initialPort, initialPort+10000)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// never use the same port
+	ports, err := FindAvailablePorts(3, initialPort, 65534)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	initialPort = ports[2].Port() + 1
 
 	// Sets the services to start on open ports
 	config := &TestServerConfig{
@@ -76,7 +81,6 @@ func NewTestServer(t *testing.T, rootDir string, callback TestServerConfigCallba
 		JSONRPCPort:   ports[2].Port(),
 		RootDir:       rootDir,
 		Signer:        crypto.NewEIP155Signer(100),
-		ValidatorType: validators.ECDSAValidatorType,
 	}
 
 	if callback != nil {
@@ -121,7 +125,10 @@ func (t *TestServer) JSONRPC() *jsonrpc.Client {
 func (t *TestServer) Operator() proto.SystemClient {
 	conn, err := grpc.Dial(
 		t.GrpcAddr(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(common.MaxGrpcMsgSize),
+			grpc.MaxCallSendMsgSize(common.MaxGrpcMsgSize)))
 	if err != nil {
 		t.t.Fatal(err)
 	}
@@ -132,7 +139,10 @@ func (t *TestServer) Operator() proto.SystemClient {
 func (t *TestServer) TxnPoolOperator() txpoolProto.TxnPoolOperatorClient {
 	conn, err := grpc.Dial(
 		t.GrpcAddr(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(common.MaxGrpcMsgSize),
+			grpc.MaxCallSendMsgSize(common.MaxGrpcMsgSize)))
 	if err != nil {
 		t.t.Fatal(err)
 	}
@@ -143,7 +153,10 @@ func (t *TestServer) TxnPoolOperator() txpoolProto.TxnPoolOperatorClient {
 func (t *TestServer) IBFTOperator() ibftOp.IbftOperatorClient {
 	conn, err := grpc.Dial(
 		t.GrpcAddr(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(common.MaxGrpcMsgSize),
+			grpc.MaxCallSendMsgSize(common.MaxGrpcMsgSize)))
 	if err != nil {
 		t.t.Fatal(err)
 	}
@@ -165,7 +178,7 @@ func (t *TestServer) Stop() {
 	t.ReleaseReservedPorts()
 
 	if t.cmd != nil {
-		if err := t.cmd.Process.Kill(); err != nil {
+		if err := processKill(t.cmd); err != nil {
 			t.t.Error(err)
 		}
 	}
@@ -189,9 +202,7 @@ func (t *TestServer) SecretsInit() (*InitIBFTResult, error) {
 	args = append(args, commandSlice...)
 	args = append(args, "--data-dir", t.Config.IBFTDir)
 
-	cmd := exec.Command(binaryName, args...)
-	cmd.Dir = t.Config.RootDir
-
+	cmd := execCommand(t.Config.RootDir, binaryName, args...)
 	if _, err := cmd.Output(); err != nil {
 		return nil, err
 	}
@@ -211,7 +222,7 @@ func (t *TestServer) SecretsInit() (*InitIBFTResult, error) {
 	}
 
 	// Generate the IBFT validator private key
-	validatorKey, validatorKeyEncoded, keyErr := crypto.GenerateAndEncodeECDSAPrivateKey()
+	validatorKey, validatorKeyEncoded, keyErr := crypto.GenerateAndEncodePrivateKey()
 	if keyErr != nil {
 		return nil, keyErr
 	}
@@ -230,19 +241,6 @@ func (t *TestServer) SecretsInit() (*InitIBFTResult, error) {
 	// Write the networking private key to the secrets manager storage
 	if setErr := localSecretsManager.SetSecret(secrets.NetworkKey, libp2pKeyEncoded); setErr != nil {
 		return nil, setErr
-	}
-
-	if t.Config.ValidatorType == validators.BLSValidatorType {
-		// Generate the BLS Key
-		_, bksKeyEncoded, keyErr := crypto.GenerateAndEncodeBLSSecretKey()
-		if keyErr != nil {
-			return nil, keyErr
-		}
-
-		// Write the networking private key to the secrets manager storage
-		if setErr := localSecretsManager.SetSecret(secrets.ValidatorBLSKey, bksKeyEncoded); setErr != nil {
-			return nil, setErr
-		}
 	}
 
 	// Get the node ID from the private key
@@ -271,11 +269,7 @@ func (t *TestServer) GenerateGenesis() error {
 	// add consensus flags
 	switch t.Config.Consensus {
 	case ConsensusIBFT:
-		args = append(
-			args,
-			"--consensus", "ibft",
-			"--ibft-validator-type", string(t.Config.ValidatorType),
-		)
+		args = append(args, "--consensus", "ibft")
 
 		if t.Config.IBFTDirPrefix == "" {
 			return errors.New("prefix of IBFT directory is not set")
@@ -286,15 +280,10 @@ func (t *TestServer) GenerateGenesis() error {
 		if t.Config.EpochSize != 0 {
 			args = append(args, "--epoch-size", strconv.FormatUint(t.Config.EpochSize, 10))
 		}
-
 	case ConsensusDev:
-		args = append(
-			args,
-			"--consensus", "dev",
-			"--ibft-validator-type", string(t.Config.ValidatorType),
-		)
+		args = append(args, "--consensus", "dev")
 
-		// Set up any initial staker addresses for the predeployed Staking SC
+		// Set up any initial staker addresses for the predeployed ValidatorSet SC
 		for _, stakerAddress := range t.Config.DevStakers {
 			args = append(args, "--ibft-validator", stakerAddress.String())
 		}
@@ -309,17 +298,6 @@ func (t *TestServer) GenerateGenesis() error {
 	// Make sure the correct mechanism is selected
 	if t.Config.IsPos {
 		args = append(args, "--pos")
-
-		if t.Config.MinValidatorCount == 0 {
-			t.Config.MinValidatorCount = stakingHelper.MinValidatorCount
-		}
-
-		if t.Config.MaxValidatorCount == 0 {
-			t.Config.MaxValidatorCount = stakingHelper.MaxValidatorCount
-		}
-
-		args = append(args, "--min-validator-count", strconv.FormatUint(t.Config.MinValidatorCount, 10))
-		args = append(args, "--max-validator-count", strconv.FormatUint(t.Config.MaxValidatorCount, 10))
 	}
 
 	// add block gas limit
@@ -330,14 +308,22 @@ func (t *TestServer) GenerateGenesis() error {
 	blockGasLimit := strconv.FormatUint(t.Config.BlockGasLimit, 10)
 	args = append(args, "--block-gas-limit", blockGasLimit)
 
-	cmd := exec.Command(binaryName, args...)
-	cmd.Dir = t.Config.RootDir
-
-	if t.Config.ShowsLog {
-		stdout := io.Writer(os.Stdout)
-		cmd.Stdout = stdout
-		cmd.Stderr = stdout
+	// add validatorset contract owner
+	if t.Config.ValidatorSetOwner != types.ZeroAddress {
+		args = append(args, "--validatorset-owner", t.Config.ValidatorSetOwner.String())
 	}
+
+	// add bridge contract owner
+	if t.Config.BridgeOwner != types.ZeroAddress {
+		args = append(args, "--bridge-owner", t.Config.BridgeOwner.String())
+	}
+
+	// add bridge contract signers
+	for _, signer := range t.Config.BridgeSigners {
+		args = append(args, "--bridge-signer", signer.String())
+	}
+
+	cmd := execCommand(t.Config.RootDir, binaryName, args...)
 
 	return cmd.Run()
 }
@@ -354,6 +340,14 @@ func (t *TestServer) Start(ctx context.Context) error {
 		"--libp2p", t.LibP2PAddr(),
 		// enable jsonrpc
 		"--jsonrpc", t.JSONRPCAddr(),
+	}
+
+	if t.Config.IsWSEnable {
+		args = append(args, "--enable-ws")
+	}
+
+	if t.Config.RestoreFile != "" {
+		args = append(args, "--restore", t.Config.RestoreFile)
 	}
 
 	switch t.Config.Consensus {
@@ -387,19 +381,15 @@ func (t *TestServer) Start(ctx context.Context) error {
 		args = append(args, "--block-gas-target", *types.EncodeUint64(t.Config.BlockGasTarget))
 	}
 
-	if t.Config.BlockTime != 0 {
+	// block generation time, not dev consesus
+	if t.Config.BlockTime > 0 {
 		args = append(args, "--block-time", strconv.FormatUint(t.Config.BlockTime, 10))
-	}
-
-	if t.Config.IBFTBaseTimeout != 0 {
-		args = append(args, "--ibft-base-timeout", strconv.FormatUint(t.Config.IBFTBaseTimeout, 10))
 	}
 
 	t.ReleaseReservedPorts()
 
 	// Start the server
-	t.cmd = exec.Command(binaryName, args...)
-	t.cmd.Dir = t.Config.RootDir
+	t.cmd = execCommand(t.Config.RootDir, binaryName, args...)
 
 	if t.Config.ShowsLog {
 		stdout := io.Writer(os.Stdout)
@@ -411,21 +401,28 @@ func (t *TestServer) Start(ctx context.Context) error {
 		return err
 	}
 
+	registerPID(t.cmd)
+
+	// fix defunct process
+	go func() {
+		_ = t.cmd.Wait()
+	}()
+
 	_, err := tests.RetryUntilTimeout(ctx, func() (interface{}, bool) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		if _, err := t.Operator().GetStatus(ctx, &empty.Empty{}); err != nil {
-			return nil, true
+		if _, err := t.Operator().GetStatus(ctx, &empty.Empty{}); err == nil {
+			return nil, false
 		}
 
-		return nil, false
+		return nil, true
 	})
 
 	return err
 }
 
-func (t *TestServer) SwitchIBFTType(typ fork.IBFTType, from uint64, to, deployment *uint64) error {
+func (t *TestServer) SwitchIBFTType(typ ibft.MechanismType, from uint64, to, deployment *uint64) error {
 	t.t.Helper()
 
 	ibftSwitchCmd := ibftSwitch.GetCommand()
@@ -441,9 +438,6 @@ func (t *TestServer) SwitchIBFTType(typ fork.IBFTType, from uint64, to, deployme
 		"--from", strconv.FormatUint(from, 10),
 	)
 
-	// Default ibft validator type for e2e tests is ECDSA
-	args = append(args, "--ibft-validator-type", string(validators.ECDSAValidatorType))
-
 	if to != nil {
 		args = append(args, "--to", strconv.FormatUint(*to, 10))
 	}
@@ -453,8 +447,7 @@ func (t *TestServer) SwitchIBFTType(typ fork.IBFTType, from uint64, to, deployme
 	}
 
 	// Start the server
-	t.cmd = exec.Command(binaryName, args...)
-	t.cmd.Dir = t.Config.RootDir
+	t.cmd = execCommand(t.Config.RootDir, binaryName, args...)
 
 	if t.Config.ShowsLog {
 		stdout := io.Writer(os.Stdout)
@@ -478,15 +471,15 @@ func (t *TestServer) DeployContract(
 	ctx context.Context,
 	binary string,
 	privateKey *ecdsa.PrivateKey,
-) (ethgo.Address, error) {
+) (web3.Address, error) {
 	buf, err := hex.DecodeString(binary)
 	if err != nil {
-		return ethgo.Address{}, err
+		return web3.Address{}, err
 	}
 
 	sender, err := crypto.GetAddressFromKey(privateKey)
 	if err != nil {
-		return ethgo.ZeroAddress, fmt.Errorf("unable to extract key, %w", err)
+		return web3.ZeroAddress, fmt.Errorf("unable to extract key, %w", err)
 	}
 
 	receipt, err := t.SendRawTx(ctx, &PreparedTransaction{
@@ -496,7 +489,7 @@ func (t *TestServer) DeployContract(
 		Input:    buf,
 	}, privateKey)
 	if err != nil {
-		return ethgo.Address{}, err
+		return web3.Address{}, err
 	}
 
 	return receipt.ContractAddress, nil
@@ -521,10 +514,10 @@ func (t *TestServer) SendRawTx(
 	ctx context.Context,
 	tx *PreparedTransaction,
 	signerKey *ecdsa.PrivateKey,
-) (*ethgo.Receipt, error) {
+) (*web3.Receipt, error) {
 	client := t.JSONRPC()
 
-	nextNonce, err := client.Eth().GetNonce(ethgo.Address(tx.From), ethgo.Latest)
+	nextNonce, err := client.Eth().GetNonce(web3.Address(tx.From), web3.Latest)
 	if err != nil {
 		return nil, err
 	}
@@ -550,11 +543,11 @@ func (t *TestServer) SendRawTx(
 	return tests.WaitForReceipt(ctx, t.JSONRPC().Eth(), txHash)
 }
 
-func (t *TestServer) WaitForReceipt(ctx context.Context, hash ethgo.Hash) (*ethgo.Receipt, error) {
+func (t *TestServer) WaitForReceipt(ctx context.Context, hash web3.Hash) (*web3.Receipt, error) {
 	client := t.JSONRPC()
 
 	type result struct {
-		receipt *ethgo.Receipt
+		receipt *web3.Receipt
 		err     error
 	}
 
@@ -581,63 +574,17 @@ func (t *TestServer) WaitForReceipt(ctx context.Context, hash ethgo.Hash) (*ethg
 	return data.receipt, data.err
 }
 
-// GetGasTotal waits for the total gas used sum for the passed in
-// transactions
-func (t *TestServer) GetGasTotal(txHashes []ethgo.Hash) uint64 {
-	t.t.Helper()
-
-	var (
-		totalGasUsed    = uint64(0)
-		receiptErrs     = make([]error, 0)
-		receiptErrsLock sync.Mutex
-		wg              sync.WaitGroup
-	)
-
-	appendReceiptErr := func(receiptErr error) {
-		receiptErrsLock.Lock()
-		defer receiptErrsLock.Unlock()
-
-		receiptErrs = append(receiptErrs, receiptErr)
-	}
-
-	for _, txHash := range txHashes {
-		wg.Add(1)
-
-		go func(txHash ethgo.Hash) {
-			defer wg.Done()
-
-			ctx, cancelFn := context.WithTimeout(context.Background(), DefaultTimeout)
-			defer cancelFn()
-
-			receipt, receiptErr := tests.WaitForReceipt(ctx, t.JSONRPC().Eth(), txHash)
-			if receiptErr != nil {
-				appendReceiptErr(fmt.Errorf("unable to wait for receipt, %w", receiptErr))
-
-				return
-			}
-
-			atomic.AddUint64(&totalGasUsed, receipt.GasUsed)
-		}(txHash)
-	}
-
-	wg.Wait()
-
-	if len(receiptErrs) > 0 {
-		t.t.Fatalf("unable to wait for receipts, %v", receiptErrs)
-	}
-
-	return totalGasUsed
-}
-
 func (t *TestServer) WaitForReady(ctx context.Context) error {
 	_, err := tests.RetryUntilTimeout(ctx, func() (interface{}, bool) {
 		num, err := t.GetLatestBlockHeight()
-
-		if num < 1 || err != nil {
+		if err != nil {
+			return nil, true
+		}
+		if num == 0 {
 			return nil, true
 		}
 
-		return nil, false
+		return num, false
 	})
 
 	return err
@@ -648,7 +595,7 @@ func (t *TestServer) InvokeMethod(
 	contractAddress types.Address,
 	method string,
 	fromKey *ecdsa.PrivateKey,
-) *ethgo.Receipt {
+) *web3.Receipt {
 	sig := MethodSig(method)
 
 	fromAddress, err := crypto.GetAddressFromKey(fromKey)

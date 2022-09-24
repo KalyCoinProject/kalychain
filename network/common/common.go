@@ -3,11 +3,10 @@ package common
 import (
 	"errors"
 	"fmt"
-	"regexp"
-	"strings"
-
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/multiformats/go-multiaddr"
+	"regexp"
+	"strings"
 )
 
 type DialPriority uint64

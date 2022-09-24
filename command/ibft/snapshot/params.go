@@ -3,6 +3,7 @@ package snapshot
 import (
 	"context"
 
+	"github.com/KalyCoinProject/kalychain/command"
 	"github.com/KalyCoinProject/kalychain/command/helper"
 	ibftOp "github.com/KalyCoinProject/kalychain/consensus/ibft/proto"
 )
@@ -51,4 +52,8 @@ func (p *snapshotParams) getSnapshotRequest() *ibftOp.SnapshotReq {
 	}
 
 	return req
+}
+
+func (p *snapshotParams) getResult() command.CommandResult {
+	return newIBFTSnapshotResult(p.snapshot)
 }

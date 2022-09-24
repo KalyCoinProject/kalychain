@@ -6,14 +6,17 @@ import (
 	"math/big"
 
 	"github.com/KalyCoinProject/kalychain/chain"
-	"github.com/KalyCoinProject/kalychain/helper/common"
 	"github.com/KalyCoinProject/kalychain/helper/hex"
 	"github.com/KalyCoinProject/kalychain/helper/progress"
 	"github.com/KalyCoinProject/kalychain/state"
 	"github.com/KalyCoinProject/kalychain/state/runtime"
 	"github.com/KalyCoinProject/kalychain/types"
+	"github.com/KalyCoinProject/fastrlp"
 	"github.com/hashicorp/go-hclog"
-	"github.com/umbracle/fastrlp"
+)
+
+const (
+	defaultMinGasPrice = "0Xba43b7400" // 50 GWei
 )
 
 type ethTxPoolStore interface {
@@ -81,10 +84,12 @@ type Eth struct {
 
 var (
 	ErrInsufficientFunds = errors.New("insufficient funds for execution")
+	ErrGasCapOverflow    = errors.New("unable to apply transaction for the highest gas limit")
 )
 
 // ChainId returns the chain id of the client
-//nolint:stylecheck, gofmt
+//
+//nolint:stylecheck
 func (e *Eth) ChainId() (interface{}, error) {
 	return argUintPtr(e.chainID), nil
 }
@@ -200,9 +205,9 @@ func (e *Eth) BlockNumber() (interface{}, error) {
 
 // SendRawTransaction sends a raw transaction
 func (e *Eth) SendRawTransaction(input string) (interface{}, error) {
-	buf, decodeErr := hex.DecodeHex(input)
-	if decodeErr != nil {
-		return nil, fmt.Errorf("unable to decode input, %w", decodeErr)
+	buf, err := hex.DecodeHex(input)
+	if err != nil {
+		return nil, fmt.Errorf("raw tx input decode hex err: %w", err)
 	}
 
 	tx := &types.Transaction{}
@@ -219,8 +224,8 @@ func (e *Eth) SendRawTransaction(input string) (interface{}, error) {
 	return tx.Hash.String(), nil
 }
 
-// SendTransaction rejects eth_sendTransaction json-rpc call as we don't support wallet management
-func (e *Eth) SendTransaction(_ *txnArgs) (interface{}, error) {
+// Reject eth_sendTransaction json-rpc call as we don't support wallet management
+func (e *Eth) SendTransaction(arg *txnArgs) (interface{}, error) {
 	return nil, fmt.Errorf("request calls to eth_sendTransaction method are not supported," +
 		" use eth_sendRawTransaction insead")
 }
@@ -393,7 +398,7 @@ func (e *Eth) GetStorageAt(
 
 	// The filter is empty, use the latest block by default
 	if filter.BlockNumber == nil && filter.BlockHash == nil {
-		filter.BlockNumber, _ = createBlockNumberPointer("latest")
+		filter.BlockNumber, _ = CreateBlockNumberPointer(LatestBlockFlag)
 	}
 
 	header, err = e.getHeaderFromBlockNumberOrHash(&filter)
@@ -404,8 +409,7 @@ func (e *Eth) GetStorageAt(
 	// Get the storage for the passed in location
 	result, err := e.store.GetStorage(header.StateRoot, address, index)
 	if err != nil {
-		//nolint:govet
-		if errors.As(err, &ErrStateNotFound) {
+		if errors.Is(err, ErrStateNotFound) {
 			return argBytesPtr(types.ZeroHash[:]), nil
 		}
 
@@ -429,13 +433,25 @@ func (e *Eth) GetStorageAt(
 }
 
 // GasPrice returns the average gas price based on the last x blocks
-// taking into consideration operator defined price limit
-func (e *Eth) GasPrice() (string, error) {
-	// Fetch average gas price in uint64
-	avgGasPrice := e.store.GetAvgGasPrice().Uint64()
+func (e *Eth) GasPrice() (interface{}, error) {
+	// var avgGasPrice string
+	// Grab the average gas price and convert it to a hex value
+	priceLimit := new(big.Int).SetUint64(e.priceLimit)
+	minGasPrice, _ := new(big.Int).SetString(defaultMinGasPrice, 0)
 
-	// Return --price-limit flag defined value if it is greater than avgGasPrice
-	return hex.EncodeUint64(common.Max(e.priceLimit, avgGasPrice)), nil
+	if priceLimit.Cmp(minGasPrice) == -1 {
+		priceLimit = minGasPrice
+	}
+
+	// if e.store.GetAvgGasPrice().Cmp(minGasPrice) == -1 {
+	// 	avgGasPrice = hex.EncodeBig(minGasPrice)
+	// } else {
+	// 	avgGasPrice = hex.EncodeBig(e.store.GetAvgGasPrice())
+	// }
+
+	// return avgGasPrice, nil
+
+	return hex.EncodeBig(priceLimit), nil
 }
 
 // Call executes a smart contract call using the transaction object data
@@ -447,7 +463,7 @@ func (e *Eth) Call(arg *txnArgs, filter BlockNumberOrHash) (interface{}, error) 
 
 	// The filter is empty, use the latest block by default
 	if filter.BlockNumber == nil && filter.BlockHash == nil {
-		filter.BlockNumber, _ = createBlockNumberPointer("latest")
+		filter.BlockNumber, _ = CreateBlockNumberPointer(LatestBlockFlag)
 	}
 
 	header, err = e.getHeaderFromBlockNumberOrHash(&filter)
@@ -537,8 +553,7 @@ func (e *Eth) EstimateGas(arg *txnArgs, rawNum *BlockNumber) (interface{}, error
 		accountBalance := big.NewInt(0)
 		acc, err := e.store.GetAccount(header.StateRoot, transaction.From)
 
-		//nolint:govet
-		if err != nil && !errors.As(err, &ErrStateNotFound) {
+		if err != nil && !errors.Is(err, ErrStateNotFound) {
 			// An unrelated error occurred, return it
 			return nil, err
 		} else if err == nil {
@@ -580,9 +595,7 @@ func (e *Eth) EstimateGas(arg *txnArgs, rawNum *BlockNumber) (interface{}, error
 
 	// Checks if executor level valid gas errors occurred
 	isGasApplyError := func(err error) bool {
-		// Not linting this as the underlying error is actually wrapped
-		//nolint:govet
-		return errors.As(err, &state.ErrNotEnoughIntrinsicGas)
+		return errors.Is(err, state.ErrNotEnoughIntrinsicGas)
 	}
 
 	// Checks if EVM level valid gas errors occurred
@@ -681,12 +694,12 @@ func (e *Eth) GetFilterLogs(id string) (interface{}, error) {
 		return nil, err
 	}
 
-	return e.filterManager.GetLogsForQuery(logFilter.query)
+	return e.GetLogs(logFilter.query)
 }
 
 // GetLogs returns an array of logs matching the filter options
 func (e *Eth) GetLogs(query *LogQuery) (interface{}, error) {
-	return e.filterManager.GetLogsForQuery(query)
+	return e.filterManager.GetLogs(query)
 }
 
 // GetBalance returns the account's balance at the referenced block.
@@ -698,7 +711,7 @@ func (e *Eth) GetBalance(address types.Address, filter BlockNumberOrHash) (inter
 
 	// The filter is empty, use the latest block by default
 	if filter.BlockNumber == nil && filter.BlockHash == nil {
-		filter.BlockNumber, _ = createBlockNumberPointer("latest")
+		filter.BlockNumber, _ = CreateBlockNumberPointer(LatestBlockFlag)
 	}
 
 	header, err = e.getHeaderFromBlockNumberOrHash(&filter)
@@ -708,8 +721,7 @@ func (e *Eth) GetBalance(address types.Address, filter BlockNumberOrHash) (inter
 
 	// Extract the account balance
 	acc, err := e.store.GetAccount(header.StateRoot, address)
-	//nolint:govet
-	if errors.As(err, &ErrStateNotFound) {
+	if errors.Is(err, ErrStateNotFound) {
 		// Account not found, return an empty account
 		return argUintPtr(0), nil
 	} else if err != nil {
@@ -729,7 +741,7 @@ func (e *Eth) GetTransactionCount(address types.Address, filter BlockNumberOrHas
 
 	// The filter is empty, use the latest block by default
 	if filter.BlockNumber == nil && filter.BlockHash == nil {
-		filter.BlockNumber, _ = createBlockNumberPointer("latest")
+		filter.BlockNumber, _ = CreateBlockNumberPointer(LatestBlockFlag)
 	}
 
 	if filter.BlockNumber == nil {
@@ -764,7 +776,7 @@ func (e *Eth) GetCode(address types.Address, filter BlockNumberOrHash) (interfac
 
 	// The filter is empty, use the latest block by default
 	if filter.BlockNumber == nil && filter.BlockHash == nil {
-		filter.BlockNumber, _ = createBlockNumberPointer("latest")
+		filter.BlockNumber, _ = CreateBlockNumberPointer(LatestBlockFlag)
 	}
 
 	header, err = e.getHeaderFromBlockNumberOrHash(&filter)
@@ -775,8 +787,7 @@ func (e *Eth) GetCode(address types.Address, filter BlockNumberOrHash) (interfac
 	emptySlice := []byte{}
 	acc, err := e.store.GetAccount(header.StateRoot, address)
 
-	//nolint:govet
-	if errors.As(err, &ErrStateNotFound) {
+	if errors.Is(err, ErrStateNotFound) {
 		// If the account doesn't exist / is not initialized yet,
 		// return the default value
 		return "0x", nil
@@ -803,7 +814,9 @@ func (e *Eth) NewBlockFilter() (interface{}, error) {
 	return e.filterManager.NewBlockFilter(nil), nil
 }
 
-// GetFilterChanges is a polling method for a filter, which returns an array of logs which occurred since last poll.
+// GetFilterChanges is a polling method for a filter, which returns an array of logs
+// which occurred since last poll. WebSocket polling log filter changes would not be
+// accepted anymore.
 func (e *Eth) GetFilterChanges(id string) (interface{}, error) {
 	return e.filterManager.GetFilterChanges(id)
 }
@@ -864,8 +877,7 @@ func (e *Eth) getNextNonce(address types.Address, number BlockNumber) (uint64, e
 
 	acc, err := e.store.GetAccount(header.StateRoot, address)
 
-	//nolint:govet
-	if errors.As(err, &ErrStateNotFound) {
+	if errors.Is(err, ErrStateNotFound) {
 		// If the account doesn't exist / isn't initialized,
 		// return a nonce value of 0
 		return 0, nil

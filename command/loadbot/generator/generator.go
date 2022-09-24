@@ -6,10 +6,9 @@ import (
 	"io/ioutil"
 	"math/big"
 
-	"github.com/umbracle/ethgo"
-
 	"github.com/KalyCoinProject/kalychain/types"
-	"github.com/umbracle/ethgo/abi"
+	"github.com/umbracle/go-web3"
+	"github.com/umbracle/go-web3/abi"
 )
 
 type TransactionGenerator interface {
@@ -70,7 +69,7 @@ type GeneratorParams struct {
 	GasPrice         *big.Int
 	ContractArtifact *ContractArtifact
 	ConstructorArgs  []byte // smart contract constructor arguments
-	ContractAddress  ethgo.Address
+	ContractAddress  web3.Address
 }
 
 // ReadContractArtifact reads the contract bytecode from the specified path
