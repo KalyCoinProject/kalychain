@@ -3,10 +3,10 @@ module github.com/KalyCoinProject/kalychain
 go 1.17
 
 require (
+	//github.com/umbracle/fastrlp v0.0.0-20220529195328-c1416904ae17
+	github.com/KalyCoinProject/fastrlp v0.0.0-20220924024010-6ed76cd424f4
 	github.com/btcsuite/btcd v0.22.0-beta
 	github.com/containerd/cgroups v1.0.2 // indirect
-	//github.com/umbracle/fastrlp v0.0.0-20220529195328-c1416904ae17
-	github.com/KalyCoinProject/fastrlp v0.0.0-20220523073019-b0c60fc6bb7a
 	github.com/elastic/gosigar v0.14.2 // indirect
 	github.com/go-kit/kit v0.12.0
 	github.com/golang/protobuf v1.5.2

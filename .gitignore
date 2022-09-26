@@ -8,7 +8,7 @@ bin/
 
 test-chain*
 jury-chain*
-kalychain-chain*
+kalychain*
 .idea
 
 # Exclude the build .exe file from version control
