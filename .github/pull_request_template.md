@@ -1,39 +1,17 @@
-# Description
+<!-- Thanks for sending a pull request! Please check out our contribution guidelines: -->
+<!-- https://github.com/hyperledger/besu/blob/main/CONTRIBUTING.md -->
 
-Please provide a detailed description of what was done in this PR
+## PR description
 
-# Changes include
+## Fixed Issue(s)
+<!-- Please link to fixed issue(s) here using format: fixes #<issue number> -->
+<!-- Example: "fixes #2" -->
 
-- [ ] Bugfix (non-breaking change that solves an issue)
-- [ ] Hotfix (change that solves an urgent issue, and requires immediate attention)
-- [ ] New feature (non-breaking change that adds functionality)
-- [ ] Breaking change (change that is not backwards-compatible and/or changes current functionality)
+## Documentation
 
-# Breaking changes
+- [ ] I thought about documentation and added the `doc-change-required` label to this PR if
+    [updates are required](https://wiki.hyperledger.org/display/BESU/Documentation).
 
-Please complete this section if any breaking changes have been made, otherwise delete it
+## Changelog
 
-# Checklist
-
-- [ ] I have assigned this PR to myself
-- [ ] I have added at least 1 reviewer
-- [ ] I have added the relevant labels
-- [ ] I have updated the official documentation
-- [ ] I have added sufficient documentation in code
-
-## Testing
-
-- [ ] I have tested this code with the official test suite
-- [ ] I have tested this code manually
-
-### Manual tests
-
-Please complete this section if you ran manual tests for this functionality, otherwise delete it
-
-# Documentation update
-
-Please link the documentation update PR in this section if it's present, otherwise delete it
-
-# Additional comments
-
-Please post additional comments in this section if you have them, otherwise delete it
+- [ ] I thought about the changelog and included a [changelog update if required](https://wiki.hyperledger.org/display/BESU/Changelog).

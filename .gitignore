@@ -1,26 +1,32 @@
-peers.json
-genesis.json
-secretsManagerConfig.json
-*-packr.go
-config*.json
-
-bin/
-
-test-chain*
-kalychain-chain*
-.idea
-
-# Exclude the build .exe file from version control
-dist/
-main.exe
-main
-
-# MacOS Leftovers
-.DS_Store
-.vscode
-
-# exclude build folder
-artifacts
-
-# Log files
+*.bak
+*.swp
+*.tmp
+*~.nib
+*.iml
+*.launch
+*.swp
 *.log
+.classpath
+.DS_Store
+.externalToolBuilders/
+.gradle/
+.idea/
+.loadpath
+.metadata
+.prefs
+.project
+.recommenders/
+.settings
+.springBeans
+.vertx
+bin/
+local.properties
+target/
+tmp/
+build/
+out/
+site/
+/kubernetes/reports/
+/kubernetes/besu-*.tar.gz
+**/src/*/generated
+jitpack.yml

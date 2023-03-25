@@ -1,30 +1,33 @@
+# KalyChain Uses the Besu Ethereum Client
+ [![CircleCI](https://circleci.com/gh/hyperledger/besu/tree/main.svg?style=svg)](https://circleci.com/gh/hyperledger/besu/tree/main)
+ [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/3174/badge)](https://bestpractices.coreinfrastructure.org/projects/3174)
+ [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/hyperledger/besu/blob/main/LICENSE)
+ 
 
-![Banner](.github/banner.jpg)
-[![codecov](https://codecov.io/gh/KalyCoinProject/kalychain/branch/develop/graph/badge.svg?token=PXEADRC1IW)](https://codecov.io/gh/KalyCoinProject/kalychain)
-## Kaly Chain
+Besu is an Apache 2.0 licensed, MainNet compatible, Ethereum client written in Java.
 
-Kaly Chain is a modular Ethereum-compatible blockchain network.
+## Useful Links
 
-To find out more about Kaly Chain, visit the [official website](https://kalycoin.io/).
+* [Kalychain User Documentation]
+* [KalyChain Issues]
+* [KalyChain Docs](https://docs.kalychain.io/)
 
 
-## Documentation 📝
+## Issues 
 
-If you'd like to learn more about the Kaly Chain, how it works and how you can use it for your project,
-please check out the **[Kaly Chain Documentation](https://docs.kalycoin.io/)**.
+KalyChain issues are tracked [in the issues tab][KalyChain Issues].
 
----
 
-Copyright 2022 Kaly Chain Technology
+If you have any questions, queries or comments, [KalyChain Discord] is the place to find us.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+## KalyChain Users
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+To install the Besu binary and connect to Kalychain, follow [these instructions](https://git.cipherlabs.org/KalyChain/Node-Install).    
+
+
+
+[KalyChain Issues]: https://git.cipherlabs.org/KalyChain/KalyChain/issues
+[KalyChain User Documentation]: https://docs.kalychain.io/
+[KalyChain Discord]: https://discord.gg/bvtm6dUf
+
