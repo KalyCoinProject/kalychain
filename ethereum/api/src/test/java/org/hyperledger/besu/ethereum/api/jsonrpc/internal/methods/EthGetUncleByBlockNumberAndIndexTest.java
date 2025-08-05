@@ -45,13 +45,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class EthGetUncleByBlockNumberAndIndexTest {
 
   private final BlockHeaderTestFixture blockHeaderTestFixture = new BlockHeaderTestFixture();
@@ -61,7 +61,7 @@ public class EthGetUncleByBlockNumberAndIndexTest {
 
   @Mock private BlockchainQueries blockchainQueries;
 
-  @Before
+  @BeforeEach
   public void before() {
     this.method = new EthGetUncleByBlockNumberAndIndex(blockchainQueries);
   }
@@ -79,7 +79,7 @@ public class EthGetUncleByBlockNumberAndIndexTest {
 
     assertThat(thrown)
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 0");
+        .hasMessage("Invalid block parameter (index 0)");
   }
 
   @Test
@@ -90,7 +90,7 @@ public class EthGetUncleByBlockNumberAndIndexTest {
 
     assertThat(thrown)
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 1");
+        .hasMessage("Invalid block index (index 1)");
   }
 
   @Test
@@ -125,11 +125,7 @@ public class EthGetUncleByBlockNumberAndIndexTest {
     final Block block =
         new Block(header, new BlockBody(Collections.emptyList(), Collections.emptyList()));
     return new BlockResult(
-        header,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Difficulty.ZERO,
-        block.calculateSize());
+        header, Collections.emptyList(), Collections.emptyList(), Difficulty.ZERO, block.getSize());
   }
 
   private JsonRpcRequestContext getUncleByBlockNumberAndIndex(final Object[] params) {

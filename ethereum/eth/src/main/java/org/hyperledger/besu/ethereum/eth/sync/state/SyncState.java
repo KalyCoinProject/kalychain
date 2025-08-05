@@ -14,6 +14,7 @@
  */
 package org.hyperledger.besu.ethereum.eth.sync.state;
 
+import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
 import org.hyperledger.besu.ethereum.chain.ChainHead;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
@@ -57,6 +58,10 @@ public class SyncState {
   private Optional<Boolean> reachedTerminalDifficulty = Optional.empty();
   private final Optional<Checkpoint> checkpoint;
   private volatile boolean isInitialSyncPhaseDone;
+
+  private volatile boolean isResyncNeeded;
+
+  private Optional<Address> maybeAccountToRepair = Optional.empty();
 
   public SyncState(final Blockchain blockchain, final EthPeers ethPeers) {
     this(blockchain, ethPeers, false, Optional.empty());
@@ -311,12 +316,34 @@ public class SyncState {
     return checkpoint;
   }
 
+  public boolean isInitialSyncPhaseDone() {
+    return isInitialSyncPhaseDone;
+  }
+
   public void markInitialSyncPhaseAsDone() {
     isInitialSyncPhaseDone = true;
+    isResyncNeeded = false;
     completionListenerSubscribers.forEach(InitialSyncCompletionListener::onInitialSyncCompleted);
   }
 
-  public boolean isInitialSyncPhaseDone() {
-    return isInitialSyncPhaseDone;
+  public boolean isResyncNeeded() {
+    return isResyncNeeded;
+  }
+
+  public void markResyncNeeded() {
+    isResyncNeeded = true;
+  }
+
+  public Optional<Address> getAccountToRepair() {
+    return maybeAccountToRepair;
+  }
+
+  public void markAccountToRepair(final Optional<Address> address) {
+    maybeAccountToRepair = address;
+  }
+
+  public void markInitialSyncRestart() {
+    isInitialSyncPhaseDone = false;
+    completionListenerSubscribers.forEach(InitialSyncCompletionListener::onInitialSyncRestart);
   }
 }

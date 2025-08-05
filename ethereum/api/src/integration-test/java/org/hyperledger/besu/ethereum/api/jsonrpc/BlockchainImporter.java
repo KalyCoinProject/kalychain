@@ -14,14 +14,18 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc;
 
-import org.hyperledger.besu.config.GenesisConfigFile;
+import org.hyperledger.besu.config.GenesisConfig;
+import org.hyperledger.besu.ethereum.chain.BadBlockManager;
 import org.hyperledger.besu.ethereum.chain.GenesisState;
 import org.hyperledger.besu.ethereum.core.Block;
-import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.BlockHeaderFunctions;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.mainnet.MainnetProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ScheduleBasedBlockHeaderFunctions;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.cache.CodeCache;
 import org.hyperledger.besu.ethereum.util.RawBlockIterator;
+import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 
 import java.net.URL;
 import java.nio.file.Paths;
@@ -42,22 +46,24 @@ public class BlockchainImporter {
   public BlockchainImporter(final URL blocksUrl, final String genesisJson) throws Exception {
     protocolSchedule =
         MainnetProtocolSchedule.fromConfig(
-            GenesisConfigFile.fromConfig(genesisJson).getConfigOptions());
-
+            GenesisConfig.fromConfig(genesisJson).getConfigOptions(),
+            MiningConfiguration.newDefault(),
+            new BadBlockManager(),
+            false,
+            new NoOpMetricsSystem());
+    final BlockHeaderFunctions blockHeaderFunctions =
+        ScheduleBasedBlockHeaderFunctions.create(protocolSchedule);
     blocks = new ArrayList<>();
     try (final RawBlockIterator iterator =
-        new RawBlockIterator(
-            Paths.get(blocksUrl.toURI()),
-            rlp ->
-                BlockHeader.readFrom(
-                    rlp, ScheduleBasedBlockHeaderFunctions.create(protocolSchedule)))) {
+        new RawBlockIterator(Paths.get(blocksUrl.toURI()), blockHeaderFunctions)) {
       while (iterator.hasNext()) {
         blocks.add(iterator.next());
       }
     }
 
     genesisBlock = blocks.get(0);
-    genesisState = GenesisState.fromJson(genesisJson, protocolSchedule);
+    // only used in tests no global code cache is needed
+    genesisState = GenesisState.fromJson(genesisJson, protocolSchedule, new CodeCache());
   }
 
   public GenesisState getGenesisState() {

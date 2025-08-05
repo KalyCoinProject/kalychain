@@ -12,11 +12,16 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.plugin.services;
 
 import java.util.Collection;
 
+/** The interface Plugin versions provider. */
 public interface PluginVersionsProvider {
+  /**
+   * Gets plugin versions.
+   *
+   * @return the plugin versions
+   */
   Collection<String> getPluginVersions();
 }

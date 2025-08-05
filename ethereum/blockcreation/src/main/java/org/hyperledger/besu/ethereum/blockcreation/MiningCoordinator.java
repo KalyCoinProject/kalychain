@@ -26,13 +26,13 @@ import org.hyperledger.besu.ethereum.mainnet.PoWSolverInputs;
 import java.util.List;
 import java.util.Optional;
 
-import org.apache.tuweni.bytes.Bytes;
-
 public interface MiningCoordinator {
 
   void start();
 
   void stop();
+
+  default void subscribe() {}
 
   void awaitStop() throws InterruptedException;
 
@@ -58,7 +58,7 @@ public interface MiningCoordinator {
 
   Wei getMinTransactionGasPrice();
 
-  void setExtraData(Bytes extraData);
+  Wei getMinPriorityFeePerGas();
 
   default void setCoinbase(final Address coinbase) {
     throw new UnsupportedOperationException(

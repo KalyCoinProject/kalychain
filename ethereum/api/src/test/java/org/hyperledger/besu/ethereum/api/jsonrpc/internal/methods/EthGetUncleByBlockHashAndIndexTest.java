@@ -44,13 +44,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class EthGetUncleByBlockHashAndIndexTest {
 
   private final BlockHeaderTestFixture blockHeaderTestFixture = new BlockHeaderTestFixture();
@@ -61,7 +61,7 @@ public class EthGetUncleByBlockHashAndIndexTest {
 
   @Mock private BlockchainQueries blockchainQueries;
 
-  @Before
+  @BeforeEach
   public void before() {
     this.method = new EthGetUncleByBlockHashAndIndex(blockchainQueries);
   }
@@ -79,7 +79,7 @@ public class EthGetUncleByBlockHashAndIndexTest {
 
     assertThat(thrown)
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 0");
+        .hasMessage("Invalid block hash parameter (index 0)");
   }
 
   @Test
@@ -90,7 +90,7 @@ public class EthGetUncleByBlockHashAndIndexTest {
 
     assertThat(thrown)
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 1");
+        .hasMessage("Invalid block index parameter (index 1)");
   }
 
   @Test
@@ -101,7 +101,7 @@ public class EthGetUncleByBlockHashAndIndexTest {
 
     assertThat(thrown)
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 0");
+        .hasMessageContaining("Invalid block hash parameter (index 0)");
   }
 
   @Test
@@ -113,7 +113,7 @@ public class EthGetUncleByBlockHashAndIndexTest {
 
     assertThat(thrown)
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 1");
+        .hasMessageContaining("Invalid block index parameter (index 1)");
   }
 
   @Test
@@ -148,11 +148,7 @@ public class EthGetUncleByBlockHashAndIndexTest {
     final Block block =
         new Block(header, new BlockBody(Collections.emptyList(), Collections.emptyList()));
     return new BlockResult(
-        header,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Difficulty.ZERO,
-        block.calculateSize());
+        header, Collections.emptyList(), Collections.emptyList(), Difficulty.ZERO, block.getSize());
   }
 
   private JsonRpcRequestContext getUncleByBlockHashAndIndex(final Object[] params) {

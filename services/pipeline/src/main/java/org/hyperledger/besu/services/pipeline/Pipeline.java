@@ -16,12 +16,15 @@ package org.hyperledger.besu.services.pipeline;
 
 import static java.util.stream.Collectors.toList;
 
+import org.hyperledger.besu.services.pipeline.exception.AsyncOperationException;
 import org.hyperledger.besu.util.ExceptionUtils;
+import org.hyperledger.besu.util.log.LogUtil;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,6 +38,11 @@ import io.opentelemetry.api.trace.Tracer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * The Pipeline.
+ *
+ * @param <I> the input pipe type parameter
+ */
 public class Pipeline<I> {
   private static final Logger LOG = LoggerFactory.getLogger(Pipeline.class);
   private final Pipe<I> inputPipe;
@@ -58,6 +66,16 @@ public class Pipeline<I> {
   private final boolean tracingEnabled;
   private volatile List<Future<?>> futures;
 
+  /**
+   * Instantiates a new Pipeline.
+   *
+   * @param inputPipe the input pipe
+   * @param name the name
+   * @param tracingEnabled the tracing enabled
+   * @param stages the stages
+   * @param pipes the pipes
+   * @param completerStage the completer stage
+   */
   Pipeline(
       final Pipe<I> inputPipe,
       final String name,
@@ -71,6 +89,19 @@ public class Pipeline<I> {
     this.stages = stages;
     this.pipes = pipes;
     this.completerStage = completerStage;
+
+    if (LOG.isTraceEnabled()) {
+      StringBuilder sb = new StringBuilder();
+      sb.append("Building pipeline ");
+      sb.append(name);
+      sb.append(". Stages: ");
+      for (Stage nextStage : stages) {
+        sb.append(nextStage.getName());
+        sb.append(" -> ");
+      }
+      sb.append("END");
+      LOG.trace("{}", sb.toString());
+    }
   }
 
   /**
@@ -154,12 +185,21 @@ public class Pipeline<I> {
             if (tracingEnabled) {
               taskSpan.setStatus(StatusCode.ERROR);
             }
-            LOG.debug("Unhandled exception in pipeline. Aborting.", t);
+            if (t instanceof CompletionException
+                || t instanceof CancellationException
+                || t instanceof AsyncOperationException) {
+              LOG.trace("Unhandled exception in pipeline. Aborting.", t);
+            } else {
+              LOG.info(
+                  LogUtil.summarizeBesuStackTrace(
+                      "Unexpected exception in pipeline. Aborting.", t));
+              LOG.debug("Unexpected exception in pipeline. Aborting.", t);
+            }
             try {
               abort(t);
             } catch (final Throwable t2) {
               // Seems excessive but exceptions that propagate out of this method won't be logged
-              // because the executor just completes the future exceptionally and we never
+              // because the executor just completes the future exceptionally, and we never
               // need to call get on it which would normally expose the error.
               LOG.error("Failed to abort pipeline after error", t2);
             }

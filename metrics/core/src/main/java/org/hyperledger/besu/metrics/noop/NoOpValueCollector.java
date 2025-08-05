@@ -14,14 +14,18 @@
  */
 package org.hyperledger.besu.metrics.noop;
 
-import org.hyperledger.besu.plugin.services.metrics.LabelledGauge;
+import org.hyperledger.besu.plugin.services.metrics.LabelledSuppliedMetric;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.DoubleSupplier;
 
-public class NoOpValueCollector implements LabelledGauge {
+/** The NoOp value collector. */
+public class NoOpValueCollector implements LabelledSuppliedMetric {
   private final List<String> labelValuesCreated = new ArrayList<>();
+
+  /** Default constructor */
+  public NoOpValueCollector() {}
 
   @Override
   public synchronized void labels(final DoubleSupplier valueSupplier, final String... labelValues) {

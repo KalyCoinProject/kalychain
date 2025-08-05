@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -27,6 +27,8 @@ import static org.mockito.Mockito.when;
 import org.hyperledger.besu.crypto.Hash;
 import org.hyperledger.besu.ethereum.trie.TrieIterator.LeafHandler;
 import org.hyperledger.besu.ethereum.trie.TrieIterator.State;
+import org.hyperledger.besu.ethereum.trie.patricia.DefaultNodeFactory;
+import org.hyperledger.besu.ethereum.trie.patricia.PutVisitor;
 
 import java.nio.charset.StandardCharsets;
 import java.util.NavigableSet;
@@ -36,7 +38,7 @@ import java.util.TreeSet;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt256;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 public class TrieIteratorTest {
@@ -45,6 +47,7 @@ public class TrieIteratorTest {
       Bytes32.fromHexString("0x5555555555555555555555555555555555555555555555555555555555555555");
   private static final Bytes32 KEY_HASH2 =
       Bytes32.fromHexString("0x5555555555555555555555555555555555555555555555555555555555555556");
+
   private static final Bytes PATH1 = bytesToPath(KEY_HASH1);
   private static final Bytes PATH2 = bytesToPath(KEY_HASH2);
 

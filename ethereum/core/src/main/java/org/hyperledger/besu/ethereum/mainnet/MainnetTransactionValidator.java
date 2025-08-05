@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -15,24 +15,29 @@
 package org.hyperledger.besu.ethereum.mainnet;
 
 import static org.hyperledger.besu.evm.account.Account.MAX_NONCE;
+import static org.hyperledger.besu.evm.internal.Words.clampedAdd;
+import static org.hyperledger.besu.evm.worldstate.CodeDelegationHelper.hasCodeDelegation;
 
 import org.hyperledger.besu.crypto.SECPSignature;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.datatypes.BlobType;
+import org.hyperledger.besu.datatypes.CodeDelegation;
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.TransactionType;
 import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.ethereum.GasLimitCalculator;
 import org.hyperledger.besu.ethereum.core.Transaction;
-import org.hyperledger.besu.ethereum.core.TransactionFilter;
 import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
 import org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
-import org.hyperledger.besu.plugin.data.TransactionType;
 
 import java.math.BigInteger;
 import java.util.Optional;
 import java.util.Set;
 
-import com.google.common.primitives.Longs;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Validates a transaction based on Frontier protocol runtime requirements.
@@ -40,86 +45,54 @@ import com.google.common.primitives.Longs;
  * <p>The {@link MainnetTransactionValidator} performs the intrinsic gas cost check on the given
  * {@link Transaction}.
  */
-public class MainnetTransactionValidator {
+public class MainnetTransactionValidator implements TransactionValidator {
+  private static final Logger LOG = LoggerFactory.getLogger(MainnetTransactionValidator.class);
+
+  public static final BigInteger TWO_POW_256 = BigInteger.TWO.pow(256);
 
   private final GasCalculator gasCalculator;
+  private final GasLimitCalculator gasLimitCalculator;
   private final FeeMarket feeMarket;
 
   private final boolean disallowSignatureMalleability;
 
   private final Optional<BigInteger> chainId;
 
-  private Optional<TransactionFilter> transactionFilter = Optional.empty();
   private final Set<TransactionType> acceptedTransactionTypes;
-  private final boolean goQuorumCompatibilityMode;
+
+  private final int maxInitcodeSize;
+  private final MainnetBlobsValidator blobsValidator;
 
   public MainnetTransactionValidator(
       final GasCalculator gasCalculator,
-      final boolean checkSignatureMalleability,
-      final Optional<BigInteger> chainId,
-      final boolean goQuorumCompatibilityMode) {
-    this(
-        gasCalculator,
-        checkSignatureMalleability,
-        chainId,
-        Set.of(TransactionType.FRONTIER),
-        goQuorumCompatibilityMode);
-  }
-
-  public MainnetTransactionValidator(
-      final GasCalculator gasCalculator,
-      final boolean checkSignatureMalleability,
-      final Optional<BigInteger> chainId,
-      final Set<TransactionType> acceptedTransactionTypes,
-      final boolean quorumCompatibilityMode) {
-    this(
-        gasCalculator,
-        FeeMarket.legacy(),
-        checkSignatureMalleability,
-        chainId,
-        acceptedTransactionTypes,
-        quorumCompatibilityMode);
-  }
-
-  public MainnetTransactionValidator(
-      final GasCalculator gasCalculator,
+      final GasLimitCalculator gasLimitCalculator,
       final FeeMarket feeMarket,
       final boolean checkSignatureMalleability,
       final Optional<BigInteger> chainId,
       final Set<TransactionType> acceptedTransactionTypes,
-      final boolean goQuorumCompatibilityMode) {
+      final Set<BlobType> acceptedBlobVersions,
+      final int maxInitcodeSize) {
     this.gasCalculator = gasCalculator;
+    this.gasLimitCalculator = gasLimitCalculator;
     this.feeMarket = feeMarket;
     this.disallowSignatureMalleability = checkSignatureMalleability;
     this.chainId = chainId;
     this.acceptedTransactionTypes = acceptedTransactionTypes;
-    this.goQuorumCompatibilityMode = goQuorumCompatibilityMode;
+    this.maxInitcodeSize = maxInitcodeSize;
+    this.blobsValidator =
+        new MainnetBlobsValidator(acceptedBlobVersions, gasLimitCalculator, gasCalculator);
   }
 
-  /**
-   * Asserts whether a transaction is valid.
-   *
-   * @param transaction the transaction to validate
-   * @param baseFee optional baseFee
-   * @param transactionValidationParams Validation parameters that will be used
-   * @return An empty {@link Optional} if the transaction is considered valid; otherwise an {@code
-   *     Optional} containing a {@link TransactionInvalidReason} that identifies why the transaction
-   *     is invalid.
-   */
+  @Override
   public ValidationResult<TransactionInvalidReason> validate(
       final Transaction transaction,
       final Optional<Wei> baseFee,
+      final Optional<Wei> blobFee,
       final TransactionValidationParams transactionValidationParams) {
     final ValidationResult<TransactionInvalidReason> signatureResult =
         validateTransactionSignature(transaction);
     if (!signatureResult.isValid()) {
       return signatureResult;
-    }
-
-    if (goQuorumCompatibilityMode && transaction.hasCostParams()) {
-      return ValidationResult.invalid(
-          TransactionInvalidReason.GAS_PRICE_MUST_BE_ZERO,
-          "gasPrice must be set to zero on a GoQuorum compatible network");
     }
 
     final TransactionType transactionType = transaction.getType();
@@ -131,10 +104,119 @@ public class MainnetTransactionValidator {
               transactionType, acceptedTransactionTypes));
     }
 
-    if (baseFee.isPresent()) {
-      final Wei price = feeMarket.getTransactionPriceCalculator().price(transaction, baseFee);
-      if (!transactionValidationParams.isAllowMaxFeeGasBelowBaseFee()
-          && price.compareTo(baseFee.orElseThrow()) < 0) {
+    if (transaction.getNonce() == MAX_NONCE) {
+      return ValidationResult.invalid(
+          TransactionInvalidReason.NONCE_OVERFLOW, "Nonce must be less than 2^64-1");
+    }
+
+    if (!transactionValidationParams.isAllowExceedingGasLimit()
+        && transaction.getGasLimit() > gasLimitCalculator.transactionGasLimitCap()) {
+      return ValidationResult.invalid(
+          TransactionInvalidReason.EXCEEDS_TRANSACTION_GAS_LIMIT,
+          "Transaction gas limit must be at most " + gasLimitCalculator.transactionGasLimitCap());
+    }
+
+    if (transactionType.supportsBlob()) {
+      final ValidationResult<TransactionInvalidReason> blobTransactionResult =
+          validateBlobTransaction(transaction);
+      if (!blobTransactionResult.isValid()) {
+        LOG.info(
+            "Blob transaction {} validation failed: {}",
+            transaction.getHash().toHexString(),
+            blobTransactionResult.getErrorMessage());
+        return blobTransactionResult;
+      }
+
+      if (transaction.getBlobsWithCommitments().isPresent()) {
+        final ValidationResult<TransactionInvalidReason> blobsResult =
+            blobsValidator.validateTransactionsBlobs(transaction);
+        if (!blobsResult.isValid()) {
+          return blobsResult;
+        }
+      }
+    }
+
+    if (transaction.isContractCreation() && transaction.getPayload().size() > maxInitcodeSize) {
+      return ValidationResult.invalid(
+          TransactionInvalidReason.INITCODE_TOO_LARGE,
+          String.format(
+              "Initcode size of %d exceeds maximum size of %s",
+              transaction.getPayload().size(), maxInitcodeSize));
+    }
+
+    if (transactionType == TransactionType.DELEGATE_CODE) {
+      ValidationResult<TransactionInvalidReason> codeDelegationValidation =
+          validateCodeDelegation(transaction);
+      if (!codeDelegationValidation.isValid()) {
+        return codeDelegationValidation;
+      }
+    }
+
+    return validateCostAndFee(transaction, baseFee, blobFee, transactionValidationParams);
+  }
+
+  private static ValidationResult<TransactionInvalidReason> validateCodeDelegation(
+      final Transaction transaction) {
+    if (isDelegateCodeEmpty(transaction)) {
+      return ValidationResult.invalid(
+          TransactionInvalidReason.EMPTY_CODE_DELEGATION,
+          "transaction code delegation transactions must have a non-empty code delegation list");
+    }
+
+    if (transaction.getTo().isEmpty()) {
+      return ValidationResult.invalid(
+          TransactionInvalidReason.INVALID_TRANSACTION_FORMAT,
+          "transaction code delegation transactions must have a to address");
+    }
+
+    final Optional<ValidationResult<TransactionInvalidReason>> validationResult =
+        transaction
+            .getCodeDelegationList()
+            .map(
+                codeDelegations -> {
+                  for (CodeDelegation codeDelegation : codeDelegations) {
+                    if (codeDelegation.chainId().compareTo(TWO_POW_256) >= 0) {
+                      throw new IllegalArgumentException(
+                          "Invalid 'chainId' value, should be < 2^256 but got "
+                              + codeDelegation.chainId());
+                    }
+
+                    if (codeDelegation.r().compareTo(TWO_POW_256) >= 0) {
+                      throw new IllegalArgumentException(
+                          "Invalid 'r' value, should be < 2^256 but got " + codeDelegation.r());
+                    }
+
+                    if (codeDelegation.s().compareTo(TWO_POW_256) >= 0) {
+                      throw new IllegalArgumentException(
+                          "Invalid 's' value, should be < 2^256 but got " + codeDelegation.s());
+                    }
+                  }
+
+                  return ValidationResult.valid();
+                });
+
+    if (validationResult.isPresent() && !validationResult.get().isValid()) {
+      return validationResult.get();
+    }
+
+    return ValidationResult.valid();
+  }
+
+  private static boolean isDelegateCodeEmpty(final Transaction transaction) {
+    return transaction.getCodeDelegationList().isEmpty()
+        || transaction.getCodeDelegationList().get().isEmpty();
+  }
+
+  private ValidationResult<TransactionInvalidReason> validateCostAndFee(
+      final Transaction transaction,
+      final Optional<Wei> maybeBaseFee,
+      final Optional<Wei> maybeBlobFee,
+      final TransactionValidationParams transactionValidationParams) {
+
+    if (maybeBaseFee.isPresent()) {
+      final Wei price = feeMarket.getTransactionPriceCalculator().price(transaction, maybeBaseFee);
+      if (!transactionValidationParams.allowUnderpriced()
+          && price.compareTo(maybeBaseFee.orElseThrow()) < 0) {
         return ValidationResult.invalid(
             TransactionInvalidReason.GAS_PRICE_BELOW_CURRENT_BASE_FEE,
             "gasPrice is less than the current BaseFee");
@@ -154,39 +236,60 @@ public class MainnetTransactionValidator {
       }
     }
 
-    if (transaction.getNonce() == MAX_NONCE) {
-      return ValidationResult.invalid(
-          TransactionInvalidReason.NONCE_OVERFLOW, "Nonce must be less than 2^64-1");
+    if (transaction.getType().supportsBlob()) {
+      final long txTotalBlobGas = gasCalculator.blobGasCost(transaction.getBlobCount());
+      if (txTotalBlobGas > gasLimitCalculator.currentBlobGasLimit()) {
+        return ValidationResult.invalid(
+            TransactionInvalidReason.TOTAL_BLOB_GAS_TOO_HIGH,
+            String.format(
+                "total blob gas %d exceeds max blob gas per block %d",
+                txTotalBlobGas, gasLimitCalculator.currentBlobGasLimit()));
+      }
+      if (maybeBlobFee.isEmpty()) {
+        throw new IllegalArgumentException(
+            "blob fee must be provided from blocks containing blobs");
+        // tx.getMaxFeePerBlobGas can be empty for eth_call
+      } else if (!transactionValidationParams.allowUnderpriced()
+          && maybeBlobFee.get().compareTo(transaction.getMaxFeePerBlobGas().get()) > 0) {
+        return ValidationResult.invalid(
+            TransactionInvalidReason.BLOB_GAS_PRICE_BELOW_CURRENT_BLOB_BASE_FEE,
+            String.format(
+                "tx max fee per blob gas less than block blob gas fee: address %s blobGasFeeCap: %s, blobBaseFee: %s",
+                transaction.getSender().toHexString(),
+                transaction.getMaxFeePerBlobGas().get().toHumanReadableString(),
+                maybeBlobFee.get().toHumanReadableString()));
+      }
     }
 
-    if (transaction
-            .getGasPrice()
-            .or(transaction::getMaxFeePerGas)
-            .orElse(Wei.ZERO)
-            .getAsBigInteger()
-            .multiply(new BigInteger(1, Longs.toByteArray(transaction.getGasLimit())))
-            .bitLength()
-        > 256) {
-      return ValidationResult.invalid(
-          TransactionInvalidReason.UPFRONT_FEE_TOO_HIGH,
-          "gasLimit x price must be less than 2^256");
-    }
+    final long baselineGas =
+        clampedAdd(
+            transaction.getAccessList().map(gasCalculator::accessListGasCost).orElse(0L),
+            gasCalculator.delegateCodeGasCost(transaction.codeDelegationListSize()));
+    final long intrinsicGasCostOrFloor =
+        Math.max(
+            gasCalculator.transactionIntrinsicGasCost(transaction, baselineGas),
+            gasCalculator.transactionFloorCost(
+                transaction.getPayload(), transaction.getPayloadZeroBytes()));
 
-    final long intrinsicGasCost =
-        gasCalculator.transactionIntrinsicGasCost(
-                transaction.getPayload(), transaction.isContractCreation())
-            + (transaction.getAccessList().map(gasCalculator::accessListGasCost).orElse(0L));
-    if (Long.compareUnsigned(intrinsicGasCost, transaction.getGasLimit()) > 0) {
+    if (Long.compareUnsigned(intrinsicGasCostOrFloor, transaction.getGasLimit()) > 0) {
       return ValidationResult.invalid(
           TransactionInvalidReason.INTRINSIC_GAS_EXCEEDS_GAS_LIMIT,
           String.format(
               "intrinsic gas cost %s exceeds gas limit %s",
-              intrinsicGasCost, transaction.getGasLimit()));
+              intrinsicGasCostOrFloor, transaction.getGasLimit()));
+    }
+
+    if (transaction.calculateUpfrontGasCost(transaction.getMaxGasPrice(), Wei.ZERO, 0).bitLength()
+        > 256) {
+      return ValidationResult.invalid(
+          TransactionInvalidReason.UPFRONT_COST_EXCEEDS_UINT256,
+          "Upfront gas cost cannot exceed 2^256 Wei");
     }
 
     return ValidationResult.valid();
   }
 
+  @Override
   public ValidationResult<TransactionInvalidReason> validateForSender(
       final Transaction transaction,
       final Account sender,
@@ -201,15 +304,17 @@ public class MainnetTransactionValidator {
       if (sender.getCodeHash() != null) codeHash = sender.getCodeHash();
     }
 
-    if (transaction.getUpfrontCost().compareTo(senderBalance) > 0) {
+    final Wei upfrontCost =
+        transaction.getUpfrontCost(gasCalculator.blobGasCost(transaction.getBlobCount()));
+    if (upfrontCost.compareTo(senderBalance) > 0) {
       return ValidationResult.invalid(
           TransactionInvalidReason.UPFRONT_COST_EXCEEDS_BALANCE,
           String.format(
               "transaction up-front cost %s exceeds transaction sender account balance %s",
-              transaction.getUpfrontCost(), senderBalance));
+              upfrontCost.toQuantityHexString(), senderBalance.toQuantityHexString()));
     }
 
-    if (transaction.getNonce() < senderNonce) {
+    if (Long.compareUnsigned(transaction.getNonce(), senderNonce) < 0) {
       return ValidationResult.invalid(
           TransactionInvalidReason.NONCE_TOO_LOW,
           String.format(
@@ -225,7 +330,8 @@ public class MainnetTransactionValidator {
               transaction.getNonce(), senderNonce));
     }
 
-    if (!validationParams.isAllowContractAddressAsSender() && !codeHash.equals(Hash.EMPTY)) {
+    if (!validationParams.isAllowContractAddressAsSender()
+        && !canSendTransaction(sender, codeHash)) {
       return ValidationResult.invalid(
           TransactionInvalidReason.TX_SENDER_NOT_AUTHORIZED,
           String.format(
@@ -233,20 +339,14 @@ public class MainnetTransactionValidator {
               transaction.getSender()));
     }
 
-    if (!isSenderAllowed(transaction, validationParams)) {
-      return ValidationResult.invalid(
-          TransactionInvalidReason.TX_SENDER_NOT_AUTHORIZED,
-          String.format("Sender %s is not on the Account Allowlist", transaction.getSender()));
-    }
-
     return ValidationResult.valid();
   }
 
-  public boolean isReplayProtectionSupported() {
-    return chainId.isPresent();
+  private static boolean canSendTransaction(final Account sender, final Hash codeHash) {
+    return codeHash.equals(Hash.EMPTY) || hasCodeDelegation(sender.getCode());
   }
 
-  public ValidationResult<TransactionInvalidReason> validateTransactionSignature(
+  private ValidationResult<TransactionInvalidReason> validateTransactionSignature(
       final Transaction transaction) {
     if (chainId.isPresent()
         && (transaction.getChainId().isPresent() && !transaction.getChainId().equals(chainId))) {
@@ -257,9 +357,7 @@ public class MainnetTransactionValidator {
               transaction.getChainId().get(), chainId.get()));
     }
 
-    if (!transaction.isGoQuorumPrivateTransaction(goQuorumCompatibilityMode)
-        && chainId.isEmpty()
-        && transaction.getChainId().isPresent()) {
+    if (chainId.isEmpty() && transaction.getChainId().isPresent()) {
       return ValidationResult.invalid(
           TransactionInvalidReason.REPLAY_PROTECTED_SIGNATURES_NOT_SUPPORTED,
           "replay protected signatures is not supported");
@@ -287,50 +385,20 @@ public class MainnetTransactionValidator {
     return ValidationResult.valid();
   }
 
-  private boolean isSenderAllowed(
-      final Transaction transaction, final TransactionValidationParams validationParams) {
-    if (validationParams.checkLocalPermissions() || validationParams.checkOnchainPermissions()) {
-      return transactionFilter
-          .map(
-              c ->
-                  c.permitted(
-                      transaction,
-                      validationParams.checkLocalPermissions(),
-                      validationParams.checkOnchainPermissions()))
-          .orElse(true);
-    } else {
-      return true;
+  public ValidationResult<TransactionInvalidReason> validateBlobTransaction(
+      final Transaction transaction) {
+
+    if (transaction.getType().supportsBlob() && transaction.getTo().isEmpty()) {
+      return ValidationResult.invalid(
+          TransactionInvalidReason.INVALID_TRANSACTION_FORMAT,
+          "transaction blob transactions must have a to address");
     }
-  }
 
-  public void setTransactionFilter(final TransactionFilter transactionFilter) {
-    this.transactionFilter = Optional.of(transactionFilter);
-  }
-
-  /**
-   * Asserts whether a transaction is valid for the sender account's current state.
-   *
-   * <p>Note: {@code validate} should be called before getting the sender {@link Account} used in
-   * this method to ensure that a sender can be extracted from the {@link Transaction}.
-   *
-   * @param transaction the transaction to validateMessageFrame.State.COMPLETED_FAILED
-   * @param sender the sender account state to validate against
-   * @param allowFutureNonce if true, transactions with nonce equal or higher than the account nonce
-   *     will be considered valid (used when received transactions in the transaction pool). If
-   *     false, only a transaction with the nonce equals the account nonce will be considered valid
-   *     (used when processing transactions).
-   * @return An empty {@link Optional} if the transaction is considered valid; otherwise an {@code
-   *     Optional} containing a {@link TransactionInvalidReason} that identifies why the transaction
-   *     is invalid.
-   */
-  public ValidationResult<TransactionInvalidReason> validateForSender(
-      final Transaction transaction, final Account sender, final boolean allowFutureNonce) {
-    final TransactionValidationParams validationParams =
-        ImmutableTransactionValidationParams.builder().isAllowFutureNonce(allowFutureNonce).build();
-    return validateForSender(transaction, sender, validationParams);
-  }
-
-  public boolean getGoQuorumCompatibilityMode() {
-    return goQuorumCompatibilityMode;
+    if (transaction.getVersionedHashes().isEmpty()) {
+      return ValidationResult.invalid(
+          TransactionInvalidReason.INVALID_BLOBS,
+          "transaction blob transactions must specify one or more versioned hashes");
+    }
+    return ValidationResult.valid();
   }
 }

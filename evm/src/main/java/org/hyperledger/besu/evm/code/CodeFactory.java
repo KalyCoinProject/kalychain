@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -11,71 +11,109 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.evm.code;
 
-import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.evm.Code;
+import org.hyperledger.besu.evm.code.EOFLayout.EOFContainerMode;
 
+import jakarta.validation.constraints.NotNull;
 import org.apache.tuweni.bytes.Bytes;
 
-public final class CodeFactory {
+/** The Code factory. */
+public class CodeFactory {
 
+  /** The constant EOF_LEAD_BYTE. */
   public static final byte EOF_LEAD_BYTE = -17; // 0xEF in signed byte form
 
-  public static final int MAX_KNOWN_CODE_VERSION = 1;
+  /** Maximum EOF version that can be produced. Legacy is considered EOF version zero. */
+  protected final int maxEofVersion;
 
-  private CodeFactory() {
-    // factory class, no instantiations.
+  /** Maximum size of the code stream that can be produced, including all header bytes. */
+  protected final int maxContainerSize;
+
+  /** The EOF validator against which EOF layouts will be validated. */
+  EOFValidator eofValidator;
+
+  /**
+   * Create a code factory.
+   *
+   * @param maxEofVersion Maximum EOF version that can be set
+   * @param maxContainerSize Maximum size of a container that will be parsed.
+   */
+  public CodeFactory(final int maxEofVersion, final int maxContainerSize) {
+    this.maxEofVersion = maxEofVersion;
+    this.maxContainerSize = maxContainerSize;
+
+    eofValidator = new CodeV1Validation(maxContainerSize);
   }
 
-  public static Code createCode(
-      final Bytes bytes,
-      final Hash codeHash,
-      final int maxEofVersion,
-      final boolean inCreateOperation) {
-    if (maxEofVersion == 0) {
-      return new CodeV0(bytes, codeHash);
-    } else if (maxEofVersion == 1) {
-      int codeSize = bytes.size();
-      if (codeSize > 0 && bytes.get(0) == EOF_LEAD_BYTE) {
-        if (codeSize == 1 && !inCreateOperation) {
-          return new CodeV0(bytes, codeHash);
-        }
-        if (codeSize < 3) {
-          return new CodeInvalid(codeHash, bytes, "EOF Container too short");
-        }
-        if (bytes.get(1) != 0) {
-          if (inCreateOperation) {
-            // because some 0xef code made it to mainnet, this is only an error at contract create
-            return new CodeInvalid(codeHash, bytes, "Incorrect second byte");
-          } else {
-            return new CodeV0(bytes, codeHash);
-          }
-        }
-        int version = bytes.get(2);
-        if (version != 1) {
-          return new CodeInvalid(codeHash, bytes, "Unsupported EOF Version: " + version);
-        }
-        final EOFLayout layout = EOFLayout.parseEOF(bytes);
-        if (!layout.isValid()) {
-          return new CodeInvalid(
-              codeHash, bytes, "Invalid EOF Layout: " + layout.getInvalidReason());
-        }
-        final long[] jumpMap =
-            OpcodesV1.validateAndCalculateJumpDests(layout.getSections()[EOFLayout.SECTION_CODE]);
-        if (jumpMap != null) {
-          return new CodeV1(codeHash, layout, jumpMap);
-        } else {
-          return new CodeInvalid(codeHash, bytes, "Opcode Validation Failed");
-        }
-      } else {
-        return new CodeV0(bytes, codeHash);
+  /**
+   * Create Code.
+   *
+   * @param bytes the bytes
+   * @return the code
+   */
+  public Code createCode(final Bytes bytes) {
+    return createCode(bytes, false);
+  }
+
+  /**
+   * Create Code.
+   *
+   * @param bytes the bytes
+   * @param createTransaction This is in a create transaction, allow dangling data
+   * @return the code
+   */
+  public Code createCode(final Bytes bytes, final boolean createTransaction) {
+    return switch (maxEofVersion) {
+      case 0 -> new CodeV0(bytes);
+      case 1 -> createV1Code(bytes, createTransaction);
+      default -> new CodeInvalid(bytes, "Unsupported max code version " + maxEofVersion);
+    };
+  }
+
+  private @NotNull Code createV1Code(final Bytes bytes, final boolean createTransaction) {
+    int codeSize = bytes.size();
+    if (codeSize > 0 && bytes.get(0) == EOF_LEAD_BYTE) {
+      if (codeSize < 3) {
+        return new CodeInvalid(bytes, "EOF Container too short");
       }
+      if (bytes.get(1) != 0) {
+        if (createTransaction) {
+          // because some 0xef code made it to mainnet, this is only an error at contract creation
+          // time
+          return new CodeInvalid(bytes, "Incorrect second byte");
+        } else {
+          return new CodeV0(bytes);
+        }
+      }
+      int version = bytes.get(2);
+      if (version != 1) {
+        return new CodeInvalid(bytes, "Unsupported EOF Version: " + version);
+      }
+
+      final EOFLayout layout = EOFLayout.parseEOF(bytes, !createTransaction);
+      if (createTransaction) {
+        layout.containerMode().set(EOFContainerMode.INITCODE);
+      }
+      return createCode(layout);
     } else {
-      return new CodeInvalid(codeHash, bytes, "Unsupported max code version " + maxEofVersion);
+      return new CodeV0(bytes);
     }
+  }
+
+  @NotNull
+  Code createCode(final EOFLayout layout) {
+    if (!layout.isValid()) {
+      return new CodeInvalid(layout.container(), "Invalid EOF Layout: " + layout.invalidReason());
+    }
+
+    final String validationError = eofValidator.validate(layout);
+    if (validationError != null) {
+      return new CodeInvalid(layout.container(), "EOF Code Invalid : " + validationError);
+    }
+
+    return new CodeV1(layout);
   }
 }

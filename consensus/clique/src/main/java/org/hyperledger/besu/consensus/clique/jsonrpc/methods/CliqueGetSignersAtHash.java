@@ -18,11 +18,13 @@ import org.hyperledger.besu.consensus.common.validator.ValidatorProvider;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.query.BlockWithMetadata;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
@@ -31,10 +33,17 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+/** The Clique get signers at hash. */
 public class CliqueGetSignersAtHash implements JsonRpcMethod {
   private final BlockchainQueries blockchainQueries;
   private final ValidatorProvider validatorProvider;
 
+  /**
+   * Instantiates a new Clique get signers at hash.
+   *
+   * @param blockchainQueries the blockchain queries
+   * @param validatorProvider the validator provider
+   */
   public CliqueGetSignersAtHash(
       final BlockchainQueries blockchainQueries, final ValidatorProvider validatorProvider) {
     this.blockchainQueries = blockchainQueries;
@@ -56,11 +65,17 @@ public class CliqueGetSignersAtHash implements JsonRpcMethod {
             addresses -> new JsonRpcSuccessResponse(requestContext.getRequest().getId(), addresses))
         .orElse(
             new JsonRpcErrorResponse(
-                requestContext.getRequest().getId(), JsonRpcError.INTERNAL_ERROR));
+                requestContext.getRequest().getId(), RpcErrorType.INTERNAL_ERROR));
   }
 
   private Optional<BlockHeader> determineBlockHeader(final JsonRpcRequestContext request) {
-    final Hash hash = request.getRequiredParameter(0, Hash.class);
+    final Hash hash;
+    try {
+      hash = request.getRequiredParameter(0, Hash.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid block hash parameter (index 0)", RpcErrorType.INVALID_BLOCK_HASH_PARAMS, e);
+    }
     return blockchainQueries.blockByHash(hash).map(BlockWithMetadata::getHeader);
   }
 }

@@ -19,24 +19,47 @@ import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
+/** The Invalid operation. */
 public class InvalidOperation extends AbstractOperation {
 
+  /** The constant OPCODE. */
   public static final int OPCODE = 0xFE;
+
+  /** The constant INVALID_RESULT. */
   public static final OperationResult INVALID_RESULT =
       new OperationResult(0, ExceptionalHaltReason.INVALID_OPERATION);
-  protected final OperationResult invalidResult;
 
+  /**
+   * Instantiates a new Invalid operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public InvalidOperation(final GasCalculator gasCalculator) {
     this(OPCODE, gasCalculator);
   }
 
+  /**
+   * Instantiates a new Invalid operation.
+   *
+   * @param opcode the opcode
+   * @param gasCalculator the gas calculator
+   */
   public InvalidOperation(final int opcode, final GasCalculator gasCalculator) {
-    super(opcode, "INVALID", -1, -1, 1, gasCalculator);
-    invalidResult = new OperationResult(0L, ExceptionalHaltReason.INVALID_OPERATION);
+    super(opcode, "INVALID", -1, -1, gasCalculator);
   }
 
   @Override
   public OperationResult execute(final MessageFrame frame, final EVM evm) {
-    return invalidResult;
+    return invalidOperationResult(getOpcode());
+  }
+
+  /**
+   * Creates an {@link OperationResult} for an invalid opcode.
+   *
+   * @param opcode the invalid opcode encountered
+   * @return an {@link OperationResult} with zero gas cost and a description of the invalid opcode
+   */
+  public static OperationResult invalidOperationResult(final int opcode) {
+    return new OperationResult(0, ExceptionalHaltReason.newInvalidOperation(opcode));
   }
 }

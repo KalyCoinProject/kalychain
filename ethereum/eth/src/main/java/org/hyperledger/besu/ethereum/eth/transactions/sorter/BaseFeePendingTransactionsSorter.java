@@ -16,10 +16,8 @@ package org.hyperledger.besu.ethereum.eth.transactions.sorter;
 
 import static java.util.Comparator.comparing;
 import static java.util.stream.Collectors.toUnmodifiableList;
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.traceLambda;
 
 import org.hyperledger.besu.datatypes.Wei;
-import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.eth.transactions.PendingTransaction;
@@ -65,7 +63,7 @@ public class BaseFeePendingTransactionsSorter extends AbstractPendingTransaction
    */
   private final NavigableSet<PendingTransaction> prioritizedTransactionsStaticRange =
       new TreeSet<>(
-          comparing(PendingTransaction::isReceivedFromLocalSource)
+          comparing(PendingTransaction::hasPriority)
               .thenComparing(
                   pendingTx ->
                       pendingTx
@@ -75,13 +73,12 @@ public class BaseFeePendingTransactionsSorter extends AbstractPendingTransaction
                           .orElse(Wei.ZERO)
                           .getAsBigInteger()
                           .longValue())
-              .thenComparing(PendingTransaction::getAddedToPoolAt)
-              .thenComparing(PendingTransaction::getSequence)
+              .thenComparing(PendingTransaction::getSequence, Comparator.reverseOrder())
               .reversed());
 
   private final NavigableSet<PendingTransaction> prioritizedTransactionsDynamicRange =
       new TreeSet<>(
-          comparing(PendingTransaction::isReceivedFromLocalSource)
+          comparing(PendingTransaction::hasPriority)
               .thenComparing(
                   pendingTx ->
                       pendingTx
@@ -89,19 +86,28 @@ public class BaseFeePendingTransactionsSorter extends AbstractPendingTransaction
                           .getMaxFeePerGas()
                           .map(maxFeePerGas -> maxFeePerGas.getAsBigInteger().longValue())
                           .orElse(pendingTx.getGasPrice().toLong()))
-              .thenComparing(PendingTransaction::getAddedToPoolAt)
-              .thenComparing(PendingTransaction::getSequence)
+              .thenComparing(PendingTransaction::getSequence, Comparator.reverseOrder())
               .reversed());
 
   @Override
-  public void manageBlockAdded(final Block block) {
-    block.getHeader().getBaseFee().ifPresent(this::updateBaseFee);
+  public void reset() {
+    super.reset();
+    prioritizedTransactionsStaticRange.clear();
+    prioritizedTransactionsDynamicRange.clear();
+  }
+
+  @Override
+  public void manageBlockAdded(final BlockHeader blockHeader) {
+    blockHeader.getBaseFee().ifPresent(this::updateBaseFee);
   }
 
   @Override
   protected void removePrioritizedTransaction(final PendingTransaction removedPendingTx) {
     if (prioritizedTransactionsDynamicRange.remove(removedPendingTx)) {
-      traceLambda(LOG, "Removed dynamic range transaction {}", removedPendingTx::toTraceLog);
+      LOG.atTrace()
+          .setMessage("Removed dynamic range transaction {}")
+          .addArgument(removedPendingTx::toTraceLog)
+          .log();
     } else {
       removedPendingTx
           .getTransaction()
@@ -109,8 +115,10 @@ public class BaseFeePendingTransactionsSorter extends AbstractPendingTransaction
           .ifPresent(
               __ -> {
                 if (prioritizedTransactionsStaticRange.remove(removedPendingTx)) {
-                  traceLambda(
-                      LOG, "Removed static range transaction {}", removedPendingTx::toTraceLog);
+                  LOG.atTrace()
+                      .setMessage("Removed static range transaction {}")
+                      .addArgument(removedPendingTx::toTraceLog)
+                      .log();
                 }
               });
     }
@@ -194,11 +202,11 @@ public class BaseFeePendingTransactionsSorter extends AbstractPendingTransaction
       kind = "dynamic";
       prioritizedTransactionsDynamicRange.add(pendingTransaction);
     }
-    traceLambda(
-        LOG,
-        "Adding {} to pending transactions, range type {}",
-        pendingTransaction::toTraceLog,
-        kind::toString);
+    LOG.atTrace()
+        .setMessage("Adding {} to pending transactions, range type {}")
+        .addArgument(pendingTransaction::toTraceLog)
+        .addArgument(kind)
+        .log();
   }
 
   @Override
@@ -240,11 +248,11 @@ public class BaseFeePendingTransactionsSorter extends AbstractPendingTransaction
   }
 
   public void updateBaseFee(final Wei newBaseFee) {
-    traceLambda(
-        LOG,
-        "Updating base fee from {} to {}",
-        this.baseFee::toString,
-        newBaseFee::toShortHexString);
+    LOG.atTrace()
+        .setMessage("Updating base fee from {} to {}")
+        .addArgument(this.baseFee)
+        .addArgument(newBaseFee::toShortHexString)
+        .log();
     if (this.baseFee.orElse(Wei.ZERO).equals(newBaseFee)) {
       return;
     }
@@ -261,10 +269,10 @@ public class BaseFeePendingTransactionsSorter extends AbstractPendingTransaction
             .collect(toUnmodifiableList())
             .forEach(
                 pendingTx -> {
-                  traceLambda(
-                      LOG,
-                      "Moving {} from static to dynamic gas fee paradigm",
-                      pendingTx::toTraceLog);
+                  LOG.atTrace()
+                      .setMessage("Moving {} from static to dynamic gas fee paradigm")
+                      .addArgument(pendingTx::toTraceLog)
+                      .log();
                   prioritizedTransactionsStaticRange.remove(pendingTx);
                   prioritizedTransactionsDynamicRange.add(pendingTx);
                 });
@@ -278,10 +286,10 @@ public class BaseFeePendingTransactionsSorter extends AbstractPendingTransaction
             .collect(toUnmodifiableList())
             .forEach(
                 pendingTx -> {
-                  traceLambda(
-                      LOG,
-                      "Moving {} from dynamic to static gas fee paradigm",
-                      pendingTx::toTraceLog);
+                  LOG.atTrace()
+                      .setMessage("Moving {} from dynamic to static gas fee paradigm")
+                      .addArgument(pendingTx::toTraceLog)
+                      .log();
                   prioritizedTransactionsDynamicRange.remove(pendingTx);
                   prioritizedTransactionsStaticRange.add(pendingTx);
                 });

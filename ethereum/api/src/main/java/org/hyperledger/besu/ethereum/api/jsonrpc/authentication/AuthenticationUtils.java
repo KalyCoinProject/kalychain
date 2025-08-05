@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu contributors
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,6 +14,8 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.authentication;
 
+import java.util.Optional;
+
 public class AuthenticationUtils {
 
   public static String getJwtTokenFromAuthorizationHeaderValue(final String value) {
@@ -24,5 +26,16 @@ public class AuthenticationUtils {
       }
     }
     return null;
+  }
+
+  public static String truncToken(final String jwtToken) {
+    return Optional.ofNullable(jwtToken)
+        .map(
+            token ->
+                token
+                    .substring(0, 8)
+                    .concat("...")
+                    .concat(token.substring(token.length() - 8, token.length())))
+        .orElse("Invalid JWT");
   }
 }

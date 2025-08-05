@@ -17,7 +17,9 @@ package org.hyperledger.besu.consensus.ibft.validation;
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -25,6 +27,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.consensus.common.bft.BftContext;
+import org.hyperledger.besu.consensus.common.bft.BftProtocolSchedule;
 import org.hyperledger.besu.consensus.common.bft.ConsensusRoundIdentifier;
 import org.hyperledger.besu.consensus.common.bft.ProposedBlockHelpers;
 import org.hyperledger.besu.consensus.ibft.messagewrappers.Commit;
@@ -32,29 +35,28 @@ import org.hyperledger.besu.consensus.ibft.messagewrappers.Prepare;
 import org.hyperledger.besu.consensus.ibft.messagewrappers.Proposal;
 import org.hyperledger.besu.consensus.ibft.payload.MessageFactory;
 import org.hyperledger.besu.consensus.ibft.payload.RoundChangeCertificate;
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.BlockProcessingResult;
 import org.hyperledger.besu.ethereum.BlockValidator;
 import org.hyperledger.besu.ethereum.ProtocolContext;
-import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.AddressHelpers;
 import org.hyperledger.besu.ethereum.core.Block;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
 
 import java.util.List;
 import java.util.Optional;
 
 import org.assertj.core.util.Lists;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class MessageValidatorTest {
 
   private final NodeKey nodeKey = NodeKeyUtils.generate();
@@ -65,6 +67,8 @@ public class MessageValidatorTest {
   private final ProposalBlockConsistencyValidator proposalBlockConsistencyValidator =
       mock(ProposalBlockConsistencyValidator.class);
 
+  @Mock private BftProtocolSchedule protocolSchedule;
+  @Mock private ProtocolSpec protocolSpec;
   @Mock private BlockValidator blockValidator;
   private ProtocolContext protocolContext;
   private final RoundChangeCertificateValidator roundChangeCertificateValidator =
@@ -81,7 +85,7 @@ public class MessageValidatorTest {
 
   private final Block block = ProposedBlockHelpers.createProposalBlock(validators, roundIdentifier);
 
-  @Before
+  @BeforeEach
   public void setup() {
     when(signedDataValidator.validateProposal(any())).thenReturn(true);
     when(signedDataValidator.validatePrepare(any())).thenReturn(true);
@@ -91,13 +95,17 @@ public class MessageValidatorTest {
         .thenReturn(true);
 
     BftContext mockBftCtx = mock(BftContext.class);
-    when(mockBftCtx.as(Mockito.any())).thenReturn(mockBftCtx);
+    lenient().when(mockBftCtx.as(Mockito.any())).thenReturn(mockBftCtx);
 
-    protocolContext =
-        new ProtocolContext(
-            mock(MutableBlockchain.class), mock(WorldStateArchive.class), mockBftCtx);
+    protocolContext = new ProtocolContext.Builder().withConsensusContext(mockBftCtx).build();
 
-    when(blockValidator.validateAndProcessBlock(any(), any(), any(), any()))
+    lenient()
+        .when(protocolSchedule.getByBlockNumberOrTimestamp(anyLong(), anyLong()))
+        .thenReturn(protocolSpec);
+
+    when(protocolSpec.getBlockValidator()).thenReturn(blockValidator);
+    when(protocolSchedule.getByBlockHeader(any())).thenReturn(protocolSpec);
+    when(blockValidator.validateAndProcessBlock(any(), any(), any(), any(), eq(false)))
         .thenReturn(new BlockProcessingResult(Optional.empty()));
 
     when(roundChangeCertificateValidator.validateProposalMessageMatchesLatestPrepareCertificate(
@@ -111,8 +119,8 @@ public class MessageValidatorTest {
         new MessageValidator(
             signedDataValidator,
             proposalBlockConsistencyValidator,
-            blockValidator,
             protocolContext,
+            protocolSchedule,
             roundChangeCertificateValidator);
   }
 
@@ -152,7 +160,7 @@ public class MessageValidatorTest {
 
   @Test
   public void blockValidationFailureFailsValidation() {
-    when(blockValidator.validateAndProcessBlock(any(), any(), any(), any()))
+    when(blockValidator.validateAndProcessBlock(any(), any(), any(), any(), eq(false)))
         .thenReturn(new BlockProcessingResult("Failed"));
 
     final Proposal proposalMsg =

@@ -1,5 +1,5 @@
 /*
- * Copyright Besu Contributors
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -22,8 +22,7 @@ import io.opentelemetry.sdk.metrics.data.AggregationTemporality;
 import io.opentelemetry.sdk.metrics.data.MetricData;
 import io.opentelemetry.sdk.metrics.export.CollectionRegistration;
 import io.opentelemetry.sdk.metrics.export.MetricReader;
-import io.opentelemetry.sdk.metrics.internal.export.MetricProducer;
-import org.jetbrains.annotations.NotNull;
+import jakarta.validation.constraints.NotNull;
 
 class DebugMetricReader implements MetricReader {
   private CollectionRegistration registration;
@@ -31,7 +30,7 @@ class DebugMetricReader implements MetricReader {
   public DebugMetricReader() {}
 
   public Collection<MetricData> getAllMetrics() {
-    return MetricProducer.asMetricProducer(this.registration).collectAllMetrics();
+    return registration.collectAllMetrics();
   }
 
   @Override

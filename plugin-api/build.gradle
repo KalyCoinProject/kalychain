@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 ConsenSys AG.
+ * Copyright Hyperledger Besu Contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -15,22 +15,27 @@ import java.security.MessageDigest
 
 apply plugin: 'java-library'
 jar {
-  archiveBaseName = 'plugin-api'
+  archiveBaseName = calculateArtifactId(project)
   manifest {
     attributes(
       'Specification-Title': archiveBaseName,
       'Specification-Version': project.version,
       'Implementation-Title': archiveBaseName,
       'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash,
       'Automatic-Module-Name': 'org.hyperledger.besu.plugin.api'
       )
   }
 }
 
 dependencies {
+  api project(':datatypes')
   api 'org.apache.commons:commons-lang3'
-  api 'org.apache.tuweni:tuweni-bytes'
-  api 'org.apache.tuweni:tuweni-units'
+  api 'io.consensys.tuweni:tuweni-bytes'
+  api 'io.consensys.tuweni:tuweni-units'
+  implementation 'com.google.guava:guava'
+  implementation project(':evm')
+  compileOnly 'io.vertx:vertx-core'
 }
 
 configurations { testArtifacts }
@@ -66,7 +71,7 @@ Calculated : ${currentHash}
 tasks.register('checkAPIChanges', FileStateChecker) {
   description = "Checks that the API for the Plugin-API project does not change without deliberate thought"
   files = sourceSets.main.allJava.files
-  knownHash = 'nBDCEeFH318uhGZEBmuTGOfYLI1+9tLDyjn/RDe5saI='
+  knownHash = 'EZ6a5gSwe4a0YHbM4e6Jo8HTYba0MKK5Jn5j6pMApzI='
 }
 check.dependsOn('checkAPIChanges')
 

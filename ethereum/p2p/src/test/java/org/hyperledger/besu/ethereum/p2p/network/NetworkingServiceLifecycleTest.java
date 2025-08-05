@@ -17,34 +17,34 @@ package org.hyperledger.besu.ethereum.p2p.network;
 import static java.util.stream.Collectors.toList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.hamcrest.Matchers.startsWith;
 import static org.hyperledger.besu.ethereum.p2p.NetworkingTestHelper.configWithRandomPorts;
-import static org.junit.Assume.assumeThat;
+import static org.junit.jupiter.api.Assumptions.assumingThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider;
+import org.hyperledger.besu.ethereum.p2p.EthProtocolHelper;
 import org.hyperledger.besu.ethereum.p2p.config.DiscoveryConfiguration;
 import org.hyperledger.besu.ethereum.p2p.config.NetworkingConfiguration;
 import org.hyperledger.besu.ethereum.p2p.discovery.PeerDiscoveryServiceException;
-import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.data.EnodeURL;
 
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.stream.Stream;
 
 import io.vertx.core.Vertx;
+import jakarta.validation.constraints.NotNull;
 import org.assertj.core.api.Assertions;
-import org.jetbrains.annotations.NotNull;
-import org.junit.After;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 
 public class NetworkingServiceLifecycleTest {
 
@@ -52,7 +52,7 @@ public class NetworkingServiceLifecycleTest {
   private final NodeKey nodeKey = NodeKeyUtils.generate();
   private final NetworkingConfiguration config = configWithRandomPorts();
 
-  @After
+  @AfterEach
   public void closeVertx() {
     vertx.close();
   }
@@ -81,13 +81,17 @@ public class NetworkingServiceLifecycleTest {
     final Block blockMock = mock(Block.class);
     when(blockMock.getHash()).thenReturn(Hash.ZERO);
     when(blockchainMock.getGenesisBlock()).thenReturn(blockMock);
-    builder.blockchain(blockchainMock);
-    builder.forks(Collections.emptyList());
+    builder
+        .blockchain(blockchainMock)
+        .blockNumberForks(Collections.emptyList())
+        .timestampForks(Collections.emptyList())
+        .allConnectionsSupplier(Stream::empty)
+        .allActiveConnectionsSupplier(Stream::empty);
     return builder;
   }
 
   @Test
-  public void createP2PNetwork_NullHost() throws IOException {
+  public void createP2PNetwork_NullHost() {
     final NetworkingConfiguration config =
         NetworkingConfiguration.create()
             .setDiscovery(DiscoveryConfiguration.create().setBindHost(null));
@@ -102,7 +106,7 @@ public class NetworkingServiceLifecycleTest {
   }
 
   @Test
-  public void createP2PNetwork_InvalidHost() throws IOException {
+  public void createP2PNetwork_InvalidHost() {
     final NetworkingConfiguration config =
         NetworkingConfiguration.create()
             .setDiscovery(DiscoveryConfiguration.create().setBindHost("fake.fake.fake"));
@@ -117,7 +121,7 @@ public class NetworkingServiceLifecycleTest {
   }
 
   @Test
-  public void createP2PNetwork_InvalidPort() throws IOException {
+  public void createP2PNetwork_InvalidPort() {
     final NetworkingConfiguration config =
         NetworkingConfiguration.create()
             .setDiscovery(DiscoveryConfiguration.create().setBindPort(-1));
@@ -132,7 +136,7 @@ public class NetworkingServiceLifecycleTest {
   }
 
   @Test
-  public void createP2PNetwork_NullKeyPair() throws IOException {
+  public void createP2PNetwork_NullKeyPair() {
     final DefaultP2PNetwork.Builder p2pNetworkBuilder = builder().config(config);
     assertThatThrownBy(() -> p2pNetworkBuilder.nodeKey(null))
         .isInstanceOf(NullPointerException.class);
@@ -158,33 +162,33 @@ public class NetworkingServiceLifecycleTest {
   }
 
   @Test
-  public void startDiscoveryPortInUse() throws IOException {
-    assumeThat(
-        "Ignored if system language is not English",
-        System.getProperty("user.language"),
-        startsWith("en"));
-    try (final P2PNetwork service1 = getP2PNetworkBuilder().config(config).build()) {
-      service1.start();
-      final NetworkingConfiguration config = configWithRandomPorts();
-      final int usedPort = service1.getLocalEnode().get().getDiscoveryPortOrZero();
-      assertThat(usedPort).isNotZero();
-      config.getDiscovery().setBindPort(usedPort);
-      try (final P2PNetwork service2 = getP2PNetworkBuilder().config(config).build()) {
-        try {
-          service2.start();
-        } catch (final Exception e) {
-          assertThat(e).hasCauseExactlyInstanceOf(PeerDiscoveryServiceException.class);
-          assertThat(e)
-              .hasMessageStartingWith(
-                  "org.hyperledger.besu.ethereum.p2p.discovery."
-                      + "PeerDiscoveryServiceException: Failed to bind Ethereum UDP discovery listener to 0.0.0.0:");
-          assertThat(e).hasMessageContaining("Address already in use");
-        } finally {
-          service1.stop();
-          service2.stop();
-        }
-      }
-    }
+  public void startDiscoveryPortInUse() {
+    assumingThat(
+        System.getProperty("user.language").startsWith("en"),
+        () -> {
+          try (final P2PNetwork service1 = getP2PNetworkBuilder().config(config).build()) {
+            service1.start();
+            final NetworkingConfiguration config = configWithRandomPorts();
+            final int usedPort = service1.getLocalEnode().get().getDiscoveryPortOrZero();
+            assertThat(usedPort).isNotZero();
+            config.getDiscovery().setBindPort(usedPort);
+            try (final P2PNetwork service2 = getP2PNetworkBuilder().config(config).build()) {
+              try {
+                service2.start();
+              } catch (final Exception e) {
+                assertThat(e).hasCauseExactlyInstanceOf(PeerDiscoveryServiceException.class);
+                assertThat(e)
+                    .hasMessageStartingWith(
+                        "org.hyperledger.besu.ethereum.p2p.discovery."
+                            + "PeerDiscoveryServiceException: Failed to bind Ethereum UDP discovery listener to 0.0.0.0:");
+                assertThat(e).hasMessageContaining("Address already in use");
+              } finally {
+                service1.stop();
+                service2.stop();
+              }
+            }
+          }
+        });
   }
 
   @Test
@@ -201,7 +205,7 @@ public class NetworkingServiceLifecycleTest {
         .nodeKey(nodeKey)
         .config(config)
         .metricsSystem(new NoOpMetricsSystem())
-        .supportedCapabilities(Arrays.asList(Capability.create("eth", 63)))
+        .supportedCapabilities(Arrays.asList(EthProtocolHelper.LATEST))
         .storageProvider(new InMemoryKeyValueStorageProvider());
   }
 }

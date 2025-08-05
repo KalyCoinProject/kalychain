@@ -20,13 +20,27 @@ import org.hyperledger.besu.consensus.ibft.payload.MessageFactory;
 import org.hyperledger.besu.consensus.ibft.validation.MessageValidatorFactory;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/** The Ibft block height manager factory. */
 public class IbftBlockHeightManagerFactory {
+
+  private static final Logger LOG = LoggerFactory.getLogger(IbftBlockHeightManagerFactory.class);
 
   private final IbftRoundFactory roundFactory;
   private final BftFinalState finalState;
   private final MessageValidatorFactory messageValidatorFactory;
   private final MessageFactory messageFactory;
 
+  /**
+   * Instantiates a new Ibft block height manager factory.
+   *
+   * @param finalState the final state
+   * @param roundFactory the round factory
+   * @param messageValidatorFactory the message validator factory
+   * @param messageFactory the message factory
+   */
   public IbftBlockHeightManagerFactory(
       final BftFinalState finalState,
       final IbftRoundFactory roundFactory,
@@ -38,15 +52,30 @@ public class IbftBlockHeightManagerFactory {
     this.messageFactory = messageFactory;
   }
 
+  /**
+   * Create base ibft block height manager.
+   *
+   * @param parentHeader the parent header
+   * @return the base ibft block height manager
+   */
   public BaseIbftBlockHeightManager create(final BlockHeader parentHeader) {
     if (finalState.isLocalNodeValidator()) {
+      LOG.debug("Local node is a validator");
       return createFullBlockHeightManager(parentHeader);
     } else {
+      LOG.debug("Local node is a non-validator");
       return createNoOpBlockHeightManager(parentHeader);
     }
   }
 
-  private BaseIbftBlockHeightManager createNoOpBlockHeightManager(final BlockHeader parentHeader) {
+  /**
+   * Create a no-op block height manager.
+   *
+   * @param parentHeader the parent header
+   * @return the no-op height manager
+   */
+  protected BaseIbftBlockHeightManager createNoOpBlockHeightManager(
+      final BlockHeader parentHeader) {
     return new NoOpBlockHeightManager(parentHeader);
   }
 

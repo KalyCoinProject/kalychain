@@ -11,9 +11,7 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.consensus.clique;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,8 +39,8 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import com.google.common.collect.Lists;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class CliqueBlockChoiceTests {
   private List<KeyPair> keyPairs;
@@ -57,7 +55,7 @@ public class CliqueBlockChoiceTests {
     return new Block(header, new BlockBody(Lists.newArrayList(), Lists.newArrayList()));
   }
 
-  @Before
+  @BeforeEach
   public void setup() {
     keyPairs =
         IntStream.range(0, 8)

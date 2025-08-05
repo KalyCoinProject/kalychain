@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -25,9 +25,10 @@ import static org.mockito.Mockito.when;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
-import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.AccountTrieNodeDataRequest;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.SnapDataRequest;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.AccountTrieNodeHealingRequest;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.services.pipeline.Pipe;
 import org.hyperledger.besu.services.tasks.Task;
@@ -37,8 +38,8 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 public class LoadLocalDataStepTest {
@@ -48,24 +49,32 @@ public class LoadLocalDataStepTest {
 
   private final BlockHeader blockHeader =
       new BlockHeaderTestFixture().stateRoot(HASH).buildHeader();
-  private final AccountTrieNodeDataRequest request =
+  private final AccountTrieNodeHealingRequest request =
       SnapDataRequest.createAccountTrieNodeDataRequest(
           HASH, Bytes.fromHexString("0x01"), new HashSet<>());
   private final Task<SnapDataRequest> task = new StubTask(request);
 
   private final Pipe<Task<SnapDataRequest>> completedTasks =
-      new Pipe<>(10, NO_OP_COUNTER, NO_OP_COUNTER, NO_OP_COUNTER);
+      new Pipe<>(10, NO_OP_COUNTER, NO_OP_COUNTER, NO_OP_COUNTER, "test_pipe");
 
-  private final SnapSyncState snapSyncState = mock(SnapSyncState.class);
+  private final SnapSyncProcessState snapSyncState = mock(SnapSyncProcessState.class);
   private final SnapWorldDownloadState downloadState = mock(SnapWorldDownloadState.class);
-  private final WorldStateStorage worldStateStorage = mock(WorldStateStorage.class);
-  private final WorldStateStorage.Updater updater = mock(WorldStateStorage.Updater.class);
+  private final WorldStateStorageCoordinator worldStateStorageCoordinator =
+      mock(WorldStateStorageCoordinator.class);
+  private final WorldStateKeyValueStorage.Updater updater =
+      mock(WorldStateKeyValueStorage.Updater.class);
+
+  private final SnapSyncConfiguration snapSyncConfiguration = mock(SnapSyncConfiguration.class);
 
   private final LoadLocalDataStep loadLocalDataStep =
       new LoadLocalDataStep(
-          worldStateStorage, downloadState, new NoOpMetricsSystem(), snapSyncState);
+          worldStateStorageCoordinator,
+          downloadState,
+          snapSyncConfiguration,
+          new NoOpMetricsSystem(),
+          snapSyncState);
 
-  @Before
+  @BeforeEach
   public void setup() {
     when(snapSyncState.hasPivotBlockHeader()).thenReturn(true);
     when(snapSyncState.getPivotBlockHeader()).thenReturn(Optional.of(blockHeader));
@@ -86,8 +95,10 @@ public class LoadLocalDataStepTest {
 
     task.getData().setRootHash(blockHeader.getStateRoot());
 
-    when(worldStateStorage.getAccountStateTrieNode(any(), any())).thenReturn(Optional.of(DATA));
-    when(worldStateStorage.updater()).thenReturn(mock(WorldStateStorage.Updater.class));
+    when(worldStateStorageCoordinator.getAccountStateTrieNode(any(), any()))
+        .thenReturn(Optional.of(DATA));
+    when(worldStateStorageCoordinator.updater())
+        .thenReturn(mock(WorldStateKeyValueStorage.Updater.class));
 
     final BlockHeader newBlockHeader =
         new BlockHeaderTestFixture().stateRoot(Hash.EMPTY).buildHeader();
@@ -101,8 +112,9 @@ public class LoadLocalDataStepTest {
 
   @Test
   public void shouldReturnEmptyStreamAndSendTaskToCompletedPipeWhenDataIsPresent() {
-    when(worldStateStorage.getAccountStateTrieNode(any(), any())).thenReturn(Optional.of(DATA));
-    when(worldStateStorage.updater()).thenReturn(updater);
+    when(worldStateStorageCoordinator.getAccountStateTrieNode(any(), any()))
+        .thenReturn(Optional.of(DATA));
+    when(worldStateStorageCoordinator.updater()).thenReturn(updater);
 
     final Stream<Task<SnapDataRequest>> output =
         loadLocalDataStep.loadLocalDataTrieNode(task, completedTasks);
@@ -115,7 +127,8 @@ public class LoadLocalDataStepTest {
     Mockito.reset(updater);
 
     // Should not require persisting.
-    request.persist(worldStateStorage, updater, downloadState, snapSyncState);
+    request.persist(
+        worldStateStorageCoordinator, updater, downloadState, snapSyncState, snapSyncConfiguration);
     verifyNoInteractions(updater);
   }
 }

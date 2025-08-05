@@ -15,24 +15,29 @@
 package org.hyperledger.besu.ethereum.eth.sync.fastsync;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.debugLambda;
 
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.ProtocolContext;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
-import org.hyperledger.besu.ethereum.eth.manager.task.WaitForPeersTask;
+import org.hyperledger.besu.ethereum.eth.manager.exceptions.NoAvailablePeersException;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutorResponseCode;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutorResult;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.task.GetHeadersFromPeerTask;
 import org.hyperledger.besu.ethereum.eth.sync.ChainDownloader;
 import org.hyperledger.besu.ethereum.eth.sync.PivotBlockSelector;
 import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncState;
 import org.hyperledger.besu.ethereum.eth.sync.tasks.RetryingGetHeaderFromPeerByHashTask;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 import org.hyperledger.besu.metrics.BesuMetricCategory;
+import org.hyperledger.besu.metrics.SyncDurationMetrics;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.plugin.services.metrics.Counter;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
@@ -44,7 +49,7 @@ public class FastSyncActions {
 
   private static final Logger LOG = LoggerFactory.getLogger(FastSyncActions.class);
   protected final SynchronizerConfiguration syncConfig;
-  protected final WorldStateStorage worldStateStorage;
+  protected final WorldStateStorageCoordinator worldStateStorageCoordinator;
   protected final ProtocolSchedule protocolSchedule;
   protected final ProtocolContext protocolContext;
   protected final EthContext ethContext;
@@ -56,7 +61,7 @@ public class FastSyncActions {
 
   public FastSyncActions(
       final SynchronizerConfiguration syncConfig,
-      final WorldStateStorage worldStateStorage,
+      final WorldStateStorageCoordinator worldStateStorageCoordinator,
       final ProtocolSchedule protocolSchedule,
       final ProtocolContext protocolContext,
       final EthContext ethContext,
@@ -64,7 +69,7 @@ public class FastSyncActions {
       final PivotBlockSelector pivotBlockSelector,
       final MetricsSystem metricsSystem) {
     this.syncConfig = syncConfig;
-    this.worldStateStorage = worldStateStorage;
+    this.worldStateStorageCoordinator = worldStateStorageCoordinator;
     this.protocolSchedule = protocolSchedule;
     this.protocolContext = protocolContext;
     this.ethContext = ethContext;
@@ -99,7 +104,6 @@ public class FastSyncActions {
   }
 
   private CompletableFuture<FastSyncState> selectNewPivotBlock() {
-
     return pivotBlockSelector
         .selectNewPivotBlock()
         .map(CompletableFuture::completedFuture)
@@ -130,7 +134,9 @@ public class FastSyncActions {
       return completedFuture(currentState);
     }
 
-    return waitForPeers(1)
+    return ethContext
+        .getEthPeers()
+        .waitForPeer((peer) -> true)
         .thenCompose(
             unused ->
                 currentState
@@ -142,9 +148,10 @@ public class FastSyncActions {
                                     protocolSchedule,
                                     ethContext,
                                     metricsSystem,
+                                    syncConfig,
                                     currentState.getPivotBlockNumber().getAsLong(),
-                                    syncConfig.getFastSyncMinimumPeerCount(),
-                                    syncConfig.getFastSyncPivotDistance())
+                                    syncConfig.getSyncMinimumPeerCount(),
+                                    syncConfig.getSyncPivotDistance())
                                 .downloadPivotBlockHeader()));
   }
 
@@ -156,32 +163,81 @@ public class FastSyncActions {
     return fastSyncState;
   }
 
-  public ChainDownloader createChainDownloader(final FastSyncState currentState) {
+  public ChainDownloader createChainDownloader(
+      final FastSyncState currentState, final SyncDurationMetrics syncDurationMetrics) {
     return FastSyncChainDownloader.create(
         syncConfig,
-        worldStateStorage,
+        worldStateStorageCoordinator,
         protocolSchedule,
         protocolContext,
         ethContext,
         syncState,
         metricsSystem,
-        currentState);
+        currentState,
+        syncDurationMetrics);
   }
 
   private CompletableFuture<FastSyncState> downloadPivotBlockHeader(final Hash hash) {
     LOG.debug("Downloading pivot block header by hash {}", hash);
-    return RetryingGetHeaderFromPeerByHashTask.byHash(
-            protocolSchedule, ethContext, hash, metricsSystem)
-        .getHeader()
+    CompletableFuture<BlockHeader> blockHeaderFuture;
+    if (syncConfig.isPeerTaskSystemEnabled()) {
+      blockHeaderFuture =
+          ethContext
+              .getScheduler()
+              .scheduleServiceTask(
+                  () -> {
+                    GetHeadersFromPeerTask task =
+                        new GetHeadersFromPeerTask(
+                            hash,
+                            pivotBlockSelector.getMinRequiredBlockNumber(),
+                            1,
+                            0,
+                            GetHeadersFromPeerTask.Direction.FORWARD,
+                            ethContext.getEthPeers().peerCount(),
+                            protocolSchedule);
+                    PeerTaskExecutorResult<List<BlockHeader>> taskResult =
+                        ethContext.getPeerTaskExecutor().execute(task);
+                    if (taskResult.responseCode() == PeerTaskExecutorResponseCode.NO_PEER_AVAILABLE
+                        || taskResult.responseCode()
+                            == PeerTaskExecutorResponseCode.PEER_DISCONNECTED) {
+                      LOG.error(
+                          "Failed to download pivot block header. Response Code was {}",
+                          taskResult.responseCode());
+                      return CompletableFuture.failedFuture(new NoAvailablePeersException());
+                    } else if (taskResult.responseCode() != PeerTaskExecutorResponseCode.SUCCESS
+                        || taskResult.result().isEmpty()) {
+                      LOG.error(
+                          "Failed to download pivot block header. Response Code was {}",
+                          taskResult.responseCode());
+                      return CompletableFuture.failedFuture(
+                          new RuntimeException(
+                              "Failed to download pivot block header. Response Code was "
+                                  + taskResult.responseCode()));
+                    } else {
+                      return CompletableFuture.completedFuture(
+                          taskResult.result().get().getFirst());
+                    }
+                  });
+    } else {
+      blockHeaderFuture =
+          RetryingGetHeaderFromPeerByHashTask.byHash(
+                  protocolSchedule,
+                  ethContext,
+                  hash,
+                  pivotBlockSelector.getMinRequiredBlockNumber(),
+                  metricsSystem)
+              .getHeader();
+    }
+    return blockHeaderFuture
         .whenComplete(
             (blockHeader, throwable) -> {
               if (throwable != null) {
                 LOG.debug("Error downloading block header by hash {}", hash);
               } else {
-                debugLambda(
-                    LOG,
-                    "Successfully downloaded pivot block header by hash {}",
-                    blockHeader::toLogString);
+                LOG.atDebug()
+                    .setMessage("Successfully downloaded pivot block header by hash {}")
+                    .addArgument(blockHeader::toLogString)
+                    .log();
               }
             })
         .thenApply(FastSyncState::new);
@@ -189,12 +245,5 @@ public class FastSyncActions {
 
   public boolean isBlockchainBehind(final long blockNumber) {
     return protocolContext.getBlockchain().getChainHeadHeader().getNumber() < blockNumber;
-  }
-
-  private CompletableFuture<Void> waitForPeers(final int count) {
-
-    final WaitForPeersTask waitForPeersTask =
-        WaitForPeersTask.create(ethContext, count, metricsSystem);
-    return waitForPeersTask.run();
   }
 }

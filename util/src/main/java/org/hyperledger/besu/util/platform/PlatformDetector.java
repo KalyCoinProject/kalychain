@@ -23,6 +23,11 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.sun.jna.Library;
+import com.sun.jna.Native;
+import com.sun.jna.ptr.IntByReference;
+import com.sun.jna.ptr.PointerByReference;
+
 /**
  * Detects OS and VMs.
  *
@@ -36,7 +41,15 @@ public class PlatformDetector {
   private static String _vm;
   private static String _arch;
   private static String _glibc;
+  private static String _jemalloc;
 
+  private PlatformDetector() {}
+
+  /**
+   * Gets OS type.
+   *
+   * @return the OS type
+   */
   public static String getOSType() {
     if (_osType == null) {
       detect();
@@ -44,6 +57,11 @@ public class PlatformDetector {
     return _osType;
   }
 
+  /**
+   * Gets OS.
+   *
+   * @return the OS
+   */
   public static String getOS() {
     if (_os == null) {
       detect();
@@ -51,6 +69,11 @@ public class PlatformDetector {
     return _os;
   }
 
+  /**
+   * Gets Arch.
+   *
+   * @return the Arch
+   */
   public static String getArch() {
     if (_arch == null) {
       detect();
@@ -58,6 +81,11 @@ public class PlatformDetector {
     return _arch;
   }
 
+  /**
+   * Gets VM.
+   *
+   * @return the VM
+   */
   public static String getVM() {
     if (_vm == null) {
       detect();
@@ -65,12 +93,31 @@ public class PlatformDetector {
     return _vm;
   }
 
+  /**
+   * Gets Glibc version.
+   *
+   * @return the Glibc version
+   */
   public static String getGlibc() {
     if (_glibc == null) {
       detectGlibc();
     }
 
     return _glibc;
+  }
+
+  /**
+   * Gets jemalloc version.
+   *
+   * @throws UnsatisfiedLinkError if the library cannot be found or dependent libraries are missing.
+   * @return the jemalloc version
+   */
+  public static String getJemalloc() {
+    if (_jemalloc == null) {
+      detectJemalloc();
+    }
+
+    return _jemalloc;
   }
 
   private static final String UNKNOWN = "unknown";
@@ -184,6 +231,13 @@ public class PlatformDetector {
     return UNKNOWN;
   }
 
+  /**
+   * Normalize VM version string.
+   *
+   * @param javaVendor the java vendor
+   * @param javaVmName the java vm name
+   * @return the string
+   */
   static String normalizeVM(final String javaVendor, final String javaVmName) {
     if (javaVmName.contains("graalvm") || javaVendor.contains("graalvm")) {
       return "graalvm";
@@ -218,6 +272,12 @@ public class PlatformDetector {
     return "-" + javaVendor + "-" + javaVmName;
   }
 
+  /**
+   * Normalize java version string.
+   *
+   * @param javaVersion the java version
+   * @return the string
+   */
   static String normalizeJavaVersion(final String javaVersion) {
     // These are already normalized.
     return System.getProperty(javaVersion);
@@ -267,5 +327,24 @@ public class PlatformDetector {
     final Matcher matcher = pattern.matcher(rawGlibcVersion);
 
     return matcher.find() ? matcher.group() : null;
+  }
+
+  private static void detectJemalloc() {
+    interface JemallocLib extends Library {
+      int mallctl(
+          String property,
+          PointerByReference value,
+          IntByReference len,
+          String newValue,
+          int newLen);
+    }
+
+    final JemallocLib jemallocLib = Native.load("jemalloc", JemallocLib.class);
+
+    PointerByReference pVersion = new PointerByReference();
+    IntByReference pSize = new IntByReference(Native.POINTER_SIZE);
+    jemallocLib.mallctl("version", pVersion, pSize, null, 0);
+
+    _jemalloc = pVersion.getValue().getString(0);
   }
 }

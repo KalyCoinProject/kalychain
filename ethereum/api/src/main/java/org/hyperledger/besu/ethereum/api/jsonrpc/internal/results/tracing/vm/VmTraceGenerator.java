@@ -107,7 +107,8 @@ public class VmTraceGenerator {
     } else if (frame.getExceptionalHaltReason().isPresent()) {
       final Optional<ExceptionalHaltReason> haltReason = frame.getExceptionalHaltReason();
       return haltReason.get() != ExceptionalHaltReason.INVALID_JUMP_DESTINATION
-          && haltReason.get() != ExceptionalHaltReason.INSUFFICIENT_GAS;
+          && haltReason.get() != ExceptionalHaltReason.INSUFFICIENT_GAS
+          && haltReason.get() != ExceptionalHaltReason.ILLEGAL_STATE_CHANGE;
     } else {
       return frame.isVirtualOperation();
     }
@@ -182,11 +183,7 @@ public class VmTraceGenerator {
                     code ->
                         op.setSub(
                             new VmTrace(
-                                currentTraceFrame
-                                    .getMaybeCode()
-                                    .get()
-                                    .getContainerBytes()
-                                    .toHexString())));
+                                currentTraceFrame.getMaybeCode().get().getBytes().toHexString())));
           } else {
             op.setCost(op.getCost());
             op.setSub(null);
@@ -291,11 +288,7 @@ public class VmTraceGenerator {
     // set smart contract code
     if (currentTrace != null && "0x".equals(currentTrace.getCode())) {
       currentTrace.setCode(
-          currentTraceFrame
-              .getMaybeCode()
-              .orElse(CodeV0.EMPTY_CODE)
-              .getContainerBytes()
-              .toHexString());
+          currentTraceFrame.getMaybeCode().orElse(CodeV0.EMPTY_CODE).getBytes().toHexString());
     }
   }
 

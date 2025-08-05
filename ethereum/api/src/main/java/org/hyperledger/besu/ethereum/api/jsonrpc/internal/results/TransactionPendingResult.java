@@ -14,12 +14,14 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.results;
 
+import org.hyperledger.besu.datatypes.AccessListEntry;
 import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.TransactionType;
+import org.hyperledger.besu.datatypes.VersionedHash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.Transaction;
-import org.hyperledger.besu.ethereum.rlp.BytesValueRLPOutput;
-import org.hyperledger.besu.evm.AccessListEntry;
-import org.hyperledger.besu.plugin.data.TransactionType;
+import org.hyperledger.besu.ethereum.core.encoding.EncodingContext;
+import org.hyperledger.besu.ethereum.core.encoding.TransactionEncoder;
 
 import java.util.List;
 
@@ -33,17 +35,20 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
   "from",
   "gas",
   "gasPrice",
-  "maxPriortyFeePerGas",
+  "maxPriorityFeePerGas",
   "maxFeePerGas",
+  "maxFeePerBlobGas",
   "hash",
   "input",
   "nonce",
   "to",
   "transactionIndex",
   "value",
+  "yParity",
   "v",
   "r",
-  "s"
+  "s",
+  "blobVersionedHashes"
 })
 public class TransactionPendingResult implements TransactionResult {
 
@@ -62,6 +67,9 @@ public class TransactionPendingResult implements TransactionResult {
   @JsonInclude(JsonInclude.Include.NON_NULL)
   private final String maxFeePerGas;
 
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  private final String maxFeePerBlobGas;
+
   private final String hash;
   private final String input;
   private final String nonce;
@@ -70,9 +78,13 @@ public class TransactionPendingResult implements TransactionResult {
   private final String to;
   private final String type;
   private final String value;
+  private final String yParity;
   private final String v;
   private final String r;
   private final String s;
+
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  private final List<VersionedHash> versionedHashes;
 
   public TransactionPendingResult(final Transaction transaction) {
     final TransactionType transactionType = transaction.getType();
@@ -83,23 +95,36 @@ public class TransactionPendingResult implements TransactionResult {
     this.maxPriorityFeePerGas =
         transaction.getMaxPriorityFeePerGas().map(Wei::toShortHexString).orElse(null);
     this.maxFeePerGas = transaction.getMaxFeePerGas().map(Wei::toShortHexString).orElse(null);
+    this.maxFeePerBlobGas =
+        transaction.getMaxFeePerBlobGas().map(Wei::toShortHexString).orElse(null);
     this.gasPrice = transaction.getGasPrice().map(Quantity::create).orElse(maxFeePerGas);
     this.hash = transaction.getHash().toString();
     this.input = transaction.getPayload().toString();
     this.nonce = Quantity.create(transaction.getNonce());
     this.publicKey = transaction.getPublicKey().orElse(null);
-    final BytesValueRLPOutput out = new BytesValueRLPOutput();
-    transaction.writeTo(out);
-    this.raw = out.encoded().toString();
+    this.raw =
+        TransactionEncoder.encodeOpaqueBytes(transaction, EncodingContext.POOLED_TRANSACTION)
+            .toString();
     this.to = transaction.getTo().map(Address::toHexString).orElse(null);
-    this.type =
-        transactionType.equals(TransactionType.FRONTIER)
-            ? Quantity.create(0)
-            : Quantity.create(transactionType.getSerializedType());
+    if (transactionType == TransactionType.FRONTIER) {
+      this.type = Quantity.create(0);
+      this.yParity = null;
+      this.v = Quantity.create(transaction.getV());
+    } else {
+      this.type = Quantity.create(transactionType.getSerializedType());
+      this.yParity = Quantity.create(transaction.getYParity());
+      this.v =
+          (transactionType == TransactionType.ACCESS_LIST
+                  || transactionType == TransactionType.EIP1559
+                  || transactionType == TransactionType.DELEGATE_CODE
+                  || transactionType == TransactionType.BLOB)
+              ? Quantity.create(transaction.getYParity())
+              : null;
+    }
     this.value = Quantity.create(transaction.getValue());
-    this.v = Quantity.create(transaction.getV());
     this.r = Quantity.create(transaction.getR());
     this.s = Quantity.create(transaction.getS());
+    this.versionedHashes = transaction.getVersionedHashes().orElse(null);
   }
 
   @JsonGetter(value = "accessList")
@@ -135,6 +160,11 @@ public class TransactionPendingResult implements TransactionResult {
   @JsonGetter(value = "maxFeePerGas")
   public String getMaxFeePerGas() {
     return maxFeePerGas;
+  }
+
+  @JsonGetter(value = "maxFeePerBlobGas")
+  public String getMaxFeePerBlobGas() {
+    return maxFeePerBlobGas;
   }
 
   @JsonGetter(value = "hash")
@@ -177,6 +207,13 @@ public class TransactionPendingResult implements TransactionResult {
     return value;
   }
 
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  @JsonGetter(value = "yParity")
+  public String getYParity() {
+    return yParity;
+  }
+
+  @JsonInclude(JsonInclude.Include.NON_NULL)
   @JsonGetter(value = "v")
   public String getV() {
     return v;
@@ -205,5 +242,10 @@ public class TransactionPendingResult implements TransactionResult {
   @JsonGetter(value = "transactionIndex")
   public String getTransactionIndex() {
     return null;
+  }
+
+  @JsonGetter(value = "blobVersionedHashes")
+  public List<VersionedHash> getVersionedHashes() {
+    return versionedHashes;
   }
 }

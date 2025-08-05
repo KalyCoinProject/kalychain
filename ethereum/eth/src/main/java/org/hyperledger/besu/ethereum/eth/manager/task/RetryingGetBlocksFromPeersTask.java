@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -13,8 +13,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 package org.hyperledger.besu.ethereum.eth.manager.task;
-
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.debugLambda;
 
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
@@ -72,17 +70,17 @@ public class RetryingGetBlocksFromPeersTask
     return executeSubTask(getBodiesTask::run)
         .thenApply(
             peerResult -> {
-              debugLambda(
-                  LOG,
-                  "Got {} blocks from peer {}, attempt {}",
-                  peerResult.getResult()::size,
-                  peerResult.getPeer()::toString,
-                  this::getRetryCount);
+              LOG.atDebug()
+                  .setMessage("Got {} blocks from peer {}, attempt {}")
+                  .addArgument(peerResult.getResult()::size)
+                  .addArgument(peerResult.getPeer())
+                  .addArgument(this::getRetryCount)
+                  .log();
 
               if (peerResult.getResult().isEmpty()) {
                 currentPeer.recordUselessResponse("GetBodiesFromPeerTask");
                 throw new IncompleteResultsException(
-                    "No blocks returned by peer " + currentPeer.getShortNodeId());
+                    "No blocks returned by peer " + currentPeer.getLoggableId());
               }
 
               result.complete(peerResult);
@@ -98,12 +96,12 @@ public class RetryingGetBlocksFromPeersTask
   @Override
   protected void handleTaskError(final Throwable error) {
     if (getRetryCount() < getMaxRetries()) {
-      debugLambda(
-          LOG,
-          "Failed to get {} blocks from peer {}, attempt {}, retrying later",
-          headers::size,
-          this::getAssignedPeer,
-          this::getRetryCount);
+      LOG.atDebug()
+          .setMessage("Failed to get {} blocks from peer {}, attempt {}, retrying later")
+          .addArgument(headers::size)
+          .addArgument(this::getAssignedPeer)
+          .addArgument(this::getRetryCount)
+          .log();
     } else {
       LOG.debug("Failed to get {} blocks after {} retries", headers.size(), getRetryCount());
     }

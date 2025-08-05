@@ -11,39 +11,150 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.ethereum.api;
+
+import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.EthEstimateGas;
 
 import org.immutables.value.Value;
 
+/**
+ * The ApiConfiguration class provides configuration for the API. It includes default values for gas
+ * price, max logs range, gas cap, and other parameters.
+ */
 @Value.Immutable
 @Value.Style(allParameters = true)
 public abstract class ApiConfiguration {
 
+  /**
+   * The default lower bound coefficient for gas and priority fee. This value is used as the default
+   * lower bound when calculating the gas and priority fee.
+   */
+  public static final long DEFAULT_LOWER_BOUND_GAS_AND_PRIORITY_FEE_COEFFICIENT = 0L;
+
+  /**
+   * The default upper bound coefficient for gas and priority fee. This value is used as the default
+   * upper bound when calculating the gas and priority fee.
+   */
+  public static final long DEFAULT_UPPER_BOUND_GAS_AND_PRIORITY_FEE_COEFFICIENT = Long.MAX_VALUE;
+
+  /** The default gas cap used for transaction simulation */
+  public static final long DEFAULT_GAS_CAP = 100_000_000L;
+
+  /** Constructs a new ApiConfiguration with default values. */
+  protected ApiConfiguration() {}
+
+  /**
+   * Returns the number of blocks to consider for gas price calculations. Default value is 100.
+   *
+   * @return the number of blocks for gas price calculations
+   */
   @Value.Default
   public long getGasPriceBlocks() {
     return 100;
   }
 
+  /**
+   * Returns the percentile to use for gas price calculations. Default value is 50.0.
+   *
+   * @return the percentile for gas price calculations
+   */
   @Value.Default
   public double getGasPricePercentile() {
     return 50.0d;
   }
 
+  /**
+   * Returns the ratio to use for eth_estimateGas tolerance. Default value is 0.015. This is
+   * effectively how "close" the estimate is required to be. See {@link EthEstimateGas} for how this
+   * is used in calculations.
+   *
+   * @return the decimal ratio to use for eth_estimateGas tolerance
+   */
   @Value.Default
-  public long getGasPriceMin() {
-    return 1_000_000_000L; // 1 GWei
+  public double getEstimateGasToleranceRatio() {
+    return 0.015d;
   }
 
+  /**
+   * Returns the maximum gas price. Default value is 500 GWei.
+   *
+   * @return the maximum gas price
+   */
   @Value.Default
-  public long getGasPriceMax() {
-    return 500_000_000_000L; // 500 GWei
+  public Wei getGasPriceMax() {
+    return Wei.of(500_000_000_000L); // 500 GWei
   }
 
+  /**
+   * Returns the fraction to use for gas price calculations. This is derived from the gas price
+   * percentile.
+   *
+   * @return the fraction for gas price calculations
+   */
   @Value.Derived
   public double getGasPriceFraction() {
     return getGasPricePercentile() / 100.0;
+  }
+
+  /**
+   * Returns the maximum range for logs. Default value is 5000.
+   *
+   * @return the maximum range for logs
+   */
+  @Value.Default
+  public Long getMaxLogsRange() {
+    return 5000L;
+  }
+
+  /**
+   * Returns the gas cap. Default value is 50M.
+   *
+   * @return the gas cap
+   */
+  @Value.Default
+  public Long getGasCap() {
+    return DEFAULT_GAS_CAP;
+  }
+
+  /**
+   * Returns whether gas and priority fee limiting is enabled. Default value is false.
+   *
+   * @return true if gas and priority fee limiting is enabled, false otherwise
+   */
+  @Value.Default
+  public boolean isGasAndPriorityFeeLimitingEnabled() {
+    return false;
+  }
+
+  /**
+   * Returns the lower bound coefficient for gas and priority fee. Default value is 0.
+   *
+   * @return the lower bound coefficient for gas and priority fee
+   */
+  @Value.Default
+  public Long getLowerBoundGasAndPriorityFeeCoefficient() {
+    return DEFAULT_LOWER_BOUND_GAS_AND_PRIORITY_FEE_COEFFICIENT;
+  }
+
+  /**
+   * Returns the upper bound coefficient for gas and priority fee. Default value is Long.MAX_VALUE.
+   *
+   * @return the upper bound coefficient for gas and priority fee
+   */
+  @Value.Default
+  public Long getUpperBoundGasAndPriorityFeeCoefficient() {
+    return DEFAULT_UPPER_BOUND_GAS_AND_PRIORITY_FEE_COEFFICIENT;
+  }
+
+  /**
+   * Returns the maximum range for trace filter. Default value is 1000.
+   *
+   * @return the maximum range for trace filter
+   */
+  @Value.Default
+  public Long getMaxTraceFilterRange() {
+    return 1000L;
   }
 }

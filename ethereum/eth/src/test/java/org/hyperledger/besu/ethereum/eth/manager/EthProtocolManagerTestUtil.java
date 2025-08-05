@@ -15,242 +15,38 @@
 package org.hyperledger.besu.ethereum.eth.manager;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider.createInMemoryBlockchain;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 
-import org.hyperledger.besu.config.GenesisConfigFile;
+import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
 import org.hyperledger.besu.ethereum.chain.ChainHead;
-import org.hyperledger.besu.ethereum.chain.GenesisState;
-import org.hyperledger.besu.ethereum.core.BlockchainSetupUtil;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.Difficulty;
-import org.hyperledger.besu.ethereum.core.ProtocolScheduleFixture;
 import org.hyperledger.besu.ethereum.eth.EthProtocol;
-import org.hyperledger.besu.ethereum.eth.EthProtocolConfiguration;
-import org.hyperledger.besu.ethereum.eth.manager.DeterministicEthScheduler.TimeoutPolicy;
+import org.hyperledger.besu.ethereum.eth.manager.snap.SnapProtocolManager;
 import org.hyperledger.besu.ethereum.eth.peervalidation.PeerValidator;
-import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
-import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
-import org.hyperledger.besu.ethereum.forkid.ForkIdManager;
-import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
+import org.hyperledger.besu.ethereum.eth.sync.ChainHeadTracker;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.DefaultMessage;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MessageData;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
-import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
-import org.hyperledger.besu.testutil.TestClock;
+import org.hyperledger.besu.testutil.DeterministicEthScheduler;
 
-import java.math.BigInteger;
-import java.util.Collections;
-import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.concurrent.CompletableFuture;
+
+import org.mockito.Mockito;
 
 public class EthProtocolManagerTestUtil {
 
-  public static EthProtocolManager create(
-      final Blockchain blockchain,
-      final TimeoutPolicy timeoutPolicy,
-      final WorldStateArchive worldStateArchive,
-      final TransactionPool transactionPool,
-      final EthProtocolConfiguration ethereumWireProtocolConfiguration) {
-    return create(
-        blockchain,
-        new DeterministicEthScheduler(timeoutPolicy),
-        worldStateArchive,
-        transactionPool,
-        ethereumWireProtocolConfiguration);
-  }
-
-  public static EthProtocolManager create(
-      final Blockchain blockchain,
-      final WorldStateArchive worldStateArchive,
-      final TransactionPool transactionPool,
-      final EthProtocolConfiguration ethereumWireProtocolConfiguration,
-      final Optional<MergePeerFilter> mergePeerFilter) {
-
-    EthPeers peers =
-        new EthPeers(
-            EthProtocol.NAME,
-            TestClock.fixed(),
-            new NoOpMetricsSystem(),
-            25,
-            EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE);
-    EthMessages messages = new EthMessages();
-    EthScheduler ethScheduler = new DeterministicEthScheduler(TimeoutPolicy.NEVER_TIMEOUT);
-    EthContext ethContext = new EthContext(peers, messages, ethScheduler);
-
-    return new EthProtocolManager(
-        blockchain,
-        BigInteger.ONE,
-        worldStateArchive,
-        transactionPool,
-        ethereumWireProtocolConfiguration,
-        peers,
-        messages,
-        ethContext,
-        Collections.emptyList(),
-        mergePeerFilter,
-        mock(SynchronizerConfiguration.class),
-        ethScheduler,
-        new ForkIdManager(blockchain, Collections.emptyList(), false));
-  }
-
-  public static EthProtocolManager create(
-      final Blockchain blockchain,
-      final EthScheduler ethScheduler,
-      final WorldStateArchive worldStateArchive,
-      final TransactionPool transactionPool,
-      final EthProtocolConfiguration ethereumWireProtocolConfiguration,
-      final EthPeers ethPeers,
-      final EthMessages ethMessages,
-      final EthContext ethContext) {
-    return create(
-        blockchain,
-        ethScheduler,
-        worldStateArchive,
-        transactionPool,
-        ethereumWireProtocolConfiguration,
-        ethPeers,
-        ethMessages,
-        ethContext,
-        new ForkIdManager(blockchain, Collections.emptyList(), false));
-  }
-
-  public static EthProtocolManager create(
-      final Blockchain blockchain,
-      final EthScheduler ethScheduler,
-      final WorldStateArchive worldStateArchive,
-      final TransactionPool transactionPool,
-      final EthProtocolConfiguration ethereumWireProtocolConfiguration,
-      final EthPeers ethPeers,
-      final EthMessages ethMessages,
-      final EthContext ethContext,
-      final ForkIdManager forkIdManager) {
-
-    final BigInteger networkId = BigInteger.ONE;
-    return new EthProtocolManager(
-        blockchain,
-        networkId,
-        worldStateArchive,
-        transactionPool,
-        ethereumWireProtocolConfiguration,
-        ethPeers,
-        ethMessages,
-        ethContext,
-        Collections.emptyList(),
-        Optional.empty(),
-        mock(SynchronizerConfiguration.class),
-        ethScheduler,
-        forkIdManager);
-  }
-
-  public static EthProtocolManager create(final Blockchain blockchain) {
-    return create(blockchain, new DeterministicEthScheduler(TimeoutPolicy.NEVER_TIMEOUT));
-  }
-
-  public static EthProtocolManager create(
-      final Blockchain blockchain,
-      final WorldStateArchive worldStateArchive,
-      final TransactionPool transactionPool,
-      final EthProtocolConfiguration ethProtocolConfiguration) {
-    return create(
-        blockchain,
-        new DeterministicEthScheduler(TimeoutPolicy.NEVER_TIMEOUT),
-        worldStateArchive,
-        transactionPool,
-        ethProtocolConfiguration);
-  }
-
-  public static EthProtocolManager create(final EthScheduler ethScheduler) {
-    final ProtocolSchedule protocolSchedule = ProtocolScheduleFixture.MAINNET;
-    final GenesisConfigFile config = GenesisConfigFile.mainnet();
-    final GenesisState genesisState = GenesisState.fromConfig(config, protocolSchedule);
-    final Blockchain blockchain = createInMemoryBlockchain(genesisState.getBlock());
-    return create(blockchain, ethScheduler);
-  }
-
-  public static EthProtocolManager create(
-      final Blockchain blockchain,
-      final EthScheduler ethScheduler,
-      final WorldStateArchive worldStateArchive,
-      final TransactionPool transactionPool,
-      final EthProtocolConfiguration configuration) {
-    EthPeers peers =
-        new EthPeers(
-            EthProtocol.NAME,
-            TestClock.fixed(),
-            new NoOpMetricsSystem(),
-            25,
-            EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE);
-    EthMessages messages = new EthMessages();
-
-    return create(
-        blockchain,
-        ethScheduler,
-        worldStateArchive,
-        transactionPool,
-        configuration,
-        peers,
-        messages,
-        new EthContext(peers, messages, ethScheduler));
-  }
-
-  public static EthProtocolManager create(
-      final Blockchain blockchain,
-      final EthScheduler ethScheduler,
-      final WorldStateArchive worldStateArchive,
-      final TransactionPool transactionPool,
-      final EthProtocolConfiguration configuration,
-      final ForkIdManager forkIdManager) {
-    EthPeers peers =
-        new EthPeers(
-            EthProtocol.NAME,
-            TestClock.fixed(),
-            new NoOpMetricsSystem(),
-            25,
-            EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE);
-    EthMessages messages = new EthMessages();
-
-    return create(
-        blockchain,
-        ethScheduler,
-        worldStateArchive,
-        transactionPool,
-        configuration,
-        peers,
-        messages,
-        new EthContext(peers, messages, ethScheduler),
-        forkIdManager);
-  }
-
-  public static EthProtocolManager create(
-      final Blockchain blockchain, final EthScheduler ethScheduler) {
-    EthPeers peers =
-        new EthPeers(
-            EthProtocol.NAME,
-            TestClock.fixed(),
-            new NoOpMetricsSystem(),
-            25,
-            EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE);
-    EthMessages messages = new EthMessages();
-
-    return create(
-        blockchain,
-        ethScheduler,
-        BlockchainSetupUtil.forTesting(DataStorageFormat.FOREST).getWorldArchive(),
-        mock(TransactionPool.class),
-        EthProtocolConfiguration.defaultConfig(),
-        peers,
-        messages,
-        new EthContext(peers, messages, ethScheduler));
-  }
-
-  public static EthProtocolManager create() {
-    return create(TimeoutPolicy.NEVER_TIMEOUT);
-  }
-
-  public static EthProtocolManager create(final TimeoutPolicy timeoutPolicy) {
-    return create(new DeterministicEthScheduler(timeoutPolicy));
+  public static ChainHeadTracker getChainHeadTrackerMock() {
+    final ChainHeadTracker chtMock = mock(ChainHeadTracker.class);
+    final BlockHeader blockHeaderMock = mock(BlockHeader.class);
+    Mockito.lenient()
+        .when(chtMock.getBestHeaderFromPeer(any()))
+        .thenReturn(CompletableFuture.completedFuture(blockHeaderMock));
+    Mockito.lenient().when(blockHeaderMock.getNumber()).thenReturn(0L);
+    Mockito.lenient().when(blockHeaderMock.getStateRoot()).thenReturn(Hash.ZERO);
+    return chtMock;
   }
 
   // Utility to prevent scheduler from automatically running submitted tasks
@@ -314,7 +110,7 @@ public class EthProtocolManagerTestUtil {
       final RespondingEthPeer peer,
       final MessageData message) {
     ethProtocolManager.processMessage(
-        EthProtocol.ETH63, new DefaultMessage(peer.getPeerConnection(), message));
+        EthProtocol.LATEST, new DefaultMessage(peer.getPeerConnection(), message));
   }
 
   public static RespondingEthPeer.Builder peerBuilder() {
@@ -326,6 +122,7 @@ public class EthProtocolManagerTestUtil {
     return RespondingEthPeer.builder()
         .ethProtocolManager(ethProtocolManager)
         .totalDifficulty(td)
+        .capability(EthProtocol.ETH68)
         .build();
   }
 
@@ -337,6 +134,7 @@ public class EthProtocolManagerTestUtil {
         .ethProtocolManager(ethProtocolManager)
         .totalDifficulty(td)
         .estimatedHeight(estimatedHeight)
+        .capability(EthProtocol.ETH68)
         .build();
   }
 
@@ -348,6 +146,18 @@ public class EthProtocolManagerTestUtil {
         .ethProtocolManager(ethProtocolManager)
         .totalDifficulty(td)
         .estimatedHeight(estimatedHeight)
+        .capability(EthProtocol.ETH68)
+        .build();
+  }
+
+  public static RespondingEthPeer createPeer(
+      final EthProtocolManager ethProtocolManager,
+      final OptionalLong estimatedHeight,
+      final PeerValidator... validators) {
+    return RespondingEthPeer.builder()
+        .ethProtocolManager(ethProtocolManager)
+        .estimatedHeight(estimatedHeight)
+        .peerValidators(validators)
         .build();
   }
 
@@ -360,6 +170,7 @@ public class EthProtocolManagerTestUtil {
         .ethProtocolManager(ethProtocolManager)
         .totalDifficulty(td)
         .estimatedHeight(estimatedHeight)
+        .capability(EthProtocol.ETH68)
         .peerValidators(validators)
         .build();
   }
@@ -373,6 +184,17 @@ public class EthProtocolManagerTestUtil {
     return RespondingEthPeer.builder()
         .ethProtocolManager(ethProtocolManager)
         .estimatedHeight(estimatedHeight)
+        .build();
+  }
+
+  public static RespondingEthPeer createPeer(
+      final EthProtocolManager ethProtocolManager,
+      final SnapProtocolManager snapProtocolManager,
+      final long estimatedHeight) {
+    return RespondingEthPeer.builder()
+        .ethProtocolManager(ethProtocolManager)
+        .estimatedHeight(estimatedHeight)
+        .snapProtocolManager(snapProtocolManager)
         .build();
   }
 
@@ -395,6 +217,21 @@ public class EthProtocolManagerTestUtil {
         .totalDifficulty(head.getTotalDifficulty())
         .chainHeadHash(head.getHash())
         .estimatedHeight(blockchain.getChainHeadBlockNumber())
+        .build();
+  }
+
+  public static RespondingEthPeer createPeer(
+      final EthProtocolManager ethProtocolManager,
+      final Difficulty td,
+      final int estimatedHeight,
+      final boolean isServingSnap,
+      final boolean addToEthPeers) {
+    return RespondingEthPeer.builder()
+        .ethProtocolManager(ethProtocolManager)
+        .totalDifficulty(td)
+        .estimatedHeight(estimatedHeight)
+        .isServingSnap(isServingSnap)
+        .addToEthPeers(addToEthPeers)
         .build();
   }
 }

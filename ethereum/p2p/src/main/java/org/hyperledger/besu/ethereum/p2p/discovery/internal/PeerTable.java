@@ -19,6 +19,7 @@ import static java.util.stream.Collectors.toList;
 
 import org.hyperledger.besu.crypto.Hash;
 import org.hyperledger.besu.ethereum.p2p.discovery.DiscoveryPeer;
+import org.hyperledger.besu.ethereum.p2p.discovery.Endpoint;
 import org.hyperledger.besu.ethereum.p2p.discovery.PeerDiscoveryStatus;
 import org.hyperledger.besu.ethereum.p2p.discovery.internal.PeerTable.AddResult.AddOutcome;
 import org.hyperledger.besu.ethereum.p2p.peers.Peer;
@@ -30,8 +31,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import com.google.common.hash.BloomFilter;
 import org.apache.tuweni.bytes.Bytes;
 
@@ -51,29 +55,30 @@ public class PeerTable {
   private final Map<Bytes, Integer> distanceCache;
   private BloomFilter<Bytes> idBloom;
   private int evictionCnt = 0;
+  private final Cache<String, Integer> unresponsiveIPs;
 
   /**
    * Builds a new peer table, where distance is calculated using the provided nodeId as a baseline.
    *
    * @param nodeId The ID of the node where this peer table is stored.
-   * @param bucketSize The maximum length of each k-bucket.
    */
-  public PeerTable(final Bytes nodeId, final int bucketSize) {
+  public PeerTable(final Bytes nodeId) {
     this.keccak256 = Hash.keccak256(nodeId);
     this.table =
         Stream.generate(() -> new Bucket(DEFAULT_BUCKET_SIZE))
             .limit(N_BUCKETS + 1)
             .toArray(Bucket[]::new);
     this.distanceCache = new ConcurrentHashMap<>();
-    this.maxEntriesCnt = N_BUCKETS * bucketSize;
+    this.maxEntriesCnt = N_BUCKETS * DEFAULT_BUCKET_SIZE;
+    this.unresponsiveIPs =
+        CacheBuilder.newBuilder()
+            .maximumSize(maxEntriesCnt)
+            .expireAfterWrite(15L, TimeUnit.MINUTES)
+            .build();
 
     // A bloom filter with 4096 expected insertions of 64-byte keys with a 0.1% false positive
     // probability yields a memory footprint of ~7.5kb.
     buildBloomFilter();
-  }
-
-  public PeerTable(final Bytes nodeId) {
-    this(nodeId, DEFAULT_BUCKET_SIZE);
   }
 
   /**
@@ -83,11 +88,12 @@ public class PeerTable {
    * @return The stored representation.
    */
   public Optional<DiscoveryPeer> get(final PeerId peer) {
-    if (!idBloom.mightContain(peer.getId())) {
+    final Bytes peerId = peer.getId();
+    if (!idBloom.mightContain(peerId)) {
       return Optional.empty();
     }
     final int distance = distanceFrom(peer);
-    return table[distance].getAndTouch(peer.getId());
+    return table[distance].getAndTouch(peerId);
   }
 
   /**
@@ -101,6 +107,7 @@ public class PeerTable {
    *   <li>the operation failed because the k-bucket was full, in which case a candidate is proposed
    *       for eviction.
    *   <li>the operation failed because the peer already existed.
+   *   <li>the operation failed because the IP address is invalid.
    * </ul>
    *
    * @param peer The peer to add.
@@ -108,6 +115,9 @@ public class PeerTable {
    * @see AddOutcome
    */
   public AddResult tryAdd(final DiscoveryPeer peer) {
+    if (isIpAddressInvalid(peer.getEndpoint())) {
+      return AddResult.invalid();
+    }
     final Bytes id = peer.getId();
     final int distance = distanceFrom(peer);
 
@@ -204,6 +214,20 @@ public class PeerTable {
     return Arrays.stream(table).flatMap(e -> e.getPeers().stream());
   }
 
+  public boolean isIpAddressInvalid(final Endpoint endpoint) {
+    final String key = getKey(endpoint);
+    return unresponsiveIPs.getIfPresent(key) != null;
+  }
+
+  public void invalidateIP(final Endpoint endpoint) {
+    final String key = getKey(endpoint);
+    unresponsiveIPs.put(key, Integer.MAX_VALUE);
+  }
+
+  private static String getKey(final Endpoint endpoint) {
+    return endpoint.getHost() + ":" + endpoint.getFunctionalTcpPort();
+  }
+
   /**
    * Calculates the XOR distance between the keccak-256 hashes of our node ID and the provided
    * {@link DiscoveryPeer}.
@@ -220,6 +244,7 @@ public class PeerTable {
 
   /** A class that encapsulates the result of a peer addition to the table. */
   public static class AddResult {
+
     /** The outcome of the operation. */
     public enum AddOutcome {
 
@@ -233,7 +258,10 @@ public class PeerTable {
       ALREADY_EXISTED,
 
       /** The caller requested to add ourselves. */
-      SELF
+      SELF,
+
+      /** The peer was not added because the IP address is invalid. */
+      INVALID
     }
 
     private final AddOutcome outcome;
@@ -258,6 +286,10 @@ public class PeerTable {
 
     static AddResult self() {
       return new AddResult(AddOutcome.SELF, null);
+    }
+
+    public static AddResult invalid() {
+      return new AddResult((AddOutcome.INVALID), null);
     }
 
     public AddOutcome getOutcome() {

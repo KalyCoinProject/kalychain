@@ -16,20 +16,20 @@ package org.hyperledger.besu.ethereum.p2p.discovery;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static java.util.Arrays.asList;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.forkid.ForkId;
 import org.hyperledger.besu.ethereum.forkid.ForkIdManager;
 import org.hyperledger.besu.ethereum.p2p.config.DiscoveryConfiguration;
 import org.hyperledger.besu.ethereum.p2p.discovery.internal.MockPeerDiscoveryAgent;
-import org.hyperledger.besu.ethereum.p2p.discovery.internal.Packet;
 import org.hyperledger.besu.ethereum.p2p.discovery.internal.PacketType;
-import org.hyperledger.besu.ethereum.p2p.discovery.internal.PingPacketData;
-import org.hyperledger.besu.ethereum.p2p.discovery.internal.PongPacketData;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.Packet;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.PacketPackage;
 import org.hyperledger.besu.ethereum.p2p.peers.EnodeURLImpl;
 import org.hyperledger.besu.ethereum.p2p.peers.Peer;
 import org.hyperledger.besu.ethereum.p2p.permissions.PeerPermissions;
@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -98,22 +99,34 @@ public class PeerDiscoveryTestHelper {
   }
 
   public Packet createPingPacket(
-      final MockPeerDiscoveryAgent fromAgent, final MockPeerDiscoveryAgent toAgent) {
-    return Packet.create(
-        PacketType.PING,
-        PingPacketData.create(
-            Optional.of(fromAgent.getAdvertisedPeer().get().getEndpoint()),
-            toAgent.getAdvertisedPeer().get().getEndpoint(),
-            UInt64.ONE),
-        fromAgent.getNodeKey());
+      final MockPeerDiscoveryAgent fromAgent,
+      final MockPeerDiscoveryAgent toAgent,
+      final PacketPackage packetPackage) {
+    return packetPackage
+        .packetFactory()
+        .create(
+            PacketType.PING,
+            packetPackage
+                .pingPacketDataFactory()
+                .create(
+                    Optional.of(fromAgent.getAdvertisedPeer().get().getEndpoint()),
+                    toAgent.getAdvertisedPeer().get().getEndpoint(),
+                    UInt64.ONE),
+            fromAgent.getNodeKey());
   }
 
-  public Packet createPongPacket(final MockPeerDiscoveryAgent toAgent, final Hash pingHash) {
-    return Packet.create(
-        PacketType.PONG,
-        PongPacketData.create(
-            toAgent.getAdvertisedPeer().get().getEndpoint(), pingHash, UInt64.ONE),
-        toAgent.getNodeKey());
+  public Packet createPongPacket(
+      final MockPeerDiscoveryAgent toAgent,
+      final Hash pingHash,
+      final PacketPackage packetPackage) {
+    return packetPackage
+        .packetFactory()
+        .create(
+            PacketType.PONG,
+            packetPackage
+                .pongPacketDataFactory()
+                .create(toAgent.getAdvertisedPeer().get().getEndpoint(), pingHash, UInt64.ONE),
+            toAgent.getNodeKey());
   }
 
   public AgentBuilder agentBuilder() {
@@ -128,7 +141,7 @@ public class PeerDiscoveryTestHelper {
   }
 
   /**
-   * Starts multiple discovery agents with the provided boostrap peers.
+   * Starts multiple discovery agents with the provided bootstrap peers.
    *
    * @param count the number of agents to start
    * @param bootstrapPeers the list of bootstrap peers
@@ -161,6 +174,14 @@ public class PeerDiscoveryTestHelper {
 
   public MockPeerDiscoveryAgent startDiscoveryAgent(final DiscoveryPeer... bootstrapPeers) {
     final AgentBuilder agentBuilder = agentBuilder().bootstrapPeers(bootstrapPeers);
+
+    return startDiscoveryAgent(agentBuilder);
+  }
+
+  public MockPeerDiscoveryAgent startDiscoveryAgent(
+      final String advertisedHost, final DiscoveryPeer... bootstrapPeers) {
+    final AgentBuilder agentBuilder =
+        agentBuilder().bootstrapPeers(bootstrapPeers).advertisedHost(advertisedHost);
 
     return startDiscoveryAgent(agentBuilder);
   }
@@ -210,7 +231,7 @@ public class PeerDiscoveryTestHelper {
     private final AtomicInteger nextAvailablePort;
 
     private List<EnodeURL> bootnodes = Collections.emptyList();
-    private boolean active = true;
+    private boolean enabled = true;
     private PeerPermissions peerPermissions = PeerPermissions.noop();
     private String advertisedHost = "127.0.0.1";
     private OptionalInt bindPort = OptionalInt.empty();
@@ -248,7 +269,7 @@ public class PeerDiscoveryTestHelper {
     }
 
     public AgentBuilder active(final boolean active) {
-      this.active = active;
+      this.enabled = active;
       return this;
     }
 
@@ -286,21 +307,19 @@ public class PeerDiscoveryTestHelper {
       config.setBootnodes(bootnodes);
       config.setAdvertisedHost(advertisedHost);
       config.setBindPort(port);
-      config.setActive(active);
+      config.setEnabled(enabled);
+      config.setFilterOnEnrForkId(false);
 
       final ForkIdManager mockForkIdManager = mock(ForkIdManager.class);
       final ForkId forkId = new ForkId(Bytes.EMPTY, Bytes.EMPTY);
       when(mockForkIdManager.getForkIdForChainHead()).thenReturn(forkId);
       when(mockForkIdManager.peerCheck(forkId)).thenReturn(true);
+      final RlpxAgent rlpxAgent = mock(RlpxAgent.class);
+      when(rlpxAgent.connect(any()))
+          .thenReturn(CompletableFuture.failedFuture(new RuntimeException()));
       final MockPeerDiscoveryAgent mockPeerDiscoveryAgent =
           new MockPeerDiscoveryAgent(
-              nodeKey,
-              config,
-              peerPermissions,
-              agents,
-              natService,
-              mockForkIdManager,
-              mock(RlpxAgent.class));
+              nodeKey, config, peerPermissions, agents, natService, mockForkIdManager, rlpxAgent);
       mockPeerDiscoveryAgent.getAdvertisedPeer().ifPresent(peer -> peer.setNodeRecord(nodeRecord));
 
       return mockPeerDiscoveryAgent;

@@ -35,6 +35,7 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Base bft controller. */
 public abstract class BaseBftController implements BftEventHandler {
 
   private static final Logger LOG = LoggerFactory.getLogger(BaseBftController.class);
@@ -43,29 +44,53 @@ public abstract class BaseBftController implements BftEventHandler {
   private final FutureMessageBuffer futureMessageBuffer;
   private final Gossiper gossiper;
   private final MessageTracker duplicateMessageTracker;
-  private final SynchronizerUpdater sychronizerUpdater;
+  private final SynchronizerUpdater synchronizerUpdater;
 
   private final AtomicBoolean started = new AtomicBoolean(false);
 
+  /**
+   * Instantiates a new Base bft controller.
+   *
+   * @param blockchain the blockchain
+   * @param bftFinalState the bft final state
+   * @param gossiper the gossiper
+   * @param duplicateMessageTracker the duplicate message tracker
+   * @param futureMessageBuffer the future message buffer
+   * @param synchronizerUpdater the synchronizer updater
+   */
   protected BaseBftController(
       final Blockchain blockchain,
       final BftFinalState bftFinalState,
       final Gossiper gossiper,
       final MessageTracker duplicateMessageTracker,
       final FutureMessageBuffer futureMessageBuffer,
-      final SynchronizerUpdater sychronizerUpdater) {
+      final SynchronizerUpdater synchronizerUpdater) {
     this.blockchain = blockchain;
     this.bftFinalState = bftFinalState;
     this.futureMessageBuffer = futureMessageBuffer;
     this.gossiper = gossiper;
     this.duplicateMessageTracker = duplicateMessageTracker;
-    this.sychronizerUpdater = sychronizerUpdater;
+    this.synchronizerUpdater = synchronizerUpdater;
   }
 
   @Override
   public void start() {
     if (started.compareAndSet(false, true)) {
       startNewHeightManager(blockchain.getChainHeadHeader());
+    } else {
+      // In normal circumstances the height manager should only be started once. If the caller
+      // has stopped the height manager (e.g. while sync completes) they must call stop() before
+      // starting the height manager again.
+      throw new IllegalStateException(
+          "Attempt to start new height manager without stopping previous manager");
+    }
+  }
+
+  @Override
+  public void stop() {
+    if (started.compareAndSet(true, false)) {
+      stopCurrentHeightManager(blockchain.getChainHeadHeader());
+      LOG.debug("Height manager stopped");
     }
   }
 
@@ -80,8 +105,21 @@ public abstract class BaseBftController implements BftEventHandler {
     }
   }
 
+  /**
+   * Handle message.
+   *
+   * @param message the message
+   */
   protected abstract void handleMessage(final Message message);
 
+  /**
+   * Consume message.
+   *
+   * @param <P> the type parameter of BftMessage
+   * @param message the message
+   * @param bftMessage the bft message
+   * @param handleMessage the handle message
+   */
   protected <P extends BftMessage<?>> void consumeMessage(
       final Message message, final P bftMessage, final Consumer<P> handleMessage) {
     LOG.trace("Received BFT {} message", bftMessage.getClass().getSimpleName());
@@ -138,14 +176,14 @@ public abstract class BaseBftController implements BftEventHandler {
 
   @Override
   public void handleBlockTimerExpiry(final BlockTimerExpiry blockTimerExpiry) {
-    final ConsensusRoundIdentifier roundIndentifier = blockTimerExpiry.getRoundIndentifier();
-    if (isMsgForCurrentHeight(roundIndentifier)) {
-      getCurrentHeightManager().handleBlockTimerExpiry(roundIndentifier);
+    final ConsensusRoundIdentifier roundIdentifier = blockTimerExpiry.getRoundIdentifier();
+    if (isMsgForCurrentHeight(roundIdentifier)) {
+      getCurrentHeightManager().handleBlockTimerExpiry(roundIdentifier);
     } else {
       LOG.trace(
           "Block timer event discarded as it is not for current block height chainHeight={} eventHeight={}",
           getCurrentHeightManager().getChainHeight(),
-          roundIndentifier.getSequenceNumber());
+          roundIdentifier.getSequenceNumber());
     }
   }
 
@@ -168,9 +206,26 @@ public abstract class BaseBftController implements BftEventHandler {
     }
   }
 
+  /**
+   * Create new height manager.
+   *
+   * @param parentHeader the parent header
+   */
   protected abstract void createNewHeightManager(final BlockHeader parentHeader);
 
+  /**
+   * Gets current height manager.
+   *
+   * @return the current height manager
+   */
   protected abstract BaseBlockHeightManager getCurrentHeightManager();
+
+  /**
+   * Stop the current height manager by creating a no-op block height manager.
+   *
+   * @param parentHeader the parent header
+   */
+  protected abstract void stopCurrentHeightManager(final BlockHeader parentHeader);
 
   private void startNewHeightManager(final BlockHeader parentHeader) {
     createNewHeightManager(parentHeader);
@@ -187,7 +242,7 @@ public abstract class BaseBftController implements BftEventHandler {
       futureMessageBuffer.addMessage(msgRoundIdentifier.getSequenceNumber(), rawMsg);
       // Notify the synchronizer the transmitting peer must have the parent block to the received
       // message's target height.
-      sychronizerUpdater.updatePeerChainState(
+      synchronizerUpdater.updatePeerChainState(
           msgRoundIdentifier.getSequenceNumber() - 1L, rawMsg.getConnection());
     } else {
       LOG.trace(

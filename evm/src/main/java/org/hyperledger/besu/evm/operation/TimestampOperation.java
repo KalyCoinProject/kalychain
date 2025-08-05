@@ -17,20 +17,25 @@ package org.hyperledger.besu.evm.operation;
 import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
+import org.hyperledger.besu.evm.internal.Words;
 
-import org.apache.tuweni.units.bigints.UInt256;
-
+/** The Timestamp operation. */
 public class TimestampOperation extends AbstractFixedCostOperation {
 
+  /**
+   * Instantiates a new Timestamp operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public TimestampOperation(final GasCalculator gasCalculator) {
-    super(0x42, "TIMESTAMP", 0, 1, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
+    super(0x42, "TIMESTAMP", 0, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
   }
 
   @Override
   public Operation.OperationResult executeFixedCostOperation(
       final MessageFrame frame, final EVM evm) {
     final long timestamp = frame.getBlockValues().getTimestamp();
-    frame.pushStackItem(UInt256.valueOf(timestamp));
+    frame.pushStackItem(Words.longBytes(timestamp));
 
     return successResponse;
   }

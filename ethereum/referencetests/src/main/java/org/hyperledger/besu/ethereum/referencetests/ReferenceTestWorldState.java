@@ -11,19 +11,18 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.ethereum.referencetests;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
-import org.hyperledger.besu.ethereum.storage.keyvalue.WorldStateKeyValueStorage;
-import org.hyperledger.besu.ethereum.storage.keyvalue.WorldStatePreimageKeyValueStorage;
-import org.hyperledger.besu.ethereum.worldstate.DefaultMutableWorldState;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.MutableWorldState;
 import org.hyperledger.besu.evm.account.MutableAccount;
+import org.hyperledger.besu.evm.internal.EvmConfiguration;
 import org.hyperledger.besu.evm.worldstate.WorldUpdater;
-import org.hyperledger.besu.services.kvstore.InMemoryKeyValueStorage;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -35,9 +34,10 @@ import org.apache.tuweni.units.bigints.UInt256;
 
 /** Represent a worldState for testing. */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public class ReferenceTestWorldState extends DefaultMutableWorldState {
+public interface ReferenceTestWorldState extends MutableWorldState {
 
-  public static class AccountMock {
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  class AccountMock {
     private final long nonce;
     private final Wei balance;
     private final Bytes code;
@@ -56,10 +56,10 @@ public class ReferenceTestWorldState extends DefaultMutableWorldState {
         @JsonProperty("balance") final String balance,
         @JsonProperty("storage") final Map<String, String> storage,
         @JsonProperty("code") final String code) {
-      this.nonce = Bytes.fromHexStringLenient(nonce).toLong();
-      this.balance = Wei.fromHexString(balance);
-      this.code = Bytes.fromHexString(code);
-      this.storage = parseStorage(storage);
+      this.nonce = nonce == null ? 0 : Bytes.fromHexStringLenient(nonce).toLong();
+      this.balance = balance == null ? Wei.ZERO : Wei.fromHexString(balance);
+      this.code = code == null ? Bytes.EMPTY : Bytes.fromHexString(code);
+      this.storage = storage == null ? Map.of() : parseStorage(storage);
     }
 
     public long getNonce() {
@@ -81,7 +81,7 @@ public class ReferenceTestWorldState extends DefaultMutableWorldState {
 
   static void insertAccount(
       final WorldUpdater updater, final Address address, final AccountMock toCopy) {
-    final MutableAccount account = updater.getOrCreate(address).getMutable();
+    final MutableAccount account = updater.getOrCreate(address);
     account.setNonce(toCopy.getNonce());
     account.setBalance(toCopy.getBalance());
     account.setCode(toCopy.getCode());
@@ -90,22 +90,19 @@ public class ReferenceTestWorldState extends DefaultMutableWorldState {
     }
   }
 
+  ReferenceTestWorldState copy();
+
+  Collection<Exception> processExtraStateStorageFormatValidation(final BlockHeader blockHeader);
+
   @JsonCreator
-  public static ReferenceTestWorldState create(final Map<String, AccountMock> accounts) {
-    final ReferenceTestWorldState worldState = new ReferenceTestWorldState();
-    final WorldUpdater updater = worldState.updater();
-
-    for (final Map.Entry<String, AccountMock> entry : accounts.entrySet()) {
-      insertAccount(updater, Address.fromHexString(entry.getKey()), entry.getValue());
-    }
-
-    updater.commit();
-    return worldState;
+  static ReferenceTestWorldState create(final Map<String, AccountMock> accounts) {
+    // delegate to a Bonsai reference test world state:
+    return create(accounts, EvmConfiguration.DEFAULT);
   }
 
-  public ReferenceTestWorldState() {
-    super(
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage()),
-        new WorldStatePreimageKeyValueStorage(new InMemoryKeyValueStorage()));
+  static ReferenceTestWorldState create(
+      final Map<String, AccountMock> accounts, final EvmConfiguration evmConfiguration) {
+    // delegate to a Bonsai reference test world state:
+    return BonsaiReferenceTestWorldState.create(accounts, evmConfiguration);
   }
 }

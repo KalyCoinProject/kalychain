@@ -18,12 +18,11 @@ import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.permissioning.AccountLocalConfigPermissioningController;
-import org.hyperledger.besu.ethereum.permissioning.GoQuorumQip714Gate;
-import org.hyperledger.besu.ethereum.permissioning.TransactionSmartContractPermissioningController;
+import org.hyperledger.besu.plugin.services.permissioning.TransactionPermissioningProvider;
 
+import java.util.List;
 import java.util.Optional;
 
-import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,59 +32,43 @@ public class AccountPermissioningController {
 
   private final Optional<AccountLocalConfigPermissioningController>
       accountLocalConfigPermissioningController;
-  private final Optional<TransactionSmartContractPermissioningController>
-      transactionSmartContractPermissioningController;
-  private final Optional<GoQuorumQip714Gate> goQuorumQip714Gate;
+  private final List<TransactionPermissioningProvider> pluginProviders;
 
   public AccountPermissioningController(
       final Optional<AccountLocalConfigPermissioningController>
           accountLocalConfigPermissioningController,
-      final Optional<TransactionSmartContractPermissioningController>
-          transactionSmartContractPermissioningController,
-      final Optional<GoQuorumQip714Gate> goQuorumQip714Gate) {
+      final List<TransactionPermissioningProvider> pluginProviders) {
     this.accountLocalConfigPermissioningController = accountLocalConfigPermissioningController;
-    this.transactionSmartContractPermissioningController =
-        transactionSmartContractPermissioningController;
-    this.goQuorumQip714Gate = goQuorumQip714Gate;
+    this.pluginProviders = pluginProviders;
   }
 
-  public boolean isPermitted(
-      final Transaction transaction,
-      final boolean includeLocalCheck,
-      final boolean includeOnchainCheck) {
-    final boolean checkPermissions =
-        goQuorumQip714Gate.map(GoQuorumQip714Gate::shouldCheckPermissions).orElse(true);
-    if (!checkPermissions) {
-      LOG.trace("Skipping account permissioning check due to qip714block config");
-
-      return true;
-    }
+  public boolean isPermitted(final Transaction transaction, final boolean includeLocalCheck) {
 
     final Hash transactionHash = transaction.getHash();
     final Address sender = transaction.getSender();
 
-    LOG.trace("Account permissioning: Checking transaction {}", transactionHash);
+    LOG.trace("Transaction Rejector: Checking transaction {}", transactionHash);
 
-    boolean permittedLocal = true;
-    boolean permittedOnchain = true;
+    boolean permitted = true;
 
     if (includeLocalCheck) {
-      permittedLocal =
+      permitted =
           accountLocalConfigPermissioningController
               .map(c -> c.isPermitted(transaction))
               .orElse(true);
     }
 
-    if (includeOnchainCheck) {
-      permittedOnchain =
-          transactionSmartContractPermissioningController
-              .map(c -> c.isPermitted(transaction))
-              .orElse(true);
-    }
-
-    final boolean permitted = permittedLocal && permittedOnchain;
-
     if (permitted) {
+      for (TransactionPermissioningProvider provider : this.pluginProviders) {
+        if (!provider.isPermitted(transaction)) {
+          LOG.trace(
+              "Transaction Rejector - {}: Rejected transaction {} from {}",
+              provider.getClass().getSimpleName(),
+              transactionHash,
+              sender);
+          return false;
+        }
+      }
       LOG.trace("Account permissioning: Permitted transaction {} from {}", transactionHash, sender);
     } else {
       LOG.trace("Account permissioning: Rejected transaction {} from {}", transactionHash, sender);
@@ -97,11 +80,5 @@ public class AccountPermissioningController {
   public Optional<AccountLocalConfigPermissioningController>
       getAccountLocalConfigPermissioningController() {
     return accountLocalConfigPermissioningController;
-  }
-
-  @VisibleForTesting
-  Optional<TransactionSmartContractPermissioningController>
-      getTransactionSmartContractPermissioningController() {
-    return transactionSmartContractPermissioningController;
   }
 }

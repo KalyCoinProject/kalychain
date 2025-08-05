@@ -14,22 +14,29 @@
  */
 package org.hyperledger.besu.consensus.common;
 
-import org.hyperledger.besu.crypto.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
-import org.hyperledger.besu.plugin.data.Address;
 import org.hyperledger.besu.plugin.data.BlockHeader;
-import org.hyperledger.besu.plugin.services.metrics.PoAMetricsService;
 import org.hyperledger.besu.plugin.services.query.PoaQueryService;
 
 import java.util.ArrayList;
 import java.util.Collection;
 
-public class PoaQueryServiceImpl implements PoaQueryService, PoAMetricsService {
+/** The Poa query service. */
+public class PoaQueryServiceImpl implements PoaQueryService {
 
   private final BlockInterface blockInterface;
   private final Blockchain blockchain;
   private final NodeKey nodeKey;
 
+  /**
+   * Instantiates a new Poa query service.
+   *
+   * @param blockInterface the block interface
+   * @param blockchain the blockchain
+   * @param nodeKey the node key
+   */
   public PoaQueryServiceImpl(
       final BlockInterface blockInterface, final Blockchain blockchain, final NodeKey nodeKey) {
     this.blockInterface = blockInterface;
@@ -47,6 +54,11 @@ public class PoaQueryServiceImpl implements PoaQueryService, PoAMetricsService {
     return this.blockInterface.getProposerOfBlock(header);
   }
 
+  /**
+   * Gets blockchain.
+   *
+   * @return the blockchain
+   */
   protected Blockchain getBlockchain() {
     return blockchain;
   }

@@ -25,7 +25,7 @@ import java.util.List;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class GetPooledTransactionsMessageTest {
 
@@ -33,13 +33,13 @@ public class GetPooledTransactionsMessageTest {
   public void roundTripGetPooledTransactionsMessage() {
     List<Hash> hashes = Arrays.asList(Hash.wrap(Bytes32.random()));
     final GetPooledTransactionsMessage msg = GetPooledTransactionsMessage.create(hashes);
-    assertThat(msg.getCode()).isEqualTo(EthPV65.GET_POOLED_TRANSACTIONS);
+    assertThat(msg.getCode()).isEqualTo(EthProtocolMessages.GET_POOLED_TRANSACTIONS);
     assertThat(msg.pooledTransactions()).isEqualTo(hashes);
   }
 
   @Test
   public void readFromMessageWithWrongCodeThrows() {
-    final RawMessage rawMsg = new RawMessage(EthPV62.BLOCK_HEADERS, Bytes.of(0));
+    final RawMessage rawMsg = new RawMessage(EthProtocolMessages.BLOCK_HEADERS, Bytes.of(0));
 
     assertThatExceptionOfType(IllegalArgumentException.class)
         .isThrownBy(() -> GetPooledTransactionsMessage.readFrom(rawMsg));

@@ -17,22 +17,34 @@ package org.hyperledger.besu.consensus.common.jsonrpc;
 import org.hyperledger.besu.consensus.common.validator.ValidatorProvider;
 import org.hyperledger.besu.consensus.common.validator.VoteType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/** The Abstract vote proposer method. */
 public class AbstractVoteProposerMethod {
 
   private final ValidatorProvider validatorProvider;
 
+  /**
+   * Instantiates a new Abstract vote proposer method.
+   *
+   * @param validatorProvider the validator provider
+   */
   public AbstractVoteProposerMethod(final ValidatorProvider validatorProvider) {
     this.validatorProvider = validatorProvider;
   }
 
+  /**
+   * Response.
+   *
+   * @param requestContext the request context
+   * @return the json rpc response
+   */
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
     if (validatorProvider.getVoteProviderAtHead().isPresent()) {
       final Map<String, Boolean> proposals =
@@ -45,7 +57,7 @@ public class AbstractVoteProposerMethod {
       return new JsonRpcSuccessResponse(requestContext.getRequest().getId(), proposals);
     } else {
       return new JsonRpcErrorResponse(
-          requestContext.getRequest().getId(), JsonRpcError.METHOD_NOT_ENABLED);
+          requestContext.getRequest().getId(), RpcErrorType.METHOD_NOT_ENABLED);
     }
   }
 }

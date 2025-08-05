@@ -16,6 +16,7 @@ package org.hyperledger.besu.consensus.ibft.statemachine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -29,10 +30,10 @@ import org.hyperledger.besu.consensus.ibft.messagewrappers.Proposal;
 import org.hyperledger.besu.consensus.ibft.payload.MessageFactory;
 import org.hyperledger.besu.consensus.ibft.payload.PreparePayload;
 import org.hyperledger.besu.consensus.ibft.validation.MessageValidator;
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
 import org.hyperledger.besu.crypto.SignatureAlgorithm;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.Block;
@@ -44,13 +45,13 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 import com.google.common.collect.Lists;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class RoundStateTest {
 
   private final List<NodeKey> validatorKeys = Lists.newArrayList();
@@ -59,11 +60,13 @@ public class RoundStateTest {
 
   private final List<Address> validators = Lists.newArrayList();
 
+  private final Hash blockHash = Hash.fromHexStringLenient("1");
+
   @Mock private MessageValidator messageValidator;
 
   @Mock private Block block;
 
-  @Before
+  @BeforeEach
   public void setup() {
     for (int i = 0; i < 3; i++) {
       final NodeKey newNodeKey = NodeKeyUtils.generate();
@@ -71,7 +74,7 @@ public class RoundStateTest {
       validators.add(Util.publicKeyToAddress(newNodeKey.getPublicKey()));
       validatorMessageFactories.add(new MessageFactory(newNodeKey));
     }
-    when(block.getHash()).thenReturn(Hash.fromHexStringLenient("1"));
+    lenient().when(block.getHash()).thenReturn(blockHash);
   }
 
   @Test
@@ -136,7 +139,7 @@ public class RoundStateTest {
             .get(0)
             .createCommit(
                 roundIdentifier,
-                block.getHash(),
+                blockHash,
                 SignatureAlgorithmFactory.getInstance()
                     .createSignature(BigInteger.ONE, BigInteger.ONE, (byte) 1));
 
@@ -154,10 +157,10 @@ public class RoundStateTest {
     final RoundState roundState = new RoundState(roundIdentifier, 3, messageValidator);
 
     final Prepare firstPrepare =
-        validatorMessageFactories.get(1).createPrepare(roundIdentifier, block.getHash());
+        validatorMessageFactories.get(1).createPrepare(roundIdentifier, blockHash);
 
     final Prepare secondPrepare =
-        validatorMessageFactories.get(2).createPrepare(roundIdentifier, block.getHash());
+        validatorMessageFactories.get(2).createPrepare(roundIdentifier, blockHash);
 
     roundState.addPrepareMessage(firstPrepare);
     assertThat(roundState.isPrepared()).isFalse();
@@ -180,10 +183,10 @@ public class RoundStateTest {
   @Test
   public void invalidPriorPrepareMessagesAreDiscardedUponSubsequentProposal() {
     final Prepare firstPrepare =
-        validatorMessageFactories.get(1).createPrepare(roundIdentifier, block.getHash());
+        validatorMessageFactories.get(1).createPrepare(roundIdentifier, blockHash);
 
     final Prepare secondPrepare =
-        validatorMessageFactories.get(2).createPrepare(roundIdentifier, block.getHash());
+        validatorMessageFactories.get(2).createPrepare(roundIdentifier, blockHash);
 
     // RoundState has a quorum size of 3, meaning 1 proposal and 2 prepare are required to be
     // 'prepared'.
@@ -211,10 +214,10 @@ public class RoundStateTest {
     final RoundState roundState = new RoundState(roundIdentifier, 2, messageValidator);
 
     final Prepare firstPrepare =
-        validatorMessageFactories.get(1).createPrepare(roundIdentifier, block.getHash());
+        validatorMessageFactories.get(1).createPrepare(roundIdentifier, blockHash);
 
     final Prepare secondPrepare =
-        validatorMessageFactories.get(2).createPrepare(roundIdentifier, block.getHash());
+        validatorMessageFactories.get(2).createPrepare(roundIdentifier, blockHash);
 
     final Proposal proposal =
         validatorMessageFactories.get(0).createProposal(roundIdentifier, block, Optional.empty());
@@ -246,7 +249,7 @@ public class RoundStateTest {
             .get(1)
             .createCommit(
                 roundIdentifier,
-                block.getHash(),
+                blockHash,
                 signatureAlgorithm.createSignature(BigInteger.ONE, BigInteger.TEN, (byte) 1));
 
     final Commit secondCommit =
@@ -254,7 +257,7 @@ public class RoundStateTest {
             .get(2)
             .createCommit(
                 roundIdentifier,
-                block.getHash(),
+                blockHash,
                 signatureAlgorithm.createSignature(BigInteger.TEN, BigInteger.TEN, (byte) 1));
 
     final Proposal proposal =
@@ -275,13 +278,13 @@ public class RoundStateTest {
     final RoundState roundState = new RoundState(roundIdentifier, 2, messageValidator);
 
     final Prepare firstPrepare =
-        validatorMessageFactories.get(1).createPrepare(roundIdentifier, block.getHash());
+        validatorMessageFactories.get(1).createPrepare(roundIdentifier, blockHash);
 
     final Prepare secondPrepare =
-        validatorMessageFactories.get(2).createPrepare(roundIdentifier, block.getHash());
+        validatorMessageFactories.get(2).createPrepare(roundIdentifier, blockHash);
 
     final Prepare duplicatePrepare =
-        validatorMessageFactories.get(2).createPrepare(roundIdentifier, block.getHash());
+        validatorMessageFactories.get(2).createPrepare(roundIdentifier, blockHash);
 
     final Proposal proposal =
         validatorMessageFactories.get(0).createProposal(roundIdentifier, block, Optional.empty());

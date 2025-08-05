@@ -16,29 +16,25 @@
 apply plugin: 'java-library'
 
 jar {
-  archiveBaseName = 'besu-metrics-core'
+  archiveBaseName = calculateArtifactId(project)
   manifest {
     attributes(
       'Specification-Title': archiveBaseName,
       'Specification-Version': project.version,
       'Implementation-Title': archiveBaseName,
-      'Implementation-Version': calculateVersion()
+      'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash
       )
   }
 }
-
-publishing {
-  publications {
-    mavenJava(MavenPublication) { artifactId 'metrics-core' }
-  }
-}
-
 
 dependencies {
   implementation project(':plugin-api')
   api 'org.slf4j:slf4j-api'
 
   implementation 'com.google.guava:guava'
+  implementation 'com.google.dagger:dagger'
+  implementation 'info.picocli:picocli'
   implementation 'io.grpc:grpc-netty'
   implementation 'io.grpc:grpc-core'
   implementation 'io.netty:netty-tcnative-boringssl-static'
@@ -46,16 +42,19 @@ dependencies {
   implementation 'io.netty:netty-all'
   implementation 'io.opentelemetry:opentelemetry-api'
   implementation 'io.opentelemetry:opentelemetry-sdk'
-  implementation 'io.opentelemetry:opentelemetry-semconv'
   implementation 'io.opentelemetry:opentelemetry-sdk-trace'
   implementation 'io.opentelemetry:opentelemetry-sdk-metrics'
   implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
   implementation 'io.opentelemetry:opentelemetry-sdk-extension-autoconfigure'
+  implementation 'io.opentelemetry.semconv:opentelemetry-semconv'
+  implementation 'io.opentelemetry.semconv:opentelemetry-semconv-incubating'
 
-  implementation 'io.prometheus:simpleclient'
-  implementation 'io.prometheus:simpleclient_common'
-  implementation 'io.prometheus:simpleclient_hotspot'
-  implementation 'io.prometheus:simpleclient_pushgateway'
+  implementation 'io.prometheus:prometheus-metrics-core'
+  implementation 'io.prometheus:prometheus-metrics-instrumentation-guava'
+  implementation 'io.prometheus:prometheus-metrics-instrumentation-jvm'
+  implementation 'io.prometheus:prometheus-metrics-exporter-httpserver'
+  implementation 'io.prometheus:prometheus-metrics-exporter-pushgateway'
+
   implementation 'io.vertx:vertx-core'
   implementation 'io.vertx:vertx-web'
 
@@ -63,14 +62,14 @@ dependencies {
   testImplementation project(':util')
 
   testImplementation 'com.squareup.okhttp3:okhttp'
-  testImplementation 'junit:junit'
   testImplementation 'org.assertj:assertj-core'
   testImplementation 'org.junit.jupiter:junit-jupiter'
   testImplementation 'org.mockito:mockito-core'
-
-  testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
+  testImplementation 'org.mockito:mockito-junit-jupiter'
 
   testSupportImplementation 'org.mockito:mockito-core'
+
+  annotationProcessor 'com.google.dagger:dagger-compiler'
 }
 
 

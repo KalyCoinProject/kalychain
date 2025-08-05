@@ -32,15 +32,32 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.methods.ApiGroupJsonRpcMethods;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 
 import java.util.Map;
 
+/** The Ibft json rpc methods. */
 public class IbftJsonRpcMethods extends ApiGroupJsonRpcMethods {
 
   private final ProtocolContext context;
+  private final ProtocolSchedule protocolSchedule;
+  private final MiningConfiguration miningConfiguration;
 
-  public IbftJsonRpcMethods(final ProtocolContext context) {
+  /**
+   * Instantiates a new Ibft json rpc methods.
+   *
+   * @param context the protocol context
+   * @param protocolSchedule the protocol schedule
+   * @param miningConfiguration the mining parameters
+   */
+  public IbftJsonRpcMethods(
+      final ProtocolContext context,
+      final ProtocolSchedule protocolSchedule,
+      final MiningConfiguration miningConfiguration) {
     this.context = context;
+    this.protocolSchedule = protocolSchedule;
+    this.miningConfiguration = miningConfiguration;
   }
 
   @Override
@@ -52,7 +69,8 @@ public class IbftJsonRpcMethods extends ApiGroupJsonRpcMethods {
   protected Map<String, JsonRpcMethod> create() {
     final MutableBlockchain blockchain = context.getBlockchain();
     final BlockchainQueries blockchainQueries =
-        new BlockchainQueries(blockchain, context.getWorldStateArchive());
+        new BlockchainQueries(
+            protocolSchedule, blockchain, context.getWorldStateArchive(), miningConfiguration);
     final BftContext bftContext = context.getConsensusContext(BftContext.class);
     final BlockInterface blockInterface = bftContext.getBlockInterface();
     final ValidatorProvider validatorProvider =

@@ -14,6 +14,8 @@
  */
 package org.hyperledger.besu.ethereum.p2p.discovery;
 
+import java.util.Locale;
+
 /** The status of a {@link DiscoveryPeer}, in relation to the peer discovery state machine. */
 public enum PeerDiscoveryStatus {
 
@@ -33,13 +35,10 @@ public enum PeerDiscoveryStatus {
    * We have successfully bonded with this {@link DiscoveryPeer}, and we are able to exchange
    * messages with them.
    */
-  BONDED,
-
-  /** We have requested the ENR record from this {@link DiscoveryPeer} */
-  ENR_REQUESTED;
+  BONDED;
 
   @Override
   public String toString() {
-    return name().toLowerCase();
+    return name().toLowerCase(Locale.ROOT);
   }
 }

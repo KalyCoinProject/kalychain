@@ -64,16 +64,25 @@ public class TrailingPeerLimiter implements BlockAddedObserver {
 
     while (!trailingPeers.isEmpty() && trailingPeers.size() > maxTrailingPeers) {
       final EthPeer peerToDisconnect = trailingPeers.remove(0);
-      LOG.debug("Enforcing trailing peers limit by disconnecting {}", peerToDisconnect);
-      peerToDisconnect.disconnect(DisconnectReason.TOO_MANY_PEERS);
+      LOG.atDebug()
+          .setMessage(
+              "Enforcing trailing peers limit (min height {}, max trailing peers {}) by disconnecting {}... with height {}")
+          .addArgument(minimumHeightToBeUpToDate)
+          .addArgument(maxTrailingPeers)
+          .addArgument(peerToDisconnect::getLoggableId)
+          .addArgument(
+              peerToDisconnect.chainState() == null
+                  ? "(no chain state)"
+                  : peerToDisconnect.chainState().getEstimatedHeight())
+          .log();
+      peerToDisconnect.disconnect(DisconnectReason.USELESS_PEER_TRAILING_PEER);
     }
   }
 
   @Override
   public void onBlockAdded(final BlockAddedEvent event) {
     if (event.isNewCanonicalHead()
-        && event.getBlock().getHeader().getNumber() % RECHECK_PEERS_WHEN_BLOCK_NUMBER_MULTIPLE_OF
-            == 0) {
+        && event.getHeader().getNumber() % RECHECK_PEERS_WHEN_BLOCK_NUMBER_MULTIPLE_OF == 0) {
       enforceTrailingPeerLimit();
     }
   }

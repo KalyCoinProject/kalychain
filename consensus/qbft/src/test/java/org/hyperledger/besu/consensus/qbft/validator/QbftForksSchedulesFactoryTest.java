@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -44,7 +44,7 @@ import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class QbftForksSchedulesFactoryTest
     extends BaseForksSchedulesFactoryTest<QbftConfigOptions, MutableQbftConfigOptions> {
@@ -63,6 +63,8 @@ public class QbftForksSchedulesFactoryTest
                 List.of("1", "2", "3"),
                 BftFork.BLOCK_PERIOD_SECONDS_KEY,
                 10,
+                BftFork.EMPTY_BLOCK_PERIOD_SECONDS_KEY,
+                60,
                 BftFork.BLOCK_REWARD_KEY,
                 "5",
                 QbftFork.VALIDATOR_SELECTION_MODE_KEY,
@@ -78,6 +80,7 @@ public class QbftForksSchedulesFactoryTest
 
     final Map<String, Object> forkOptions = new HashMap<>(configOptions.asMap());
     forkOptions.put(BftFork.BLOCK_PERIOD_SECONDS_KEY, 10);
+    forkOptions.put(BftFork.EMPTY_BLOCK_PERIOD_SECONDS_KEY, 60);
     forkOptions.put(BftFork.BLOCK_REWARD_KEY, "5");
     forkOptions.put(QbftFork.VALIDATOR_SELECTION_MODE_KEY, "5");
     forkOptions.put(QbftFork.VALIDATOR_CONTRACT_ADDRESS_KEY, "10");

@@ -19,7 +19,10 @@ import static java.lang.Integer.parseInt;
 
 import java.util.Objects;
 
+/** The Percentage utility. */
 public class Percentage {
+  /** Represent 0% */
+  public static final Percentage ZERO = new Percentage(0);
 
   private final int value;
 
@@ -40,15 +43,31 @@ public class Percentage {
     return fromInt(parseInt(str));
   }
 
+  /**
+   * Instantiate percentage.
+   *
+   * @param val the val
+   * @return the percentage
+   */
   public static Percentage fromInt(final int val) {
     checkArgument(val >= 0 && val <= 100);
     return new Percentage(val);
   }
 
+  /**
+   * Gets value.
+   *
+   * @return the value
+   */
   public int getValue() {
     return value;
   }
 
+  /**
+   * Gets value as float.
+   *
+   * @return the value as float
+   */
   public float getValueAsFloat() {
     return value;
   }

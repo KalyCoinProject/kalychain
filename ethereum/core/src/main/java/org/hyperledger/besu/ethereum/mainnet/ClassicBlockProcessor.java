@@ -41,13 +41,15 @@ public class ClassicBlockProcessor extends AbstractBlockProcessor {
       final Wei blockReward,
       final MiningBeneficiaryCalculator miningBeneficiaryCalculator,
       final boolean skipZeroBlockRewards,
-      final OptionalLong eraLen) {
+      final OptionalLong eraLen,
+      final ProtocolSchedule protocolSchedule) {
     super(
         transactionProcessor,
         transactionReceiptFactory,
         blockReward,
         miningBeneficiaryCalculator,
-        skipZeroBlockRewards);
+        skipZeroBlockRewards,
+        protocolSchedule);
     eraLength = eraLen.orElse(DEFAULT_ERA_LENGTH);
   }
 
@@ -62,7 +64,7 @@ public class ClassicBlockProcessor extends AbstractBlockProcessor {
     }
     final Wei coinbaseReward = getCoinbaseReward(blockReward, header.getNumber(), ommers.size());
     final WorldUpdater updater = worldState.updater();
-    final MutableAccount coinbase = updater.getOrCreate(header.getCoinbase()).getMutable();
+    final MutableAccount coinbase = updater.getOrCreate(header.getCoinbase());
 
     coinbase.incrementBalance(coinbaseReward);
     for (final BlockHeader ommerHeader : ommers) {
@@ -75,8 +77,7 @@ public class ClassicBlockProcessor extends AbstractBlockProcessor {
         return false;
       }
 
-      final MutableAccount ommerCoinbase =
-          updater.getOrCreate(ommerHeader.getCoinbase()).getMutable();
+      final MutableAccount ommerCoinbase = updater.getOrCreate(ommerHeader.getCoinbase());
       final Wei ommerReward =
           getOmmerReward(blockReward, header.getNumber(), ommerHeader.getNumber());
       ommerCoinbase.incrementBalance(ommerReward);

@@ -17,11 +17,11 @@ package org.hyperledger.besu.ethereum.eth.encoding;
 import static org.hyperledger.besu.ethereum.core.Transaction.toHashList;
 
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.TransactionType;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.eth.EthProtocolVersion;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
 import org.hyperledger.besu.ethereum.rlp.BytesValueRLPOutput;
-import org.hyperledger.besu.plugin.data.TransactionType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -69,21 +69,22 @@ public class TransactionAnnouncementEncoder {
   /**
    * Encode a list of transactions for the NewPooledTransactionHashesMessage using the Eth/68
    *
-   * <p>format: [[type_0: B_1, type_1: B_1, ...], [size_0: B_4, size_1: B_4, ...], ...]
+   * <p>format: [[type_0: B_1, type_1: B_1, ...], [size_0: P, size_1: P, ...], ...]
    *
    * @param transactions the list to encode
    * @return the encoded value. The message data will contain hashes, types and sizes.
    */
   private static Bytes encodeForEth68(final List<Transaction> transactions) {
     final List<Integer> sizes = new ArrayList<>(transactions.size());
-    final List<TransactionType> types = new ArrayList<>(transactions.size());
+    final byte[] types = new byte[transactions.size()];
     final List<Hash> hashes = new ArrayList<>(transactions.size());
-    transactions.forEach(
-        transaction -> {
-          types.add(transaction.getType());
-          sizes.add(transaction.calculateSize());
-          hashes.add(transaction.getHash());
-        });
+
+    for (int i = 0; i < transactions.size(); i++) {
+      final TransactionType type = transactions.get(i).getType();
+      types[i] = type.getEthSerializedType();
+      sizes.add(transactions.get(i).getSizeForAnnouncement());
+      hashes.add(transactions.get(i).getHash());
+    }
 
     return encodeForEth68(types, sizes, hashes);
   }
@@ -91,16 +92,27 @@ public class TransactionAnnouncementEncoder {
   @VisibleForTesting
   public static Bytes encodeForEth68(
       final List<TransactionType> types, final List<Integer> sizes, final List<Hash> hashes) {
+
+    final byte[] byteTypes = new byte[types.size()];
+    for (int i = 0; i < types.size(); i++) {
+      final TransactionType type = types.get(i);
+      byteTypes[i] = type.getEthSerializedType();
+    }
+    return encodeForEth68(byteTypes, sizes, hashes);
+  }
+
+  @VisibleForTesting
+  public static Bytes encodeForEth68(
+      final byte[] types, final List<Integer> sizes, final List<Hash> hashes) {
     final BytesValueRLPOutput out = new BytesValueRLPOutput();
     // Check if lists have the same size
-    if (!(types.size() == hashes.size() && hashes.size() == sizes.size())) {
+    if (!(types.length == hashes.size() && hashes.size() == sizes.size())) {
       throw new IllegalArgumentException(
           "Hashes, sizes and types must have the same number of elements");
     }
     out.startList();
-    out.writeList(
-        types, (h, w) -> w.writeByte(h == TransactionType.FRONTIER ? 0x00 : h.getSerializedType()));
-    out.writeList(sizes, (h, w) -> w.writeInt(h));
+    out.writeBytes(Bytes.wrap((types)));
+    out.writeList(sizes, (h, w) -> w.writeUnsignedInt(h));
     out.writeList(hashes, (h, w) -> w.writeBytes(h));
     out.endList();
     return out.encoded();

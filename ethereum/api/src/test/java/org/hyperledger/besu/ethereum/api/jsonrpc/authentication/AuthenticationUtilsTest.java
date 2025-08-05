@@ -16,9 +16,30 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.authentication;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class AuthenticationUtilsTest {
+
+  @Test
+  public void obfuscateTokenShouldReturnExpected() {
+    String header = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9";
+    String token = AuthenticationUtils.getJwtTokenFromAuthorizationHeaderValue(header);
+    assertThat(AuthenticationUtils.truncToken(token)).isNotEqualTo(token);
+    assertThat(AuthenticationUtils.truncToken(token)).isEqualTo("eyJ0eXAi...UzI1NiJ9");
+  }
+
+  @Test
+  public void obfuscateNullTokenShouldReturnInvalid() {
+    String token = AuthenticationUtils.getJwtTokenFromAuthorizationHeaderValue(null);
+    assertThat(AuthenticationUtils.truncToken(token)).isEqualTo("Invalid JWT");
+  }
+
+  @Test
+  public void obfuscateEmptyTokenShouldReturnInvalid() {
+    String header = "";
+    String token = AuthenticationUtils.getJwtTokenFromAuthorizationHeaderValue(header);
+    assertThat(AuthenticationUtils.truncToken(token)).isEqualTo("Invalid JWT");
+  }
 
   @Test
   public void getJwtTokenFromNullStringShouldReturnNull() {

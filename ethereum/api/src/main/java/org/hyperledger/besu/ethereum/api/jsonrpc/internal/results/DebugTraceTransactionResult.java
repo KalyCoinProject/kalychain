@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -15,62 +15,39 @@
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.results;
 
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.TransactionTrace;
-import org.hyperledger.besu.ethereum.debug.TraceFrame;
 
 import java.util.Collection;
-import java.util.List;
-import java.util.stream.Collectors;
+import java.util.function.Function;
 
 import com.fasterxml.jackson.annotation.JsonGetter;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
-@JsonPropertyOrder({"gas", "failed", "returnValue", "structLogs"})
+@JsonPropertyOrder({"txHash", "result"})
 public class DebugTraceTransactionResult {
 
-  private final List<StructLog> structLogs;
-  private final String returnValue;
-  private final long gas;
-  private final boolean failed;
+  private final String txHash;
+  private final Object result;
 
-  public DebugTraceTransactionResult(final TransactionTrace transactionTrace) {
-    gas = transactionTrace.getGas();
-    returnValue = transactionTrace.getResult().getOutput().toString().substring(2);
-    structLogs =
-        transactionTrace.getTraceFrames().stream()
-            .map(DebugTraceTransactionResult::createStructLog)
-            .collect(Collectors.toList());
-    failed = !transactionTrace.getResult().isSuccessful();
+  public DebugTraceTransactionResult(final TransactionTrace transactionTrace, final Object result) {
+    this.txHash = transactionTrace.getTransaction().getHash().toHexString();
+    this.result = result;
   }
 
   public static Collection<DebugTraceTransactionResult> of(
-      final Collection<TransactionTrace> traces) {
-    return traces.stream().map(DebugTraceTransactionResult::new).collect(Collectors.toList());
+      final Collection<TransactionTrace> traces,
+      final Function<TransactionTrace, Object> constructor) {
+    return traces.stream()
+        .map(trace -> new DebugTraceTransactionResult(trace, constructor.apply(trace)))
+        .toList();
   }
 
-  private static StructLog createStructLog(final TraceFrame frame) {
-    return frame
-        .getExceptionalHaltReason()
-        .map(__ -> (StructLog) new StructLogWithError(frame))
-        .orElse(new StructLog(frame));
+  @JsonGetter(value = "txHash")
+  public String getTxHash() {
+    return txHash;
   }
 
-  @JsonGetter(value = "structLogs")
-  public List<StructLog> getStructLogs() {
-    return structLogs;
-  }
-
-  @JsonGetter(value = "returnValue")
-  public String getReturnValue() {
-    return returnValue;
-  }
-
-  @JsonGetter(value = "gas")
-  public long getGas() {
-    return gas;
-  }
-
-  @JsonGetter(value = "failed")
-  public boolean failed() {
-    return failed;
+  @JsonGetter(value = "result")
+  public Object getResult() {
+    return result;
   }
 }

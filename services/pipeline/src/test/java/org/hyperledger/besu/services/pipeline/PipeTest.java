@@ -24,13 +24,14 @@ import org.hyperledger.besu.plugin.services.metrics.Counter;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class PipeTest {
   private final Counter inputCounter = mock(Counter.class);
   private final Counter outputCounter = mock(Counter.class);
   private final Counter abortedItemCounter = mock(Counter.class);
-  private final Pipe<String> pipe = new Pipe<>(5, inputCounter, outputCounter, abortedItemCounter);
+  private final Pipe<String> pipe =
+      new Pipe<>(5, inputCounter, outputCounter, abortedItemCounter, "test_pipe");
 
   @Test
   public void shouldNotHaveMoreWhenEmptyAndClosed() {

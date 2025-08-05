@@ -14,21 +14,108 @@
  */
 package org.hyperledger.besu.ethereum.mainnet;
 
-/** Tuple that associates a {@link ProtocolSpec} with a given block level starting point */
-public class ScheduledProtocolSpec {
-  private final long block;
-  private final ProtocolSpec spec;
+import org.hyperledger.besu.plugin.data.ProcessableBlockHeader;
 
-  public ScheduledProtocolSpec(final long block, final ProtocolSpec spec) {
-    this.block = block;
-    this.spec = spec;
+/**
+ * Associates a {@link ProtocolSpec} with a given block number or timestamp level starting point
+ * Knows how to query the timestamp or block number of a given block header
+ */
+public interface ScheduledProtocolSpec {
+  boolean isOnOrAfterMilestoneBoundary(
+      org.hyperledger.besu.plugin.data.ProcessableBlockHeader header);
+
+  boolean isOnMilestoneBoundary(org.hyperledger.besu.plugin.data.ProcessableBlockHeader header);
+
+  Hardfork fork();
+
+  ProtocolSpec spec();
+
+  public record Hardfork(String name, long milestone) implements Comparable<Hardfork> {
+    @Override
+    public int compareTo(final Hardfork h) {
+      if (h == null) { // all non-null hardforks are greater than null
+        return 1;
+      }
+      return this.milestone == h.milestone ? 0 : this.milestone < h.milestone ? -1 : 1;
+    }
+
+    @Override
+    public String toString() {
+      return String.format("%s:%d", name, milestone);
+    }
   }
 
-  public long getBlock() {
-    return block;
+  class TimestampProtocolSpec implements ScheduledProtocolSpec {
+
+    private final long timestamp;
+    private final ProtocolSpec protocolSpec;
+
+    public static TimestampProtocolSpec create(
+        final long timestamp, final ProtocolSpec protocolSpec) {
+      return new TimestampProtocolSpec(timestamp, protocolSpec);
+    }
+
+    private TimestampProtocolSpec(final long timestamp, final ProtocolSpec protocolSpec) {
+      this.timestamp = timestamp;
+      this.protocolSpec = protocolSpec;
+    }
+
+    @Override
+    public boolean isOnOrAfterMilestoneBoundary(
+        final org.hyperledger.besu.plugin.data.ProcessableBlockHeader header) {
+      return Long.compareUnsigned(header.getTimestamp(), timestamp) >= 0;
+    }
+
+    @Override
+    public boolean isOnMilestoneBoundary(
+        final org.hyperledger.besu.plugin.data.ProcessableBlockHeader header) {
+      return header.getTimestamp() == timestamp;
+    }
+
+    @Override
+    public Hardfork fork() {
+      return new Hardfork(protocolSpec.getHardforkId().description(), timestamp);
+    }
+
+    @Override
+    public ProtocolSpec spec() {
+      return protocolSpec;
+    }
   }
 
-  public ProtocolSpec getSpec() {
-    return spec;
+  class BlockNumberProtocolSpec implements ScheduledProtocolSpec {
+    private final long blockNumber;
+    private final ProtocolSpec protocolSpec;
+
+    public static BlockNumberProtocolSpec create(
+        final long blockNumber, final ProtocolSpec protocolSpec) {
+      return new BlockNumberProtocolSpec(blockNumber, protocolSpec);
+    }
+
+    private BlockNumberProtocolSpec(final long blockNumber, final ProtocolSpec protocolSpec) {
+      this.blockNumber = blockNumber;
+      this.protocolSpec = protocolSpec;
+    }
+
+    @Override
+    public boolean isOnOrAfterMilestoneBoundary(
+        final org.hyperledger.besu.plugin.data.ProcessableBlockHeader header) {
+      return header.getNumber() >= blockNumber;
+    }
+
+    @Override
+    public boolean isOnMilestoneBoundary(final ProcessableBlockHeader header) {
+      return header.getNumber() == blockNumber;
+    }
+
+    @Override
+    public Hardfork fork() {
+      return new Hardfork(protocolSpec.getHardforkId().description(), blockNumber);
+    }
+
+    @Override
+    public ProtocolSpec spec() {
+      return protocolSpec;
+    }
   }
 }

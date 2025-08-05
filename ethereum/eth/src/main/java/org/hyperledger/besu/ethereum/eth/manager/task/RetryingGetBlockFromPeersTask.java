@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,14 +14,13 @@
  */
 package org.hyperledger.besu.ethereum.eth.manager.task;
 
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.debugLambda;
-
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
 import org.hyperledger.besu.ethereum.eth.manager.exceptions.IncompleteResultsException;
 import org.hyperledger.besu.ethereum.eth.manager.task.AbstractPeerTask.PeerTaskResult;
+import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 
@@ -38,18 +37,21 @@ public class RetryingGetBlockFromPeersTask
   private static final Logger LOG = LoggerFactory.getLogger(RetryingGetBlockFromPeersTask.class);
 
   private final ProtocolSchedule protocolSchedule;
+  private final SynchronizerConfiguration synchronizerConfiguration;
   private final Optional<Hash> maybeBlockHash;
   private final long blockNumber;
 
   protected RetryingGetBlockFromPeersTask(
       final EthContext ethContext,
       final ProtocolSchedule protocolSchedule,
+      final SynchronizerConfiguration synchronizerConfiguration,
       final MetricsSystem metricsSystem,
       final int maxRetries,
       final Optional<Hash> maybeBlockHash,
       final long blockNumber) {
     super(ethContext, metricsSystem, Objects::isNull, maxRetries);
     this.protocolSchedule = protocolSchedule;
+    this.synchronizerConfiguration = synchronizerConfiguration;
     this.maybeBlockHash = maybeBlockHash;
     this.blockNumber = blockNumber;
   }
@@ -57,12 +59,19 @@ public class RetryingGetBlockFromPeersTask
   public static RetryingGetBlockFromPeersTask create(
       final ProtocolSchedule protocolSchedule,
       final EthContext ethContext,
+      final SynchronizerConfiguration synchronizerConfiguration,
       final MetricsSystem metricsSystem,
       final int maxRetries,
       final Optional<Hash> maybeHash,
       final long blockNumber) {
     return new RetryingGetBlockFromPeersTask(
-        ethContext, protocolSchedule, metricsSystem, maxRetries, maybeHash, blockNumber);
+        ethContext,
+        protocolSchedule,
+        synchronizerConfiguration,
+        metricsSystem,
+        maxRetries,
+        maybeHash,
+        blockNumber);
   }
 
   @Override
@@ -70,18 +79,23 @@ public class RetryingGetBlockFromPeersTask
       final EthPeer currentPeer) {
     final GetBlockFromPeerTask getBlockTask =
         GetBlockFromPeerTask.create(
-            protocolSchedule, getEthContext(), maybeBlockHash, blockNumber, getMetricsSystem());
+            protocolSchedule,
+            getEthContext(),
+            synchronizerConfiguration,
+            maybeBlockHash,
+            blockNumber,
+            getMetricsSystem());
     getBlockTask.assignPeer(currentPeer);
 
     return executeSubTask(getBlockTask::run)
         .thenApply(
             peerResult -> {
-              debugLambda(
-                  LOG,
-                  "Got block {} from peer {}, attempt {}",
-                  peerResult.getResult()::toLogString,
-                  peerResult.getPeer()::toString,
-                  this::getRetryCount);
+              LOG.atDebug()
+                  .setMessage("Got block {} from peer {}, attempt {}")
+                  .addArgument(peerResult.getResult()::toLogString)
+                  .addArgument(peerResult.getPeer())
+                  .addArgument(this::getRetryCount)
+                  .log();
               result.complete(peerResult);
               return peerResult;
             });
@@ -95,18 +109,18 @@ public class RetryingGetBlockFromPeersTask
   @Override
   protected void handleTaskError(final Throwable error) {
     if (getRetryCount() < getMaxRetries()) {
-      debugLambda(
-          LOG,
-          "Failed to get block {} from peer {}, attempt {}, retrying later",
-          this::logBlockNumberMaybeHash,
-          this::getAssignedPeer,
-          this::getRetryCount);
+      LOG.atDebug()
+          .setMessage("Failed to get block {} from peer {}, attempt {}, retrying later")
+          .addArgument(this::logBlockNumberMaybeHash)
+          .addArgument(this::getAssignedPeer)
+          .addArgument(this::getRetryCount)
+          .log();
     } else {
-      debugLambda(
-          LOG,
-          "Failed to get block {} after {} retries",
-          this::logBlockNumberMaybeHash,
-          this::getRetryCount);
+      LOG.atDebug()
+          .setMessage("Failed to get block {} after {} retries")
+          .addArgument(this::logBlockNumberMaybeHash)
+          .addArgument(this::getRetryCount)
+          .log();
     }
     super.handleTaskError(error);
   }

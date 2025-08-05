@@ -33,14 +33,14 @@ import java.util.function.Predicate;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.assertj.core.api.Assertions;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 /** Tests for {@link MockNetwork}. */
 public final class MockNetworkTest {
 
   @Test
   public void exchangeMessages() throws Exception {
-    final Capability cap = Capability.create("eth", 63);
+    final Capability cap = Capability.create("eth", 68);
     final MockNetwork network = new MockNetwork(Arrays.asList(cap));
     final Peer one =
         DefaultPeer.fromEnodeURL(

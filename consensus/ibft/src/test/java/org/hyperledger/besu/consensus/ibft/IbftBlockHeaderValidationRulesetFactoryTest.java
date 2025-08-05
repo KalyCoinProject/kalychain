@@ -23,8 +23,8 @@ import org.hyperledger.besu.consensus.common.bft.BftExtraData;
 import org.hyperledger.besu.consensus.common.bft.BftExtraDataCodec;
 import org.hyperledger.besu.consensus.common.bft.BftExtraDataFixture;
 import org.hyperledger.besu.consensus.common.bft.Vote;
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
@@ -37,18 +37,21 @@ import org.hyperledger.besu.ethereum.mainnet.BlockHeaderValidator;
 import org.hyperledger.besu.ethereum.mainnet.HeaderValidationMode;
 import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class IbftBlockHeaderValidationRulesetFactoryTest {
 
   private ProtocolContext protocolContext(final Collection<Address> validators) {
-    return new ProtocolContext(
-        null, null, setupContextWithBftExtraDataEncoder(validators, new IbftExtraDataCodec()));
+    return new ProtocolContext.Builder()
+        .withConsensusContext(
+            setupContextWithBftExtraDataEncoder(validators, new IbftExtraDataCodec()))
+        .build();
   }
 
   @Test
@@ -89,7 +92,7 @@ public class IbftBlockHeaderValidationRulesetFactoryTest {
 
     final BlockHeaderValidator validator =
         IbftBlockHeaderValidationRulesetFactory.blockHeaderValidator(
-                5, Optional.of(FeeMarket.london(1)))
+                Duration.ofSeconds(5), Optional.of(FeeMarket.london(1)))
             .build();
 
     assertThat(
@@ -368,7 +371,8 @@ public class IbftBlockHeaderValidationRulesetFactoryTest {
   }
 
   public BlockHeaderValidator getBlockHeaderValidator() {
-    return IbftBlockHeaderValidationRulesetFactory.blockHeaderValidator(5, Optional.empty())
+    return IbftBlockHeaderValidationRulesetFactory.blockHeaderValidator(
+            Duration.ofSeconds(5), Optional.empty())
         .build();
   }
 }

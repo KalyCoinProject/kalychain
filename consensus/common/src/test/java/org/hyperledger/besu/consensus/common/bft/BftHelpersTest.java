@@ -15,7 +15,7 @@
 package org.hyperledger.besu.consensus.common.bft;
 
 import org.assertj.core.api.Assertions;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class BftHelpersTest {
 
@@ -62,5 +62,40 @@ public class BftHelpersTest {
   @Test
   public void calculateRequiredValidatorQuorum20Validator() {
     Assertions.assertThat(BftHelpers.calculateRequiredValidatorQuorum(20)).isEqualTo(14);
+  }
+
+  @Test
+  public void calculateRequiredFutureRCQuorum4Validator() {
+    Assertions.assertThat(BftHelpers.calculateRequiredFutureRCQuorum(4)).isEqualTo(2);
+  }
+
+  @Test
+  public void calculateRequiredFutureRCQuorum6Validator() {
+    Assertions.assertThat(BftHelpers.calculateRequiredFutureRCQuorum(6)).isEqualTo(2);
+  }
+
+  @Test
+  public void calculateRequiredFutureRCQuorum7Validator() {
+    Assertions.assertThat(BftHelpers.calculateRequiredFutureRCQuorum(7)).isEqualTo(3);
+  }
+
+  @Test
+  public void calculateRequiredFutureRCQuorum9Validator() {
+    Assertions.assertThat(BftHelpers.calculateRequiredFutureRCQuorum(9)).isEqualTo(3);
+  }
+
+  @Test
+  public void calculateRequiredFutureRCQuorum10Validator() {
+    Assertions.assertThat(BftHelpers.calculateRequiredFutureRCQuorum(10)).isEqualTo(4);
+  }
+
+  @Test
+  public void calculateRequiredFutureRCQuorum13Validator() {
+    Assertions.assertThat(BftHelpers.calculateRequiredFutureRCQuorum(13)).isEqualTo(5);
+  }
+
+  @Test
+  public void calculateRequiredFutureRCQuorum15Validator() {
+    Assertions.assertThat(BftHelpers.calculateRequiredFutureRCQuorum(15)).isEqualTo(5);
   }
 }

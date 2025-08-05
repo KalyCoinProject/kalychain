@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,8 +16,8 @@ package org.hyperledger.besu.tests.acceptance.plugins;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
-import org.hyperledger.besu.plugin.BesuContext;
 import org.hyperledger.besu.plugin.BesuPlugin;
+import org.hyperledger.besu.plugin.ServiceManager;
 import org.hyperledger.besu.plugin.services.RpcEndpointService;
 import org.hyperledger.besu.plugin.services.rpc.PluginRpcRequest;
 
@@ -28,6 +28,8 @@ import com.google.auto.service.AutoService;
 @AutoService(BesuPlugin.class)
 public class TestRpcEndpointServicePlugin implements BesuPlugin {
 
+  private static final String NAMESPACE_ENABLED = "tests";
+  private static final String NAMESPACE_NOT_ENABLED = "notEnabled";
   private final AtomicReference<String> stringStorage = new AtomicReference<>("InitialValue");
   private final AtomicReference<Object[]> arrayStorage = new AtomicReference<>();
 
@@ -49,18 +51,19 @@ public class TestRpcEndpointServicePlugin implements BesuPlugin {
   }
 
   @Override
-  public void register(final BesuContext context) {
+  public void register(final ServiceManager context) {
     context
         .getService(RpcEndpointService.class)
         .ifPresent(
             rpcEndpointService -> {
-              rpcEndpointService.registerRPCEndpoint("tests", "getValue", this::getValue);
-              rpcEndpointService.registerRPCEndpoint("tests", "setValue", this::setValue);
+              rpcEndpointService.registerRPCEndpoint(NAMESPACE_ENABLED, "getValue", this::getValue);
+              rpcEndpointService.registerRPCEndpoint(NAMESPACE_ENABLED, "setValue", this::setValue);
               rpcEndpointService.registerRPCEndpoint(
-                  "tests", "replaceValueList", this::replaceValueList);
+                  NAMESPACE_ENABLED, "replaceValueList", this::replaceValueList);
               rpcEndpointService.registerRPCEndpoint(
-                  "tests", "throwException", this::throwException);
-              rpcEndpointService.registerRPCEndpoint("notEnabled", "getValue", this::getValue);
+                  NAMESPACE_ENABLED, "throwException", this::throwException);
+              rpcEndpointService.registerRPCEndpoint(
+                  NAMESPACE_NOT_ENABLED, "getValue", this::getValue);
             });
   }
 

@@ -16,7 +16,7 @@ package org.hyperledger.besu.datatypes;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class HashTest {
 
@@ -25,5 +25,12 @@ public class HashTest {
     assertThat(Hash.EMPTY)
         .isEqualTo(
             Hash.fromHexString("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"));
+  }
+
+  @Test
+  public void shouldGetExpectedValueForEmptyRequestsHash() {
+    assertThat(Hash.EMPTY_REQUESTS_HASH)
+        .isEqualTo(
+            Hash.fromHexString("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
   }
 }

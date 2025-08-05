@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -34,13 +34,13 @@ import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
 import org.hyperledger.besu.ethereum.core.MutableWorldState;
 import org.hyperledger.besu.ethereum.core.ProtocolScheduleFixture;
-import org.hyperledger.besu.ethereum.eth.manager.DeterministicEthScheduler;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManager;
+import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestBuilder;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestUtil;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.manager.RespondingEthPeer;
-import org.hyperledger.besu.ethereum.eth.messages.EthPV63;
+import org.hyperledger.besu.ethereum.eth.messages.EthProtocolMessages;
 import org.hyperledger.besu.ethereum.eth.messages.GetNodeDataMessage;
 import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.eth.sync.fastsync.FastSyncState;
@@ -49,24 +49,27 @@ import org.hyperledger.besu.ethereum.eth.sync.worldstate.WorldStateDownloader;
 import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MessageData;
 import org.hyperledger.besu.ethereum.rlp.RLP;
-import org.hyperledger.besu.ethereum.storage.keyvalue.WorldStateKeyValueStorage;
 import org.hyperledger.besu.ethereum.storage.keyvalue.WorldStatePreimageKeyValueStorage;
-import org.hyperledger.besu.ethereum.trie.MerklePatriciaTrie;
+import org.hyperledger.besu.ethereum.trie.MerkleTrie;
 import org.hyperledger.besu.ethereum.trie.Node;
-import org.hyperledger.besu.ethereum.trie.StoredMerklePatriciaTrie;
-import org.hyperledger.besu.ethereum.trie.TrieNodeDecoder;
-import org.hyperledger.besu.ethereum.worldstate.DefaultWorldStateArchive;
-import org.hyperledger.besu.ethereum.worldstate.StateTrieAccountValue;
+import org.hyperledger.besu.ethereum.trie.common.PmtStateTrieAccountValue;
+import org.hyperledger.besu.ethereum.trie.forest.ForestWorldStateArchive;
+import org.hyperledger.besu.ethereum.trie.forest.storage.ForestWorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.trie.patricia.StoredMerklePatriciaTrie;
+import org.hyperledger.besu.ethereum.trie.patricia.TrieNodeDecoder;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateKeyValueStorage;
 import org.hyperledger.besu.ethereum.worldstate.WorldStatePreimageStorage;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage.Updater;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.account.AccountStorageEntry;
+import org.hyperledger.besu.evm.internal.EvmConfiguration;
 import org.hyperledger.besu.evm.worldstate.WorldState;
+import org.hyperledger.besu.metrics.SyncDurationMetrics;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.services.kvstore.InMemoryKeyValueStorage;
 import org.hyperledger.besu.services.tasks.InMemoryTasksPriorityQueues;
+import org.hyperledger.besu.testutil.DeterministicEthScheduler;
 import org.hyperledger.besu.testutil.MockExecutorService;
 import org.hyperledger.besu.testutil.TestClock;
 
@@ -93,18 +96,15 @@ import java.util.stream.StreamSupport;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
-import org.junit.After;
-import org.junit.Ignore;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.Timeout;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
-@Ignore("PIE-1434 - Ignored while working to make test more reliable")
-public class FastWorldStateDownloaderTest {
+@Disabled("PIE-1434 - Ignored while working to make test more reliable")
+class FastWorldStateDownloaderTest {
 
-  @Rule public Timeout globalTimeout = Timeout.seconds(60); // 1 minute max per test
-
-  private static final Hash EMPTY_TRIE_ROOT = Hash.wrap(MerklePatriciaTrie.EMPTY_TRIE_NODE_HASH);
+  private static final Hash EMPTY_TRIE_ROOT = Hash.wrap(MerkleTrie.EMPTY_TRIE_NODE_HASH);
 
   private final BlockDataGenerator dataGen = new BlockDataGenerator(1);
   private final ExecutorService persistenceThread =
@@ -115,9 +115,11 @@ public class FastWorldStateDownloaderTest {
               .build());
 
   final EthProtocolManager ethProtocolManager =
-      EthProtocolManagerTestUtil.create(new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()));
+      EthProtocolManagerTestBuilder.builder()
+          .setEthScheduler(new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()))
+          .build();
 
-  @After
+  @AfterEach
   public void tearDown() throws Exception {
     persistenceThread.shutdownNow();
     assertThat(persistenceThread.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
@@ -125,37 +127,44 @@ public class FastWorldStateDownloaderTest {
   }
 
   @Test
-  public void downloadWorldStateFromPeers_onePeerOneWithManyRequestsOneAtATime() {
+  @Timeout(value = 60)
+  void downloadWorldStateFromPeers_onePeerOneWithManyRequestsOneAtATime() {
     downloadAvailableWorldStateFromPeers(1, 50, 1, 1);
   }
 
   @Test
-  public void downloadWorldStateFromPeers_onePeerOneWithManyRequests() {
+  @Timeout(value = 60)
+  void downloadWorldStateFromPeers_onePeerOneWithManyRequests() {
     downloadAvailableWorldStateFromPeers(1, 50, 1, 10);
   }
 
   @Test
-  public void downloadWorldStateFromPeers_onePeerWithSingleRequest() {
+  @Timeout(value = 60)
+  void downloadWorldStateFromPeers_onePeerWithSingleRequest() {
     downloadAvailableWorldStateFromPeers(1, 1, 100, 10);
   }
 
   @Test
-  public void downloadWorldStateFromPeers_largeStateFromMultiplePeers() {
+  @Timeout(value = 60)
+  void downloadWorldStateFromPeers_largeStateFromMultiplePeers() {
     downloadAvailableWorldStateFromPeers(5, 100, 10, 10);
   }
 
   @Test
-  public void downloadWorldStateFromPeers_smallStateFromMultiplePeers() {
+  @Timeout(value = 60)
+  void downloadWorldStateFromPeers_smallStateFromMultiplePeers() {
     downloadAvailableWorldStateFromPeers(5, 5, 1, 10);
   }
 
   @Test
-  public void downloadWorldStateFromPeers_singleRequestWithMultiplePeers() {
+  @Timeout(value = 60)
+  void downloadWorldStateFromPeers_singleRequestWithMultiplePeers() {
     downloadAvailableWorldStateFromPeers(5, 1, 50, 50);
   }
 
   @Test
-  public void downloadEmptyWorldState() {
+  @Timeout(value = 60)
+  void downloadEmptyWorldState() {
 
     final BlockHeader header =
         dataGen
@@ -169,12 +178,12 @@ public class FastWorldStateDownloaderTest {
         Stream.generate(
                 () -> EthProtocolManagerTestUtil.createPeer(ethProtocolManager, header.getNumber()))
             .limit(5)
-            .collect(Collectors.toList());
+            .toList();
 
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         new InMemoryTasksPriorityQueues<>();
-    final WorldStateStorage localStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage localStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final WorldStateDownloader downloader =
         createDownloader(ethProtocolManager.ethContext(), localStorage, taskCollection);
 
@@ -188,10 +197,11 @@ public class FastWorldStateDownloaderTest {
   }
 
   @Test
-  public void downloadAlreadyAvailableWorldState() {
+  @Timeout(value = 60)
+  void downloadAlreadyAvailableWorldState() {
     // Setup existing state
-    final DefaultWorldStateArchive worldStateArchive = createInMemoryWorldStateArchive();
-    final MutableWorldState worldState = worldStateArchive.getMutable();
+    final ForestWorldStateArchive worldStateArchive = createInMemoryWorldStateArchive();
+    final MutableWorldState worldState = worldStateArchive.getWorldState();
 
     // Generate accounts and save corresponding state root
     dataGen.createRandomAccounts(worldState, 20);
@@ -205,7 +215,7 @@ public class FastWorldStateDownloaderTest {
         Stream.generate(
                 () -> EthProtocolManagerTestUtil.createPeer(ethProtocolManager, header.getNumber()))
             .limit(5)
-            .collect(Collectors.toList());
+            .toList();
 
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         new InMemoryTasksPriorityQueues<>();
@@ -227,10 +237,14 @@ public class FastWorldStateDownloaderTest {
   }
 
   @Test
-  public void canRecoverFromTimeouts() {
+  @Timeout(value = 60)
+  void canRecoverFromTimeouts() {
     final DeterministicEthScheduler.TimeoutPolicy timeoutPolicy =
         DeterministicEthScheduler.TimeoutPolicy.timeoutXTimes(2);
-    final EthProtocolManager ethProtocolManager = EthProtocolManagerTestUtil.create(timeoutPolicy);
+    final EthProtocolManager ethProtocolManager =
+        EthProtocolManagerTestBuilder.builder()
+            .setEthScheduler(new DeterministicEthScheduler(timeoutPolicy))
+            .build();
     final MockExecutorService serviceExecutor =
         ((DeterministicEthScheduler) ethProtocolManager.ethContext().getScheduler())
             .mockServiceExecutor();
@@ -238,7 +252,7 @@ public class FastWorldStateDownloaderTest {
 
     // Setup "remote" state
     final WorldStateArchive remoteWorldStateArchive = createInMemoryWorldStateArchive();
-    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getMutable();
+    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getWorldState();
 
     // Generate accounts and save corresponding state root
     final List<Account> accounts = dataGen.createRandomAccounts(remoteWorldState, 20);
@@ -256,8 +270,8 @@ public class FastWorldStateDownloaderTest {
 
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         new InMemoryTasksPriorityQueues<>();
-    final WorldStateStorage localStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage localStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final WorldStateDownloader downloader =
         createDownloader(ethProtocolManager.ethContext(), localStorage, taskCollection);
 
@@ -275,22 +289,27 @@ public class FastWorldStateDownloaderTest {
 
     // Check that all expected account data was downloaded
     final WorldStateArchive localWorldStateArchive =
-        new DefaultWorldStateArchive(localStorage, createPreimageStorage());
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(localStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
     final WorldState localWorldState = localWorldStateArchive.get(stateRoot, null).get();
     assertThat(result).isDone();
     assertAccountsMatch(localWorldState, accounts);
   }
 
   @Test
-  public void handlesPartialResponsesFromNetwork() {
+  @Timeout(value = 60)
+  void handlesPartialResponsesFromNetwork() {
     downloadAvailableWorldStateFromPeers(5, 100, 10, 10, this::respondPartially);
   }
 
   @Test
-  public void doesNotRequestKnownCodeFromNetwork() {
+  @Timeout(value = 60)
+  void doesNotRequestKnownCodeFromNetwork() {
     // Setup "remote" state
     final WorldStateArchive remoteWorldStateArchive = createInMemoryWorldStateArchive();
-    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getMutable();
+    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getWorldState();
 
     // Generate accounts and save corresponding state root
     final List<Account> accounts =
@@ -308,14 +327,14 @@ public class FastWorldStateDownloaderTest {
 
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         new InMemoryTasksPriorityQueues<>();
-    final WorldStateStorage localStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage localStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
 
     // Seed local storage with some contract values
     final Map<Bytes32, Bytes> knownCode = new HashMap<>();
     accounts.subList(0, 5).forEach(a -> knownCode.put(a.getCodeHash(), a.getCode()));
-    final Updater localStorageUpdater = localStorage.updater();
-    knownCode.forEach((bytes32, code) -> localStorageUpdater.putCode(null, code));
+    final ForestWorldStateKeyValueStorage.Updater localStorageUpdater = localStorage.updater();
+    knownCode.forEach((bytes32, code) -> localStorageUpdater.putCode(code));
     localStorageUpdater.commit();
 
     final WorldStateDownloader downloader =
@@ -337,34 +356,39 @@ public class FastWorldStateDownloaderTest {
     // Check that known code was not requested
     final List<Bytes32> requestedHashes =
         sentMessages.stream()
-            .filter(m -> m.getCode() == EthPV63.GET_NODE_DATA)
+            .filter(m -> m.getCode() == EthProtocolMessages.GET_NODE_DATA)
             .map(GetNodeDataMessage::readFrom)
             .flatMap(m -> StreamSupport.stream(m.hashes().spliterator(), true))
             .collect(Collectors.toList());
-    assertThat(requestedHashes.size()).isGreaterThan(0);
+    assertThat(requestedHashes).isNotEmpty();
     assertThat(Collections.disjoint(requestedHashes, knownCode.keySet())).isTrue();
 
     // Check that all expected account data was downloaded
     final WorldStateArchive localWorldStateArchive =
-        new DefaultWorldStateArchive(localStorage, createPreimageStorage());
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(localStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
     final WorldState localWorldState = localWorldStateArchive.get(stateRoot, null).get();
     assertThat(result).isDone();
     assertAccountsMatch(localWorldState, accounts);
   }
 
   @Test
-  public void cancelDownloader() {
+  @Timeout(value = 60)
+  void cancelDownloader() {
     testCancellation(false);
   }
 
   @Test
-  public void cancelDownloaderFuture() {
+  @Timeout(value = 60)
+  void cancelDownloaderFuture() {
     testCancellation(true);
   }
 
   @SuppressWarnings("unchecked")
   private void testCancellation(final boolean shouldCancelFuture) {
-    final EthProtocolManager ethProtocolManager = EthProtocolManagerTestUtil.create();
+    final EthProtocolManager ethProtocolManager = EthProtocolManagerTestBuilder.builder().build();
     // Prevent the persistence service from running
     final MockExecutorService serviceExecutor =
         ((DeterministicEthScheduler) ethProtocolManager.ethContext().getScheduler())
@@ -373,7 +397,7 @@ public class FastWorldStateDownloaderTest {
 
     // Setup "remote" state
     final WorldStateArchive remoteWorldStateArchive = createInMemoryWorldStateArchive();
-    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getMutable();
+    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getWorldState();
 
     // Generate accounts and save corresponding state root
     dataGen.createRandomContractAccountsWithNonEmptyStorage(remoteWorldState, 20);
@@ -386,12 +410,12 @@ public class FastWorldStateDownloaderTest {
         Stream.generate(
                 () -> EthProtocolManagerTestUtil.createPeer(ethProtocolManager, header.getNumber()))
             .limit(5)
-            .collect(Collectors.toList());
+            .toList();
 
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         new InMemoryTasksPriorityQueues<>();
-    final WorldStateStorage localStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage localStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
 
     final WorldStateDownloader downloader =
         createDownloader(ethProtocolManager.ethContext(), localStorage, taskCollection);
@@ -436,18 +460,21 @@ public class FastWorldStateDownloaderTest {
     verify(taskCollection, never()).remove();
     verify(taskCollection, never()).add(any(NodeDataRequest.class));
     // Target world state should not be available
-    assertThat(localStorage.isWorldStateAvailable(header.getStateRoot(), header.getHash()))
-        .isFalse();
+    assertThat(localStorage.isWorldStateAvailable(header.getStateRoot())).isFalse();
   }
 
   @Test
-  public void doesNotRequestKnownAccountTrieNodesFromNetwork() {
+  @Timeout(value = 60)
+  void doesNotRequestKnownAccountTrieNodesFromNetwork() {
     // Setup "remote" state
-    final WorldStateStorage remoteStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage remoteStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final WorldStateArchive remoteWorldStateArchive =
-        new DefaultWorldStateArchive(remoteStorage, createPreimageStorage());
-    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getMutable();
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(remoteStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
+    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getWorldState();
 
     // Generate accounts and save corresponding state root
     final List<Account> accounts =
@@ -465,21 +492,21 @@ public class FastWorldStateDownloaderTest {
 
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         new InMemoryTasksPriorityQueues<>();
-    final WorldStateStorage localStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage localStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
 
     // Seed local storage with some trie node values
     final Map<Bytes32, Bytes> allNodes =
         collectTrieNodesToBeRequestedAfterRoot(remoteStorage, remoteWorldState.rootHash(), 5);
     final Set<Bytes32> knownNodes = new HashSet<>();
     final Set<Bytes32> unknownNodes = new HashSet<>();
-    assertThat(allNodes.size()).isGreaterThan(0); // Sanity check
-    final Updater localStorageUpdater = localStorage.updater();
+    assertThat(allNodes).isNotEmpty(); // Sanity check
+    final ForestWorldStateKeyValueStorage.Updater localStorageUpdater = localStorage.updater();
     final AtomicBoolean storeNode = new AtomicBoolean(true);
     allNodes.forEach(
         (nodeHash, node) -> {
           if (storeNode.get()) {
-            localStorageUpdater.putAccountStateTrieNode(null, nodeHash, node);
+            localStorageUpdater.putAccountStateTrieNode(nodeHash, node);
             knownNodes.add(nodeHash);
           } else {
             unknownNodes.add(nodeHash);
@@ -507,30 +534,38 @@ public class FastWorldStateDownloaderTest {
     // Check that unknown trie nodes were requested
     final List<Bytes32> requestedHashes =
         sentMessages.stream()
-            .filter(m -> m.getCode() == EthPV63.GET_NODE_DATA)
+            .filter(m -> m.getCode() == EthProtocolMessages.GET_NODE_DATA)
             .map(GetNodeDataMessage::readFrom)
             .flatMap(m -> StreamSupport.stream(m.hashes().spliterator(), true))
             .collect(Collectors.toList());
-    assertThat(requestedHashes.size()).isGreaterThan(0);
-    assertThat(requestedHashes).containsAll(unknownNodes);
-    assertThat(requestedHashes).doesNotContainAnyElementsOf(knownNodes);
+    assertThat(requestedHashes)
+        .isNotEmpty()
+        .containsAll(unknownNodes)
+        .doesNotContainAnyElementsOf(knownNodes);
 
     // Check that all expected account data was downloaded
     final WorldStateArchive localWorldStateArchive =
-        new DefaultWorldStateArchive(localStorage, createPreimageStorage());
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(localStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
     final WorldState localWorldState = localWorldStateArchive.get(stateRoot, null).get();
     assertThat(result).isDone();
     assertAccountsMatch(localWorldState, accounts);
   }
 
   @Test
-  public void doesNotRequestKnownStorageTrieNodesFromNetwork() {
+  @Timeout(value = 60)
+  void doesNotRequestKnownStorageTrieNodesFromNetwork() {
     // Setup "remote" state
-    final WorldStateStorage remoteStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage remoteStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final WorldStateArchive remoteWorldStateArchive =
-        new DefaultWorldStateArchive(remoteStorage, createPreimageStorage());
-    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getMutable();
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(remoteStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
+    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getWorldState();
 
     // Generate accounts and save corresponding state root
     final List<Account> accounts =
@@ -548,20 +583,20 @@ public class FastWorldStateDownloaderTest {
 
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         new InMemoryTasksPriorityQueues<>();
-    final WorldStateStorage localStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage localStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
 
     // Seed local storage with some trie node values
     final List<Bytes32> storageRootHashes =
         new StoredMerklePatriciaTrie<>(
-                remoteStorage::getNodeData,
+                (location, hash) -> remoteStorage.getNodeData(hash),
                 remoteWorldState.rootHash(),
                 Function.identity(),
                 Function.identity())
             .entriesFrom(Bytes32.ZERO, 5).values().stream()
                 .map(RLP::input)
-                .map(StateTrieAccountValue::readFrom)
-                .map(StateTrieAccountValue::getStorageRoot)
+                .map(PmtStateTrieAccountValue::readFrom)
+                .map(PmtStateTrieAccountValue::getStorageRoot)
                 .collect(Collectors.toList());
     final Map<Bytes32, Bytes> allTrieNodes = new HashMap<>();
     final Set<Bytes32> knownNodes = new HashSet<>();
@@ -570,14 +605,14 @@ public class FastWorldStateDownloaderTest {
       allTrieNodes.putAll(
           collectTrieNodesToBeRequestedAfterRoot(remoteStorage, storageRootHash, 5));
     }
-    assertThat(allTrieNodes.size()).isGreaterThan(0); // Sanity check
-    final Updater localStorageUpdater = localStorage.updater();
+    assertThat(allTrieNodes).isNotEmpty(); // Sanity check
+    final ForestWorldStateKeyValueStorage.Updater localStorageUpdater = localStorage.updater();
     boolean storeNode = true;
     for (final Map.Entry<Bytes32, Bytes> entry : allTrieNodes.entrySet()) {
       final Bytes32 hash = entry.getKey();
       final Bytes data = entry.getValue();
       if (storeNode) {
-        localStorageUpdater.putAccountStorageTrieNode(null, null, hash, data);
+        localStorageUpdater.putAccountStorageTrieNode(hash, data);
         knownNodes.add(hash);
       } else {
         unknownNodes.add(hash);
@@ -603,38 +638,48 @@ public class FastWorldStateDownloaderTest {
 
     respondUntilDone(peers, responder, result);
     // World state should be available by the time the result is complete
-    assertThat(localStorage.isWorldStateAvailable(stateRoot, header.getHash())).isTrue();
+    assertThat(localStorage.isWorldStateAvailable(stateRoot)).isTrue();
 
     // Check that unknown trie nodes were requested
     final List<Bytes32> requestedHashes =
         sentMessages.stream()
-            .filter(m -> m.getCode() == EthPV63.GET_NODE_DATA)
+            .filter(m -> m.getCode() == EthProtocolMessages.GET_NODE_DATA)
             .map(GetNodeDataMessage::readFrom)
             .flatMap(m -> StreamSupport.stream(m.hashes().spliterator(), true))
             .collect(Collectors.toList());
-    assertThat(requestedHashes.size()).isGreaterThan(0);
-    assertThat(requestedHashes).containsAll(unknownNodes);
-    assertThat(requestedHashes).doesNotContainAnyElementsOf(knownNodes);
+    assertThat(requestedHashes)
+        .isNotEmpty()
+        .containsAll(unknownNodes)
+        .doesNotContainAnyElementsOf(knownNodes);
 
     // Check that all expected account data was downloaded
     final WorldStateArchive localWorldStateArchive =
-        new DefaultWorldStateArchive(localStorage, createPreimageStorage());
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(localStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
     final WorldState localWorldState = localWorldStateArchive.get(stateRoot, null).get();
     assertThat(result).isDone();
     assertAccountsMatch(localWorldState, accounts);
   }
 
   @Test
-  public void stalledDownloader() {
+  @Timeout(value = 60)
+  void stalledDownloader() {
     final EthProtocolManager ethProtocolManager =
-        EthProtocolManagerTestUtil.create(new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()));
+        EthProtocolManagerTestBuilder.builder()
+            .setEthScheduler(new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()))
+            .build();
 
     // Setup "remote" state
-    final WorldStateStorage remoteStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage remoteStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final WorldStateArchive remoteWorldStateArchive =
-        new DefaultWorldStateArchive(remoteStorage, createPreimageStorage());
-    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getMutable();
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(remoteStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
+    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getWorldState();
 
     // Generate accounts and save corresponding state root
     dataGen.createRandomAccounts(remoteWorldState, 10);
@@ -645,8 +690,8 @@ public class FastWorldStateDownloaderTest {
 
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         new InMemoryTasksPriorityQueues<>();
-    final WorldStateStorage localStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage localStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final SynchronizerConfiguration syncConfig =
         SynchronizerConfiguration.builder().worldStateMaxRequestsWithoutProgress(10).build();
     final WorldStateDownloader downloader =
@@ -688,13 +733,17 @@ public class FastWorldStateDownloaderTest {
   }
 
   @Test
-  public void resumesFromNonEmptyQueue() {
+  @Timeout(value = 60)
+  void resumesFromNonEmptyQueue() {
     // Setup "remote" state
-    final WorldStateStorage remoteStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage remoteStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final WorldStateArchive remoteWorldStateArchive =
-        new DefaultWorldStateArchive(remoteStorage, createPreimageStorage());
-    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getMutable();
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(remoteStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
+    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getWorldState();
 
     // Generate accounts and save corresponding state root
     List<Account> accounts = dataGen.createRandomAccounts(remoteWorldState, 10);
@@ -707,7 +756,7 @@ public class FastWorldStateDownloaderTest {
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         spy(new InMemoryTasksPriorityQueues<>());
     List<Bytes32> queuedHashes = getFirstSetOfChildNodeRequests(remoteStorage, stateRoot);
-    assertThat(queuedHashes.size()).isGreaterThan(0); // Sanity check
+    assertThat(queuedHashes).isNotEmpty(); // Sanity check
     for (Bytes32 bytes32 : queuedHashes) {
       taskCollection.add(new AccountTrieNodeDataRequest(Hash.wrap(bytes32), Optional.empty()));
     }
@@ -717,8 +766,8 @@ public class FastWorldStateDownloaderTest {
       verify(taskCollection, times(1)).add(argThat((r) -> r.getHash().equals(hash)));
     }
 
-    final WorldStateStorage localStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage localStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final SynchronizerConfiguration syncConfig =
         SynchronizerConfiguration.builder().worldStateMaxRequestsWithoutProgress(10).build();
     final WorldStateDownloader downloader =
@@ -737,17 +786,16 @@ public class FastWorldStateDownloaderTest {
 
     CompletableFuture<Void> result = downloader.run(null, new FastSyncState(header));
     peer.respondWhileOtherThreadsWork(responder, () -> !result.isDone());
-    assertThat(localStorage.isWorldStateAvailable(stateRoot, header.getHash())).isTrue();
+    assertThat(localStorage.isWorldStateAvailable(stateRoot)).isTrue();
 
     // Check that already enqueued trie nodes were requested
     final List<Bytes32> requestedHashes =
         sentMessages.stream()
-            .filter(m -> m.getCode() == EthPV63.GET_NODE_DATA)
+            .filter(m -> m.getCode() == EthProtocolMessages.GET_NODE_DATA)
             .map(GetNodeDataMessage::readFrom)
             .flatMap(m -> StreamSupport.stream(m.hashes().spliterator(), true))
             .collect(Collectors.toList());
-    assertThat(requestedHashes.size()).isGreaterThan(0);
-    assertThat(requestedHashes).containsAll(queuedHashes);
+    assertThat(requestedHashes).isNotEmpty().containsAll(queuedHashes);
 
     // Check that already enqueued requests were not enqueued more than once
     for (Bytes32 bytes32 : queuedHashes) {
@@ -758,7 +806,10 @@ public class FastWorldStateDownloaderTest {
     // Check that all expected account data was downloaded
     assertThat(result).isDone();
     final WorldStateArchive localWorldStateArchive =
-        new DefaultWorldStateArchive(localStorage, createPreimageStorage());
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(localStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
     final WorldState localWorldState = localWorldStateArchive.get(stateRoot, null).get();
     assertAccountsMatch(localWorldState, accounts);
   }
@@ -775,14 +826,14 @@ public class FastWorldStateDownloaderTest {
    * @return A list of hash-node pairs
    */
   private Map<Bytes32, Bytes> collectTrieNodesToBeRequestedAfterRoot(
-      final WorldStateStorage storage, final Bytes32 rootHash, final int maxNodes) {
+      final ForestWorldStateKeyValueStorage storage, final Bytes32 rootHash, final int maxNodes) {
     final Map<Bytes32, Bytes> trieNodes = new HashMap<>();
 
-    TrieNodeDecoder.breadthFirstDecoder(storage::getNodeData, rootHash)
+    TrieNodeDecoder.breadthFirstDecoder((location, hash) -> storage.getNodeData(hash), rootHash)
         .filter(n -> !Objects.equals(n.getHash(), rootHash))
         .filter(Node::isReferencedByHash)
         .limit(maxNodes)
-        .forEach((n) -> trieNodes.put(n.getHash(), n.getRlp()));
+        .forEach((n) -> trieNodes.put(n.getHash(), n.getEncodedBytes()));
 
     return trieNodes;
   }
@@ -798,10 +849,10 @@ public class FastWorldStateDownloaderTest {
    * @return A list of node hashes
    */
   private List<Bytes32> getFirstSetOfChildNodeRequests(
-      final WorldStateStorage storage, final Bytes32 rootHash) {
+      final ForestWorldStateKeyValueStorage storage, final Bytes32 rootHash) {
     final List<Bytes32> hashesToRequest = new ArrayList<>();
 
-    final Bytes rootNodeRlp = storage.getNodeData(Bytes.EMPTY, rootHash).get();
+    final Bytes rootNodeRlp = storage.getNodeData(rootHash).get();
     TrieNodeDecoder.decodeNodes(Bytes.EMPTY, rootNodeRlp).stream()
         .filter(n -> !Objects.equals(n.getHash(), rootHash))
         .filter(Node::isReferencedByHash)
@@ -828,11 +879,14 @@ public class FastWorldStateDownloaderTest {
     final int trailingPeerCount = 5;
 
     // Setup "remote" state
-    final WorldStateStorage remoteStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage remoteStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final WorldStateArchive remoteWorldStateArchive =
-        new DefaultWorldStateArchive(remoteStorage, createPreimageStorage());
-    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getMutable();
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(remoteStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
+    final MutableWorldState remoteWorldState = remoteWorldStateArchive.getWorldState();
 
     // Generate accounts and save corresponding state root
     final List<Account> accounts = dataGen.createRandomAccounts(remoteWorldState, accountCount);
@@ -852,10 +906,13 @@ public class FastWorldStateDownloaderTest {
 
     final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection =
         new InMemoryTasksPriorityQueues<>();
-    final WorldStateStorage localStorage =
-        new WorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+    final ForestWorldStateKeyValueStorage localStorage =
+        new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
     final WorldStateArchive localWorldStateArchive =
-        new DefaultWorldStateArchive(localStorage, createPreimageStorage());
+        new ForestWorldStateArchive(
+            new WorldStateStorageCoordinator(localStorage),
+            createPreimageStorage(),
+            EvmConfiguration.DEFAULT);
     final SynchronizerConfiguration syncConfig =
         SynchronizerConfiguration.builder()
             .worldStateHashCountPerRequest(hashesPerRequest)
@@ -877,7 +934,7 @@ public class FastWorldStateDownloaderTest {
                     EthProtocolManagerTestUtil.createPeer(
                         ethProtocolManager, header.getNumber() - 1L))
             .limit(trailingPeerCount)
-            .collect(Collectors.toList());
+            .toList();
 
     // Start downloader
     final CompletableFuture<?> result = downloader.run(null, new FastSyncState(header));
@@ -934,7 +991,7 @@ public class FastWorldStateDownloaderTest {
             mock(Blockchain.class),
             remoteWorldStateArchive,
             mock(TransactionPool.class),
-            ProtocolScheduleFixture.MAINNET,
+            ProtocolScheduleFixture.TESTING_NETWORK,
             .5f);
     final RespondingEthPeer.Responder emptyResponder = RespondingEthPeer.emptyResponder();
 
@@ -983,7 +1040,7 @@ public class FastWorldStateDownloaderTest {
 
   private WorldStateDownloader createDownloader(
       final EthContext context,
-      final WorldStateStorage storage,
+      final WorldStateKeyValueStorage storage,
       final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection) {
     return createDownloader(
         SynchronizerConfiguration.builder().build(), context, storage, taskCollection);
@@ -992,18 +1049,19 @@ public class FastWorldStateDownloaderTest {
   private WorldStateDownloader createDownloader(
       final SynchronizerConfiguration config,
       final EthContext context,
-      final WorldStateStorage storage,
+      final WorldStateKeyValueStorage storage,
       final InMemoryTasksPriorityQueues<NodeDataRequest> taskCollection) {
     return new FastWorldStateDownloader(
         context,
-        storage,
+        new WorldStateStorageCoordinator(storage),
         taskCollection,
         config.getWorldStateHashCountPerRequest(),
         config.getWorldStateRequestParallelism(),
         config.getWorldStateMaxRequestsWithoutProgress(),
         config.getWorldStateMinMillisBeforeStalling(),
         TestClock.fixed(),
-        new NoOpMetricsSystem());
+        new NoOpMetricsSystem(),
+        SyncDurationMetrics.NO_OP_SYNC_DURATION_METRICS);
   }
 
   private WorldStatePreimageStorage createPreimageStorage() {

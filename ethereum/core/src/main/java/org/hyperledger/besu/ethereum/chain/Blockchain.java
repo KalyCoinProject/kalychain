@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -52,6 +52,13 @@ public interface Blockchain {
   Optional<Hash> getSafeBlock();
 
   /**
+   * Return the number of the earliest block in the canonical chain.
+   *
+   * @return The number of the earliest block in the chain.
+   */
+  Optional<Long> getEarliestBlockNumber();
+
+  /**
    * Return the block number of the head of the canonical chain.
    *
    * @return The block number of the head of the chain.
@@ -92,6 +99,11 @@ public interface Blockchain {
             .orElseThrow(() -> new IllegalStateException("Missing genesis block."));
     return getBlockByHash(genesisHash)
         .orElseThrow(() -> new IllegalStateException("Missing genesis block."));
+  }
+
+  default BlockHeader getGenesisBlockHeader() {
+    return getBlockHeader(BlockHeader.GENESIS_BLOCK_NUMBER)
+        .orElseThrow(() -> new IllegalStateException("Missing genesis block header."));
   }
 
   default Optional<Block> getBlockByHash(final Hash blockHash) {
@@ -144,6 +156,15 @@ public interface Blockchain {
   Optional<BlockHeader> getBlockHeader(Hash blockHeaderHash);
 
   /**
+   * Safe version of {@code getBlockHeader} (it should take any locks necessary to ensure any block
+   * updates that might be taking place have been completed first)
+   *
+   * @param blockHeaderHash The hash of the block whose header we want to retrieve.
+   * @return The block header corresponding to this block hash.
+   */
+  Optional<BlockHeader> getBlockHeaderSafe(Hash blockHeaderHash);
+
+  /**
    * Returns the block body corresponding to the given block header hash. Associated block is not
    * necessarily on the canonical chain.
    *
@@ -152,6 +173,15 @@ public interface Blockchain {
    * @return The block body corresponding to the target block.
    */
   Optional<BlockBody> getBlockBody(Hash blockHeaderHash);
+
+  /**
+   * Safe version of {@code getBlockBody} (it should take any locks necessary to ensure any block
+   * updates that might be taking place have been completed first)
+   *
+   * @param blockHeaderHash The hash of the block whose header we want to retrieve.
+   * @return The block body corresponding to this block hash.
+   */
+  Optional<BlockBody> getBlockBodySafe(Hash blockHeaderHash);
 
   /**
    * Given a block's hash, returns the list of transaction receipts associated with this block's

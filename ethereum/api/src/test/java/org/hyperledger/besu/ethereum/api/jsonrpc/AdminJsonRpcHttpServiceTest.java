@@ -17,6 +17,7 @@ package org.hyperledger.besu.ethereum.api.jsonrpc;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import org.hyperledger.besu.ethereum.eth.EthProtocol;
 import org.hyperledger.besu.ethereum.eth.EthProtocolConfiguration;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
@@ -37,15 +38,15 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class AdminJsonRpcHttpServiceTest extends JsonRpcHttpServiceTestBase {
   private static final Logger LOG = LoggerFactory.getLogger(AdminJsonRpcHttpServiceTest.class);
 
-  @BeforeClass
+  @BeforeAll
   public static void setup() throws Exception {
     initServerAndClient();
   }
@@ -53,18 +54,17 @@ public class AdminJsonRpcHttpServiceTest extends JsonRpcHttpServiceTestBase {
   @Test
   public void getPeers() throws Exception {
     final List<Capability> caps = new ArrayList<>();
-    caps.add(Capability.create("eth", 61));
-    caps.add(Capability.create("eth", 62));
+    caps.add(EthProtocol.LATEST);
     final List<EthPeer> peerList = new ArrayList<>();
     final PeerInfo info1 =
         new PeerInfo(
-            4, CLIENT_VERSION, caps, 30302, Bytes.fromHexString(String.format("%0128x", 1)));
+            4, CLIENT_NODE_NAME, caps, 30302, Bytes.fromHexString(String.format("%0128x", 1)));
     final PeerInfo info2 =
         new PeerInfo(
-            4, CLIENT_VERSION, caps, 60302, Bytes.fromHexString(String.format("%0128x", 2)));
+            4, CLIENT_NODE_NAME, caps, 60302, Bytes.fromHexString(String.format("%0128x", 2)));
     final PeerInfo info3 =
         new PeerInfo(
-            4, CLIENT_VERSION, caps, 60303, Bytes.fromHexString(String.format("%0128x", 3)));
+            4, CLIENT_NODE_NAME, caps, 60303, Bytes.fromHexString(String.format("%0128x", 3)));
     final InetSocketAddress addr30301 = new InetSocketAddress("localhost", 30301);
     final InetSocketAddress addr30302 = new InetSocketAddress("localhost", 30302);
     final InetSocketAddress addr60301 = new InetSocketAddress("localhost", 60301);
@@ -74,30 +74,30 @@ public class AdminJsonRpcHttpServiceTest extends JsonRpcHttpServiceTestBase {
     peerList.add(
         new EthPeer(
             MockPeerConnection.create(info1, addr60301, addr30302),
-            "eth",
             c -> {},
             List.of(),
             EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE,
             TestClock.fixed(),
-            Collections.emptyList()));
+            Collections.emptyList(),
+            Bytes.random(64)));
     peerList.add(
         new EthPeer(
             MockPeerConnection.create(info2, addr30301, addr60302),
-            "eth",
             c -> {},
             List.of(),
             EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE,
             TestClock.fixed(),
-            Collections.emptyList()));
+            Collections.emptyList(),
+            Bytes.random(64)));
     peerList.add(
         new EthPeer(
             MockPeerConnection.create(info3, addr30301, addr60303),
-            "eth",
             c -> {},
             List.of(),
             EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE,
             TestClock.fixed(),
-            Collections.emptyList()));
+            Collections.emptyList(),
+            Bytes.random(64)));
 
     when(ethPeersMock.streamAllPeers()).thenReturn(peerList.stream());
     when(peerDiscoveryMock.getPeerCount()).thenReturn(peerList.size());
@@ -105,8 +105,8 @@ public class AdminJsonRpcHttpServiceTest extends JsonRpcHttpServiceTestBase {
     final String id = "123";
     final RequestBody body =
         RequestBody.create(
-            JSON,
-            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"admin_peers\"}");
+            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"admin_peers\"}",
+            JSON);
     final Request request = new Request.Builder().post(body).url(baseUrl).build();
     LOG.info("Request: " + request);
     try (final Response resp = client.newCall(request).execute()) {

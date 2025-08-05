@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,15 +18,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.hyperledger.besu.crypto.KeyPair;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.datatypes.BlobGas;
+import org.hyperledger.besu.datatypes.TransactionType;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.core.TransactionTestFixture;
-import org.hyperledger.besu.plugin.data.TransactionType;
 
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class ZeroBaseFeeMarketTest {
 
@@ -35,7 +36,7 @@ public class ZeroBaseFeeMarketTest {
   private static final long FORK_BLOCK = 0;
   private ZeroBaseFeeMarket zeroBaseFeeMarket;
 
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
     zeroBaseFeeMarket = new ZeroBaseFeeMarket(FORK_BLOCK);
   }
@@ -67,6 +68,7 @@ public class ZeroBaseFeeMarketTest {
             .maxPriorityFeePerGas(Optional.of(Wei.of(8)))
             .gasPrice(null)
             .createTransaction(KEY_PAIR1);
+
     assertThat(
             zeroBaseFeeMarket
                 .getTransactionPriceCalculator()
@@ -136,5 +138,15 @@ public class ZeroBaseFeeMarketTest {
     final ZeroBaseFeeMarket zeroBaseFeeMarket = new ZeroBaseFeeMarket(10);
     assertThat(zeroBaseFeeMarket.isBeforeForkBlock(10)).isFalse();
     assertThat(zeroBaseFeeMarket.isBeforeForkBlock(11)).isFalse();
+  }
+
+  @Test
+  public void implementsBlobFeeShouldReturnFalse() {
+    assertThat(zeroBaseFeeMarket.implementsBlobFee()).isFalse();
+  }
+
+  @Test
+  public void dataPriceShouldReturnsZero() {
+    assertThat(zeroBaseFeeMarket.blobGasPricePerGas(BlobGas.ONE)).isEqualTo(Wei.ZERO);
   }
 }

@@ -15,9 +15,11 @@
 package org.hyperledger.besu.consensus.common.bft.blockcreation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.internal.verification.VerificationModeFactory.times;
 
 import org.hyperledger.besu.consensus.common.bft.BftEventQueue;
 import org.hyperledger.besu.consensus.common.bft.BftExecutors;
@@ -34,14 +36,13 @@ import org.hyperledger.besu.ethereum.core.BlockHeader;
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.tuweni.bytes.Bytes;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class BftMiningCoordinatorTest {
   @Mock private BftEventHandler controller;
   @Mock private BftExecutors bftExecutors;
@@ -54,14 +55,15 @@ public class BftMiningCoordinatorTest {
   private final BftEventQueue eventQueue = new BftEventQueue(1000);
   private BftMiningCoordinator bftMiningCoordinator;
 
-  @Before
+  @BeforeEach
   public void setup() {
+    eventQueue.start();
     bftMiningCoordinator =
         new BftMiningCoordinator(
             bftExecutors, controller, bftProcessor, bftBlockCreatorFactory, blockChain, eventQueue);
-    when(block.getBody()).thenReturn(blockBody);
-    when(block.getHeader()).thenReturn(blockHeader);
-    when(blockBody.getTransactions()).thenReturn(Collections.emptyList());
+    lenient().when(block.getBody()).thenReturn(blockBody);
+    lenient().when(block.getHeader()).thenReturn(blockHeader);
+    lenient().when(blockBody.getTransactions()).thenReturn(Collections.emptyList());
   }
 
   @Test
@@ -75,9 +77,32 @@ public class BftMiningCoordinatorTest {
     bftMiningCoordinator.stop();
     verify(bftProcessor, never()).stop();
 
+    bftMiningCoordinator.enable();
     bftMiningCoordinator.start();
     bftMiningCoordinator.stop();
     verify(bftProcessor).stop();
+  }
+
+  @Test
+  public void restartsMiningAfterStop() {
+    assertThat(bftMiningCoordinator.isMining()).isFalse();
+    bftMiningCoordinator.stop();
+    verify(bftProcessor, never()).stop();
+
+    bftMiningCoordinator.enable();
+    bftMiningCoordinator.start();
+    assertThat(bftMiningCoordinator.isMining()).isTrue();
+
+    bftMiningCoordinator.stop();
+    assertThat(bftMiningCoordinator.isMining()).isFalse();
+    verify(bftProcessor).stop();
+
+    bftMiningCoordinator.start();
+    assertThat(bftMiningCoordinator.isMining()).isTrue();
+
+    // BFT processor should be started once for every time the mining
+    // coordinator is restarted
+    verify(bftProcessor, times(2)).start();
   }
 
   @Test
@@ -85,13 +110,6 @@ public class BftMiningCoordinatorTest {
     final Wei minGasPrice = Wei.of(10);
     when(bftBlockCreatorFactory.getMinTransactionGasPrice()).thenReturn(minGasPrice);
     assertThat(bftMiningCoordinator.getMinTransactionGasPrice()).isEqualTo(minGasPrice);
-  }
-
-  @Test
-  public void setsTheExtraData() {
-    final Bytes extraData = Bytes.fromHexStringLenient("0x1234");
-    bftMiningCoordinator.setExtraData(extraData);
-    verify(bftBlockCreatorFactory).setExtraData(extraData);
   }
 
   @Test

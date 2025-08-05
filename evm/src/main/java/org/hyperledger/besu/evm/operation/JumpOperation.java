@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,42 +14,43 @@
  */
 package org.hyperledger.besu.evm.operation;
 
-import org.hyperledger.besu.evm.Code;
 import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
-import org.apache.tuweni.bytes.Bytes;
-
+/** The Jump operation. */
 public class JumpOperation extends AbstractFixedCostOperation {
 
-  private final Operation.OperationResult invalidJumpResponse;
-  private final OperationResult jumpResponse;
+  private static final Operation.OperationResult invalidJumpResponse =
+      new Operation.OperationResult(8L, ExceptionalHaltReason.INVALID_JUMP_DESTINATION);
+  private static final OperationResult jumpResponse = new OperationResult(8L, null, 0);
 
+  private static final JumpService jumpService = new JumpService();
+
+  /**
+   * Instantiates a new Jump operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public JumpOperation(final GasCalculator gasCalculator) {
-    super(0x56, "JUMP", 2, 0, 1, gasCalculator, gasCalculator.getMidTierGasCost());
-    invalidJumpResponse =
-        new Operation.OperationResult(gasCost, ExceptionalHaltReason.INVALID_JUMP_DESTINATION);
-    jumpResponse = new OperationResult(gasCost, null, 0);
+    super(0x56, "JUMP", 2, 0, gasCalculator, gasCalculator.getMidTierGasCost());
   }
 
   @Override
   public Operation.OperationResult executeFixedCostOperation(
       final MessageFrame frame, final EVM evm) {
-    final int jumpDestination;
-    final Bytes bytes = frame.popStackItem().trimLeadingZeros();
-    try {
-      jumpDestination = bytes.toInt();
-    } catch (final RuntimeException iae) {
-      return invalidJumpResponse;
-    }
-    final Code code = frame.getCode();
-    if (code.isJumpDestInvalid(jumpDestination)) {
-      return invalidJumpResponse;
-    } else {
-      frame.setPC(jumpDestination);
-      return jumpResponse;
-    }
+    return staticOperation(frame);
+  }
+
+  /**
+   * Performs Jump operation.
+   *
+   * @param frame the frame
+   * @return the operation result
+   */
+  public static OperationResult staticOperation(final MessageFrame frame) {
+    return jumpService.performJump(
+        frame, frame.popStackItem().trimLeadingZeros(), jumpResponse, invalidJumpResponse);
   }
 }

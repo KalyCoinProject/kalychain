@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.hyperledger.besu.plugin.services.storage.KeyValueStorage;
 import org.hyperledger.besu.plugin.services.storage.KeyValueStorageTransaction;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -32,330 +33,476 @@ import java.util.stream.Stream;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
-@Ignore
+/** The Abstract key value storage test. */
+@Disabled
 public abstract class AbstractKeyValueStorageTest {
+  /** Default Constructor */
+  protected AbstractKeyValueStorageTest() {}
 
+  /**
+   * Create store key value storage.
+   *
+   * @return the key value storage
+   * @throws Exception the exception
+   */
   protected abstract KeyValueStorage createStore() throws Exception;
 
+  /**
+   * Two stores are independent.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void twoStoresAreIndependent() throws Exception {
-    final KeyValueStorage store1 = createStore();
-    final KeyValueStorage store2 = createStore();
+    try (final KeyValueStorage store1 = createStore()) {
+      try (final KeyValueStorage store2 = createStore()) {
 
-    final KeyValueStorageTransaction tx = store1.startTransaction();
-    final byte[] key = bytesFromHexString("0001");
-    final byte[] value = bytesFromHexString("0FFF");
+        final KeyValueStorageTransaction tx = store1.startTransaction();
+        final byte[] key = bytesFromHexString("0001");
+        final byte[] value = bytesFromHexString("0FFF");
 
-    tx.put(key, value);
-    tx.commit();
+        tx.put(key, value);
+        tx.commit();
 
-    final Optional<byte[]> result = store2.get(key);
-    assertThat(result).isEmpty();
+        final Optional<byte[]> result = store2.get(key);
+        assertThat(result).isEmpty();
+      }
+    }
   }
 
+  /**
+   * Put.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void put() throws Exception {
-    final KeyValueStorage store = createStore();
-    final byte[] key = bytesFromHexString("0F");
-    final byte[] firstValue = bytesFromHexString("0ABC");
-    final byte[] secondValue = bytesFromHexString("0DEF");
+    try (final KeyValueStorage store = createStore()) {
+      final byte[] key = bytesFromHexString("0F");
+      final byte[] firstValue = bytesFromHexString("0ABC");
+      final byte[] secondValue = bytesFromHexString("0DEF");
 
-    KeyValueStorageTransaction tx = store.startTransaction();
-    tx.put(key, firstValue);
-    tx.commit();
-    assertThat(store.get(key)).contains(firstValue);
+      KeyValueStorageTransaction tx = store.startTransaction();
+      tx.put(key, firstValue);
+      tx.commit();
+      assertThat(store.get(key)).contains(firstValue);
 
-    tx = store.startTransaction();
-    tx.put(key, secondValue);
-    tx.commit();
-    assertThat(store.get(key)).contains(secondValue);
+      tx = store.startTransaction();
+      tx.put(key, secondValue);
+      tx.commit();
+      assertThat(store.get(key)).contains(secondValue);
+    }
   }
 
+  /**
+   * Stream keys.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void streamKeys() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    final List<byte[]> keys =
-        Stream.of("0F", "10", "11", "12")
-            .map(this::bytesFromHexString)
-            .collect(toUnmodifiableList());
-    keys.forEach(key -> tx.put(key, bytesFromHexString("0ABC")));
-    tx.commit();
-    assertThat(store.stream().map(Pair::getKey).collect(toUnmodifiableSet()))
-        .containsExactlyInAnyOrder(keys.toArray(new byte[][] {}));
+    try (final KeyValueStorage store = createStore()) {
+      final KeyValueStorageTransaction tx = store.startTransaction();
+      final List<byte[]> keys =
+          Stream.of("0F", "10", "11", "12")
+              .map(this::bytesFromHexString)
+              .collect(toUnmodifiableList());
+      keys.forEach(key -> tx.put(key, bytesFromHexString("0ABC")));
+      tx.commit();
+      assertThat(store.stream().map(Pair::getKey).collect(toUnmodifiableSet()))
+          .containsExactlyInAnyOrder(keys.toArray(new byte[][] {}));
+    }
   }
 
+  /**
+   * Gets all keys that.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void getAllKeysThat() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.put(bytesFromHexString("0F"), bytesFromHexString("0ABC"));
-    tx.put(bytesFromHexString("10"), bytesFromHexString("0ABC"));
-    tx.put(bytesFromHexString("11"), bytesFromHexString("0ABC"));
-    tx.put(bytesFromHexString("12"), bytesFromHexString("0ABC"));
-    tx.commit();
-    Set<byte[]> keys = store.getAllKeysThat(bv -> Bytes.wrap(bv).toString().contains("1"));
-    assertThat(keys.size()).isEqualTo(3);
-    assertThat(keys)
-        .containsExactlyInAnyOrder(
-            bytesFromHexString("10"), bytesFromHexString("11"), bytesFromHexString("12"));
+    try (final KeyValueStorage store = createStore()) {
+      final KeyValueStorageTransaction tx = store.startTransaction();
+      tx.put(bytesFromHexString("0F"), bytesFromHexString("0ABC"));
+      tx.put(bytesFromHexString("10"), bytesFromHexString("0ABC"));
+      tx.put(bytesFromHexString("11"), bytesFromHexString("0ABC"));
+      tx.put(bytesFromHexString("12"), bytesFromHexString("0ABC"));
+      tx.commit();
+      Set<byte[]> keys = store.getAllKeysThat(bv -> Bytes.wrap(bv).toString().contains("1"));
+      assertThat(keys.size()).isEqualTo(3);
+      assertThat(keys)
+          .containsExactlyInAnyOrder(
+              bytesFromHexString("10"), bytesFromHexString("11"), bytesFromHexString("12"));
+    }
   }
 
+  /**
+   * Contains key.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void containsKey() throws Exception {
-    final KeyValueStorage store = createStore();
-    final byte[] key = bytesFromHexString("ABCD");
-    final byte[] value = bytesFromHexString("DEFF");
+    try (final KeyValueStorage store = createStore()) {
+      final byte[] key = bytesFromHexString("ABCD");
+      final byte[] value = bytesFromHexString("DEFF");
 
-    assertThat(store.containsKey(key)).isFalse();
+      assertThat(store.containsKey(key)).isFalse();
 
-    final KeyValueStorageTransaction transaction = store.startTransaction();
-    transaction.put(key, value);
-    transaction.commit();
+      final KeyValueStorageTransaction transaction = store.startTransaction();
+      transaction.put(key, value);
+      transaction.commit();
 
-    assertThat(store.containsKey(key)).isTrue();
+      assertThat(store.containsKey(key)).isTrue();
+    }
   }
 
+  /**
+   * Remove existing.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void removeExisting() throws Exception {
-    final KeyValueStorage store = createStore();
-    final byte[] key = bytesFromHexString("0F");
-    final byte[] value = bytesFromHexString("0ABC");
+    try (final KeyValueStorage store = createStore()) {
+      final byte[] key = bytesFromHexString("0F");
+      final byte[] value = bytesFromHexString("0ABC");
 
-    KeyValueStorageTransaction tx = store.startTransaction();
-    tx.put(key, value);
-    tx.commit();
+      KeyValueStorageTransaction tx = store.startTransaction();
+      tx.put(key, value);
+      tx.commit();
 
-    tx = store.startTransaction();
-    tx.remove(key);
-    tx.commit();
-    assertThat(store.get(key)).isEmpty();
+      tx = store.startTransaction();
+      tx.remove(key);
+      tx.commit();
+      assertThat(store.get(key)).isEmpty();
+    }
   }
 
+  /**
+   * Remove existing same transaction.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void removeExistingSameTransaction() throws Exception {
-    final KeyValueStorage store = createStore();
-    final byte[] key = bytesFromHexString("0F");
-    final byte[] value = bytesFromHexString("0ABC");
+    try (final KeyValueStorage store = createStore()) {
+      final byte[] key = bytesFromHexString("0F");
+      final byte[] value = bytesFromHexString("0ABC");
 
-    KeyValueStorageTransaction tx = store.startTransaction();
-    tx.put(key, value);
-    tx.remove(key);
-    tx.commit();
-    assertThat(store.get(key)).isEmpty();
+      KeyValueStorageTransaction tx = store.startTransaction();
+      tx.put(key, value);
+      tx.remove(key);
+      tx.commit();
+      assertThat(store.get(key)).isEmpty();
+    }
   }
 
+  /**
+   * Remove non existent.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void removeNonExistent() throws Exception {
-    final KeyValueStorage store = createStore();
-    final byte[] key = bytesFromHexString("0F");
+    try (final KeyValueStorage store = createStore()) {
+      final byte[] key = bytesFromHexString("0F");
 
-    KeyValueStorageTransaction tx = store.startTransaction();
-    tx.remove(key);
-    tx.commit();
-    assertThat(store.get(key)).isEmpty();
+      KeyValueStorageTransaction tx = store.startTransaction();
+      tx.remove(key);
+      tx.commit();
+      assertThat(store.get(key)).isEmpty();
+    }
   }
 
+  /**
+   * Concurrent update.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void concurrentUpdate() throws Exception {
     final int keyCount = 1000;
-    final KeyValueStorage store = createStore();
+    try (final KeyValueStorage store = createStore()) {
 
-    final CountDownLatch finishedLatch = new CountDownLatch(2);
-    final Function<byte[], Thread> updater =
-        (value) ->
-            new Thread(
-                () -> {
-                  try {
-                    for (int i = 0; i < keyCount; i++) {
-                      KeyValueStorageTransaction tx = store.startTransaction();
-                      tx.put(Bytes.minimalBytes(i).toArrayUnsafe(), value);
-                      tx.commit();
+      final CountDownLatch finishedLatch = new CountDownLatch(2);
+      final Function<byte[], Thread> updater =
+          (value) ->
+              new Thread(
+                  () -> {
+                    try {
+                      for (int i = 0; i < keyCount; i++) {
+                        KeyValueStorageTransaction tx = store.startTransaction();
+                        tx.put(Bytes.minimalBytes(i).toArrayUnsafe(), value);
+                        tx.commit();
+                      }
+                    } finally {
+                      finishedLatch.countDown();
                     }
-                  } finally {
-                    finishedLatch.countDown();
-                  }
-                });
+                  });
 
-    // Run 2 concurrent transactions that write a bunch of values to the same keys
-    final byte[] a = Bytes.of(10).toArrayUnsafe();
-    final byte[] b = Bytes.of(20).toArrayUnsafe();
-    updater.apply(a).start();
-    updater.apply(b).start();
+      // Run 2 concurrent transactions that write a bunch of values to the same keys
+      final byte[] a = Bytes.of(10).toArrayUnsafe();
+      final byte[] b = Bytes.of(20).toArrayUnsafe();
+      updater.apply(a).start();
+      updater.apply(b).start();
 
-    finishedLatch.await();
+      finishedLatch.await();
 
-    for (int i = 0; i < keyCount; i++) {
-      final byte[] key = Bytes.minimalBytes(i).toArrayUnsafe();
-      final byte[] actual = store.get(key).get();
-      assertThat(Arrays.equals(actual, a) || Arrays.equals(actual, b)).isTrue();
+      for (int i = 0; i < keyCount; i++) {
+        final byte[] key = Bytes.minimalBytes(i).toArrayUnsafe();
+        final byte[] actual = store.get(key).get();
+        assertThat(Arrays.equals(actual, a) || Arrays.equals(actual, b)).isTrue();
+      }
     }
-
-    store.close();
   }
 
+  /**
+   * Transaction commit.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void transactionCommit() throws Exception {
-    final KeyValueStorage store = createStore();
-    // Add some values
-    KeyValueStorageTransaction tx = store.startTransaction();
-    tx.put(bytesOf(1), bytesOf(1));
-    tx.put(bytesOf(2), bytesOf(2));
-    tx.put(bytesOf(3), bytesOf(3));
-    tx.commit();
+    try (final KeyValueStorage store = createStore()) {
+      // Add some values
+      KeyValueStorageTransaction tx = store.startTransaction();
+      tx.put(bytesOf(1), bytesOf(1));
+      tx.put(bytesOf(2), bytesOf(2));
+      tx.put(bytesOf(3), bytesOf(3));
+      tx.commit();
 
-    // Start transaction that adds, modifies, and removes some values
-    tx = store.startTransaction();
-    tx.put(bytesOf(2), bytesOf(3));
-    tx.put(bytesOf(2), bytesOf(4));
-    tx.remove(bytesOf(3));
-    tx.put(bytesOf(4), bytesOf(8));
+      // Start transaction that adds, modifies, and removes some values
+      tx = store.startTransaction();
+      tx.put(bytesOf(2), bytesOf(3));
+      tx.put(bytesOf(2), bytesOf(4));
+      tx.remove(bytesOf(3));
+      tx.put(bytesOf(4), bytesOf(8));
 
-    // Check values before committing have not changed
-    assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
-    assertThat(store.get(bytesOf(2))).contains(bytesOf(2));
-    assertThat(store.get(bytesOf(3))).contains(bytesOf(3));
-    assertThat(store.get(bytesOf(4))).isEmpty();
+      // Check values before committing have not changed
+      assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
+      assertThat(store.get(bytesOf(2))).contains(bytesOf(2));
+      assertThat(store.get(bytesOf(3))).contains(bytesOf(3));
+      assertThat(store.get(bytesOf(4))).isEmpty();
 
-    tx.commit();
+      tx.commit();
 
-    // Check that values have been updated after commit
-    assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
-    assertThat(store.get(bytesOf(2))).contains(bytesOf(4));
-    assertThat(store.get(bytesOf(3))).isEmpty();
-    assertThat(store.get(bytesOf(4))).contains(bytesOf(8));
+      // Check that values have been updated after commit
+      assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
+      assertThat(store.get(bytesOf(2))).contains(bytesOf(4));
+      assertThat(store.get(bytesOf(3))).isEmpty();
+      assertThat(store.get(bytesOf(4))).contains(bytesOf(8));
+    }
   }
 
+  /**
+   * Transaction rollback.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void transactionRollback() throws Exception {
-    final KeyValueStorage store = createStore();
-    // Add some values
-    KeyValueStorageTransaction tx = store.startTransaction();
-    tx.put(bytesOf(1), bytesOf(1));
-    tx.put(bytesOf(2), bytesOf(2));
-    tx.put(bytesOf(3), bytesOf(3));
-    tx.commit();
+    try (final KeyValueStorage store = createStore()) {
+      // Add some values
+      KeyValueStorageTransaction tx = store.startTransaction();
+      tx.put(bytesOf(1), bytesOf(1));
+      tx.put(bytesOf(2), bytesOf(2));
+      tx.put(bytesOf(3), bytesOf(3));
+      tx.commit();
 
-    // Start transaction that adds, modifies, and removes some values
-    tx = store.startTransaction();
-    tx.put(bytesOf(2), bytesOf(3));
-    tx.put(bytesOf(2), bytesOf(4));
-    tx.remove(bytesOf(3));
-    tx.put(bytesOf(4), bytesOf(8));
+      // Start transaction that adds, modifies, and removes some values
+      tx = store.startTransaction();
+      tx.put(bytesOf(2), bytesOf(3));
+      tx.put(bytesOf(2), bytesOf(4));
+      tx.remove(bytesOf(3));
+      tx.put(bytesOf(4), bytesOf(8));
 
-    // Check values before committing have not changed
-    assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
-    assertThat(store.get(bytesOf(2))).contains(bytesOf(2));
-    assertThat(store.get(bytesOf(3))).contains(bytesOf(3));
-    assertThat(store.get(bytesOf(4))).isEmpty();
+      // Check values before committing have not changed
+      assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
+      assertThat(store.get(bytesOf(2))).contains(bytesOf(2));
+      assertThat(store.get(bytesOf(3))).contains(bytesOf(3));
+      assertThat(store.get(bytesOf(4))).isEmpty();
 
-    tx.rollback();
+      tx.rollback();
 
-    // Check that values have not changed after rollback
-    assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
-    assertThat(store.get(bytesOf(2))).contains(bytesOf(2));
-    assertThat(store.get(bytesOf(3))).contains(bytesOf(3));
-    assertThat(store.get(bytesOf(4))).isEmpty();
+      // Check that values have not changed after rollback
+      assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
+      assertThat(store.get(bytesOf(2))).contains(bytesOf(2));
+      assertThat(store.get(bytesOf(3))).contains(bytesOf(3));
+      assertThat(store.get(bytesOf(4))).isEmpty();
+    }
   }
 
+  /**
+   * Transaction commit empty.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void transactionCommitEmpty() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.commit();
+    try (final KeyValueStorage store = createStore()) {
+      final KeyValueStorageTransaction tx = store.startTransaction();
+      tx.commit();
+    }
   }
 
+  /**
+   * Transaction rollback empty.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void transactionRollbackEmpty() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.rollback();
+    try (final KeyValueStorage store = createStore()) {
+      final KeyValueStorageTransaction tx = store.startTransaction();
+      tx.rollback();
+    }
   }
 
-  @Test(expected = IllegalStateException.class)
-  public void transactionPutAfterCommit() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.commit();
-    tx.put(bytesOf(1), bytesOf(1));
+  /** Transaction put after commit. */
+  @Test
+  public void transactionPutAfterCommit() {
+    Assertions.assertThatThrownBy(
+            () -> {
+              try (final KeyValueStorage store = createStore()) {
+                final KeyValueStorageTransaction tx = store.startTransaction();
+                tx.commit();
+                tx.put(bytesOf(1), bytesOf(1));
+              }
+            })
+        .isInstanceOf(IllegalStateException.class);
   }
 
-  @Test(expected = IllegalStateException.class)
-  public void transactionRemoveAfterCommit() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.commit();
-    tx.remove(bytesOf(1));
+  /** Transaction remove after commit. */
+  @Test
+  public void transactionRemoveAfterCommit() {
+    Assertions.assertThatThrownBy(
+            () -> {
+              try (final KeyValueStorage store = createStore()) {
+                final KeyValueStorageTransaction tx = store.startTransaction();
+                tx.commit();
+                tx.remove(bytesOf(1));
+              }
+            })
+        .isInstanceOf(IllegalStateException.class);
   }
 
-  @Test(expected = IllegalStateException.class)
-  public void transactionPutAfterRollback() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.rollback();
-    tx.put(bytesOf(1), bytesOf(1));
+  /** Transaction put after rollback. */
+  @Test
+  public void transactionPutAfterRollback() {
+    Assertions.assertThatThrownBy(
+            () -> {
+              try (final KeyValueStorage store = createStore()) {
+                final KeyValueStorageTransaction tx = store.startTransaction();
+                tx.rollback();
+                tx.put(bytesOf(1), bytesOf(1));
+              }
+            })
+        .isInstanceOf(IllegalStateException.class);
   }
 
-  @Test(expected = IllegalStateException.class)
-  public void transactionRemoveAfterRollback() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.rollback();
-    tx.remove(bytesOf(1));
+  /** Transaction remove after rollback. */
+  @Test
+  public void transactionRemoveAfterRollback() {
+    Assertions.assertThatThrownBy(
+            () -> {
+              try (final KeyValueStorage store = createStore()) {
+                final KeyValueStorageTransaction tx = store.startTransaction();
+                tx.rollback();
+                tx.remove(bytesOf(1));
+              }
+            })
+        .isInstanceOf(IllegalStateException.class);
   }
 
-  @Test(expected = IllegalStateException.class)
-  public void transactionCommitAfterRollback() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.rollback();
-    tx.commit();
+  /** Transaction commit after rollback. */
+  @Test
+  public void transactionCommitAfterRollback() {
+    Assertions.assertThatThrownBy(
+            () -> {
+              try (final KeyValueStorage store = createStore()) {
+                final KeyValueStorageTransaction tx = store.startTransaction();
+                tx.rollback();
+                tx.commit();
+              }
+            })
+        .isInstanceOf(IllegalStateException.class);
   }
 
-  @Test(expected = IllegalStateException.class)
-  public void transactionCommitTwice() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.commit();
-    tx.commit();
+  /** Transaction commit twice. */
+  @Test
+  public void transactionCommitTwice() {
+    Assertions.assertThatThrownBy(
+            () -> {
+              try (final KeyValueStorage store = createStore()) {
+                final KeyValueStorageTransaction tx = store.startTransaction();
+                tx.commit();
+                tx.commit();
+              }
+            })
+        .isInstanceOf(IllegalStateException.class);
   }
 
-  @Test(expected = IllegalStateException.class)
-  public void transactionRollbackAfterCommit() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.commit();
-    tx.rollback();
+  /** Transaction rollback after commit. */
+  @Test
+  public void transactionRollbackAfterCommit() {
+    Assertions.assertThatThrownBy(
+            () -> {
+              try (final KeyValueStorage store = createStore()) {
+                final KeyValueStorageTransaction tx = store.startTransaction();
+                tx.commit();
+                tx.rollback();
+              }
+            })
+        .isInstanceOf(IllegalStateException.class);
   }
 
-  @Test(expected = IllegalStateException.class)
-  public void transactionRollbackTwice() throws Exception {
-    final KeyValueStorage store = createStore();
-    final KeyValueStorageTransaction tx = store.startTransaction();
-    tx.rollback();
-    tx.rollback();
+  /** Transaction rollback twice. */
+  @Test
+  public void transactionRollbackTwice() {
+    Assertions.assertThatThrownBy(
+            () -> {
+              try (final KeyValueStorage store = createStore()) {
+                final KeyValueStorageTransaction tx = store.startTransaction();
+                tx.rollback();
+                tx.rollback();
+              }
+            })
+        .isInstanceOf(IllegalStateException.class);
   }
 
+  /**
+   * Two transactions.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void twoTransactions() throws Exception {
-    final KeyValueStorage store = createStore();
+    try (final KeyValueStorage store = createStore()) {
 
-    final KeyValueStorageTransaction tx1 = store.startTransaction();
-    final KeyValueStorageTransaction tx2 = store.startTransaction();
+      final KeyValueStorageTransaction tx1 = store.startTransaction();
+      final KeyValueStorageTransaction tx2 = store.startTransaction();
 
-    tx1.put(bytesOf(1), bytesOf(1));
-    tx2.put(bytesOf(2), bytesOf(2));
+      tx1.put(bytesOf(1), bytesOf(1));
+      tx2.put(bytesOf(2), bytesOf(2));
 
-    tx1.commit();
-    tx2.commit();
+      tx1.commit();
+      tx2.commit();
 
-    assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
-    assertThat(store.get(bytesOf(2))).contains(bytesOf(2));
+      assertThat(store.get(bytesOf(1))).contains(bytesOf(1));
+      assertThat(store.get(bytesOf(2))).contains(bytesOf(2));
+    }
   }
 
+  /**
+   * Transaction isolation.
+   *
+   * @throws Exception the exception
+   */
   @Test
   public void transactionIsolation() throws Exception {
     final int keyCount = 1000;
@@ -403,6 +550,12 @@ public abstract class AbstractKeyValueStorageTest {
     store.close();
   }
 
+  /**
+   * Bytes from hex string byte [ ].
+   *
+   * @param hex the hex
+   * @return the byte [ ]
+   */
   /*
    * Used to mimic the wrapping with Bytes performed in Besu
    */
@@ -410,7 +563,24 @@ public abstract class AbstractKeyValueStorageTest {
     return Bytes.fromHexString(hex).toArrayUnsafe();
   }
 
+  /**
+   * Bytes of byte [ ].
+   *
+   * @param bytes the bytes
+   * @return the byte [ ]
+   */
   protected byte[] bytesOf(final int... bytes) {
     return Bytes.of(bytes).toArrayUnsafe();
+  }
+
+  /**
+   * Create a sub folder from the given path, that will not conflict with other folders.
+   *
+   * @param folder the folder in which to create the sub folder
+   * @return the path representing the sub folder
+   * @throws Exception if the folder cannot be created
+   */
+  protected Path getTempSubFolder(final Path folder) throws Exception {
+    return java.nio.file.Files.createTempDirectory(folder, null);
   }
 }

@@ -28,6 +28,8 @@ import org.hyperledger.besu.ethereum.debug.TraceFrame;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.evm.Code;
 import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
+import org.hyperledger.besu.evm.operation.ReturnOperation;
+import org.hyperledger.besu.evm.operation.RevertOperation;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -336,7 +338,7 @@ public class FlatTraceGenerator {
     if ("STOP".equals(traceFrame.getOpcode()) && resultBuilder.isGasUsedEmpty()) {
       final long callStipend =
           protocolSchedule
-              .getByBlockNumber(block.getHeader().getNumber())
+              .getByBlockHeader(block.getHeader())
               .getGasCalculator()
               .getAdditionalCallStipend();
       tracesContexts.stream()
@@ -354,7 +356,7 @@ public class FlatTraceGenerator {
 
     // set value for contract creation TXes, CREATE, and CREATE2
     if (actionBuilder.getCallType() == null && traceFrame.getMaybeCode().isPresent()) {
-      actionBuilder.init(traceFrame.getMaybeCode().get().getContainerBytes().toHexString());
+      actionBuilder.init(traceFrame.getMaybeCode().get().getBytes().toHexString());
       resultBuilder.code(outputData.toHexString());
       if (currentContext.isCreateOp()) {
         // this is from a CREATE/CREATE2, so add code deposit cost.
@@ -460,7 +462,7 @@ public class FlatTraceGenerator {
 
     traceFrame
         .getMaybeCode()
-        .map(Code::getContainerBytes)
+        .map(Code::getBytes)
         .map(Bytes::toHexString)
         .ifPresent(subTraceActionBuilder::init);
 
@@ -490,7 +492,18 @@ public class FlatTraceGenerator {
       traceFrameBuilder = currentContext.getBuilder();
     }
     traceFrameBuilder.error(
-        traceFrame.getExceptionalHaltReason().map(ExceptionalHaltReason::getDescription));
+        traceFrame
+            .getExceptionalHaltReason()
+            .map(
+                exceptionalHaltReason -> {
+                  if (exceptionalHaltReason
+                      .name()
+                      .equals(ExceptionalHaltReason.INVALID_OPERATION.name())) {
+                    return ExceptionalHaltReason.INVALID_OPERATION.getDescription();
+                  } else {
+                    return exceptionalHaltReason.getDescription();
+                  }
+                }));
     if (currentContext != null) {
       final Action.Builder actionBuilder = traceFrameBuilder.getActionBuilder();
       actionBuilder.value(Quantity.create(traceFrame.getValue()));
@@ -534,9 +547,9 @@ public class FlatTraceGenerator {
       if (i + 1 < transactionTrace.getTraceFrames().size()) {
         final TraceFrame next = transactionTrace.getTraceFrames().get(i + 1);
         if (next.getDepth() == callFrame.getDepth()) {
-          if (next.getOpcode().equals("REVERT")) {
+          if (next.getOpcodeNumber() == RevertOperation.OPCODE) {
             return true;
-          } else if (next.getOpcode().equals("RETURN")) {
+          } else if (next.getOpcodeNumber() == ReturnOperation.OPCODE) {
             return false;
           }
         }
@@ -622,7 +635,7 @@ public class FlatTraceGenerator {
         .collect(Collectors.toList());
   }
 
-  private static void addAdditionalTransactionInformationToFlatTrace(
+  protected static void addAdditionalTransactionInformationToFlatTrace(
       final FlatTrace.Builder builder, final TransactionTrace transactionTrace, final Block block) {
     // add block information (hash and number)
     builder.blockHash(block.getHash().toHexString()).blockNumber(block.getHeader().getNumber());

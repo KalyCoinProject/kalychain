@@ -18,14 +18,24 @@ import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
-import org.apache.tuweni.units.bigints.UInt256;
+import java.math.BigInteger;
 
+import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.bytes.Bytes32;
+
+/** The Sub (Subtract) operation. */
 public class SubOperation extends AbstractFixedCostOperation {
 
+  /** The Sub operation success result. */
   static final OperationResult subSuccess = new OperationResult(3, null);
 
+  /**
+   * Instantiates a new Sub operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public SubOperation(final GasCalculator gasCalculator) {
-    super(0x03, "SUB", 2, 1, 1, gasCalculator, gasCalculator.getVeryLowTierGasCost());
+    super(0x03, "SUB", 2, 1, gasCalculator, gasCalculator.getVeryLowTierGasCost());
   }
 
   @Override
@@ -34,13 +44,27 @@ public class SubOperation extends AbstractFixedCostOperation {
     return staticOperation(frame);
   }
 
+  /**
+   * Performs Sub operation.
+   *
+   * @param frame the frame
+   * @return the operation result
+   */
   public static OperationResult staticOperation(final MessageFrame frame) {
-    final UInt256 value0 = UInt256.fromBytes(frame.popStackItem());
-    final UInt256 value1 = UInt256.fromBytes(frame.popStackItem());
+    final BigInteger value0 = new BigInteger(1, frame.popStackItem().toArrayUnsafe());
+    final BigInteger value1 = new BigInteger(1, frame.popStackItem().toArrayUnsafe());
 
-    final UInt256 result = value0.subtract(value1);
+    final BigInteger result = value0.subtract(value1);
 
-    frame.pushStackItem(result);
+    byte[] resultArray = result.toByteArray();
+    int length = resultArray.length;
+    if (length >= 32) {
+      frame.pushStackItem(Bytes.wrap(resultArray, length - 32, 32));
+    } else if (result.signum() < 0) {
+      frame.pushStackItem(Bytes32.leftPad(Bytes.wrap(resultArray), (byte) -1));
+    } else {
+      frame.pushStackItem(Bytes.wrap(resultArray));
+    }
 
     return subSuccess;
   }

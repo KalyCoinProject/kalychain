@@ -17,13 +17,14 @@ package org.hyperledger.besu.tests.acceptance.permissioning;
 import org.hyperledger.besu.tests.acceptance.dsl.AcceptanceTestBase;
 import org.hyperledger.besu.tests.acceptance.dsl.account.Account;
 import org.hyperledger.besu.tests.acceptance.dsl.node.Node;
+import org.hyperledger.besu.tests.acceptance.dsl.node.configuration.genesis.GenesisConfigurationFactory;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.account.TransferTransaction;
 
 import java.math.BigInteger;
 import java.util.Collections;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class AccountLocalConfigPermissioningAcceptanceTest extends AcceptanceTestBase {
 
@@ -31,7 +32,7 @@ public class AccountLocalConfigPermissioningAcceptanceTest extends AcceptanceTes
   private Account senderA;
   private Account senderB;
 
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
     senderA = accounts.getPrimaryBenefactor();
     senderB = accounts.getSecondaryBenefactor();
@@ -40,6 +41,7 @@ public class AccountLocalConfigPermissioningAcceptanceTest extends AcceptanceTes
         permissionedNodeBuilder
             .name("node")
             .accountsPermittedInConfig(Collections.singletonList(senderA.getAddress()))
+            .genesisConfigProvider(GenesisConfigurationFactory::createQbftLondonGenesisConfig)
             .build();
 
     cluster.start(node);

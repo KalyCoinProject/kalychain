@@ -24,6 +24,7 @@ import org.hyperledger.besu.tests.acceptance.dsl.AcceptanceTestBase;
 import org.hyperledger.besu.tests.acceptance.dsl.account.Account;
 import org.hyperledger.besu.tests.acceptance.dsl.condition.Condition;
 import org.hyperledger.besu.tests.acceptance.dsl.node.Node;
+import org.hyperledger.besu.tests.acceptance.dsl.node.configuration.genesis.GenesisConfigurationFactory;
 
 import java.net.InetAddress;
 import java.nio.file.Files;
@@ -31,8 +32,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class AllowlistWithDnsPersistorAcceptanceTest extends AcceptanceTestBase {
 
@@ -48,7 +49,7 @@ public class AllowlistWithDnsPersistorAcceptanceTest extends AcceptanceTestBase 
   private Account senderA;
   private Path tempFile;
 
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
     ENODE_LOCALHOST_DNS = ENODE_PREFIX + InetAddress.getLocalHost().getHostName() + PORT_SUFFIX;
     ENODE_LOCALHOST_IP = ENODE_PREFIX + "127.0.0.1" + PORT_SUFFIX;
@@ -66,6 +67,7 @@ public class AllowlistWithDnsPersistorAcceptanceTest extends AcceptanceTestBase 
             .accountsConfigFile(tempFile)
             .accountsPermittedInConfig(Collections.singletonList(senderA.getAddress()))
             .dnsEnabled(true)
+            .genesisConfigProvider(GenesisConfigurationFactory::createQbftLondonGenesisConfig)
             .build();
 
     cluster.start(this.node);

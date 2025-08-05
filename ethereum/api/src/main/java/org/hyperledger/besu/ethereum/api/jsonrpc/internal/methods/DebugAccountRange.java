@@ -16,10 +16,14 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParameterOrBlockHash;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.DebugAccountRangeAtResult;
 import org.hyperledger.besu.ethereum.api.query.BlockWithMetadata;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
@@ -49,17 +53,35 @@ public class DebugAccountRange implements JsonRpcMethod {
 
   @Override
   public String getName() {
-    // TODO(shemnon) 5229b899 is the last stable commit of retesteth, after this they rename the
-    //  method to just "debug_accountRange".  Once the tool is stable we will support the new name.
-    return "debug_accountRange";
+    return RpcMethod.DEBUG_ACCOUNT_RANGE.getMethodName();
   }
 
   @Override
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
-    final BlockParameterOrBlockHash blockParameterOrBlockHash =
-        requestContext.getRequiredParameter(0, BlockParameterOrBlockHash.class);
-    final String addressHash = requestContext.getRequiredParameter(2, String.class);
-    final int maxResults = requestContext.getRequiredParameter(3, Integer.TYPE);
+    final BlockParameterOrBlockHash blockParameterOrBlockHash;
+    try {
+      blockParameterOrBlockHash =
+          requestContext.getRequiredParameter(0, BlockParameterOrBlockHash.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid block parameter or block hash parameter (index 0)",
+          RpcErrorType.INVALID_BLOCK_PARAMS,
+          e);
+    }
+    final String addressHash;
+    try {
+      addressHash = requestContext.getRequiredParameter(2, String.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid address hash parameter (index 2)", RpcErrorType.INVALID_ADDRESS_HASH_PARAMS, e);
+    }
+    final int maxResults;
+    try {
+      maxResults = requestContext.getRequiredParameter(3, Integer.TYPE);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid max results parameter (index 3)", RpcErrorType.INVALID_MAX_RESULTS_PARAMS, e);
+    }
 
     final Optional<Hash> blockHashOptional = hashFromParameter(blockParameterOrBlockHash);
     if (blockHashOptional.isEmpty()) {
@@ -88,15 +110,17 @@ public class DebugAccountRange implements JsonRpcMethod {
                 accounts.remove(maxResults);
               }
 
-              return new JsonRpcSuccessResponse(
-                  requestContext.getRequest().getId(),
-                  new DebugAccountRangeAtResult(
-                      accounts.stream()
-                          .collect(
-                              Collectors.toMap(
-                                  account -> account.getAddressHash().toString(),
-                                  account -> account.getAddress().orElse(Address.ZERO).toString())),
-                      nextKey.toString()));
+              return Optional.of(
+                  new JsonRpcSuccessResponse(
+                      requestContext.getRequest().getId(),
+                      new DebugAccountRangeAtResult(
+                          accounts.stream()
+                              .collect(
+                                  Collectors.toMap(
+                                      account -> account.getAddressHash().toString(),
+                                      account ->
+                                          account.getAddress().orElse(Address.ZERO).toString())),
+                          nextKey.toString())));
             })
         .orElse(emptyResponse(requestContext));
   }

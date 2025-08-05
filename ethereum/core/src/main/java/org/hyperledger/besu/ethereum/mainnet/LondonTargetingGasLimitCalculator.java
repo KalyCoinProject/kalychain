@@ -23,25 +23,19 @@ public class LondonTargetingGasLimitCalculator extends FrontierTargetingGasLimit
   private static final Logger LOG =
       LoggerFactory.getLogger(LondonTargetingGasLimitCalculator.class);
   private final long londonForkBlock;
-  private final BaseFeeMarket feeMarket;
+  protected final BaseFeeMarket feeMarket;
 
   public LondonTargetingGasLimitCalculator(
       final long londonForkBlock, final BaseFeeMarket feeMarket) {
-    this(
-        DEFAULT_MAX_CONSTANT_ADMUSTMENT_INCREMENT,
-        DEFAULT_MIN_GAS_LIMIT,
-        DEFAULT_MAX_GAS_LIMIT,
-        londonForkBlock,
-        feeMarket);
+    this(DEFAULT_MIN_GAS_LIMIT, DEFAULT_MAX_GAS_LIMIT, londonForkBlock, feeMarket);
   }
 
   public LondonTargetingGasLimitCalculator(
-      final long maxConstantAdjustmentIncrement,
       final long minGasLimit,
       final long maxGasLimit,
       final long londonForkBlock,
       final BaseFeeMarket feeMarket) {
-    super(maxConstantAdjustmentIncrement, minGasLimit, maxGasLimit);
+    super(minGasLimit, maxGasLimit);
     this.londonForkBlock = londonForkBlock;
     this.feeMarket = feeMarket;
   }

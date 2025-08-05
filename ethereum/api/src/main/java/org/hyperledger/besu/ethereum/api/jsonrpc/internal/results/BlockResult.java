@@ -14,16 +14,23 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.results;
 
+import static java.util.stream.Collectors.toList;
+
+import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.WithdrawalParameter;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.Difficulty;
+import org.hyperledger.besu.ethereum.core.Withdrawal;
 
 import java.util.List;
+import java.util.Optional;
 
 import com.fasterxml.jackson.annotation.JsonGetter;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import com.fasterxml.jackson.databind.JsonNode;
+import org.apache.tuweni.bytes.Bytes32;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({
@@ -47,7 +54,10 @@ import com.fasterxml.jackson.databind.JsonNode;
   "gasUsed",
   "timestamp",
   "uncles",
-  "transactions"
+  "transactions",
+  "withdrawalsRoot",
+  "withdrawals",
+  "requestsHash"
 })
 public class BlockResult implements JsonRpcResult {
 
@@ -73,23 +83,31 @@ public class BlockResult implements JsonRpcResult {
   protected final List<TransactionResult> transactions;
   private final List<JsonNode> ommers;
   private final String coinbase;
+  private final String withdrawalsRoot;
+  private final List<WithdrawalParameter> withdrawals;
 
-  public <T extends TransactionResult> BlockResult(
+  private final String blobGasUsed;
+  private final String excessBlobGas;
+  private final String parentBeaconBlockRoot;
+  private final String requestsHash;
+
+  public BlockResult(
       final BlockHeader header,
       final List<TransactionResult> transactions,
       final List<JsonNode> ommers,
       final Difficulty totalDifficulty,
       final int size) {
-    this(header, transactions, ommers, totalDifficulty, size, false);
+    this(header, transactions, ommers, totalDifficulty, size, false, Optional.empty());
   }
 
-  public <T extends TransactionResult> BlockResult(
+  public BlockResult(
       final BlockHeader header,
       final List<TransactionResult> transactions,
       final List<JsonNode> ommers,
       final Difficulty totalDifficulty,
       final int size,
-      final boolean includeCoinbase) {
+      final boolean includeCoinbase,
+      final Optional<List<Withdrawal>> withdrawals) {
     this.number = Quantity.create(header.getNumber());
     this.hash = header.getHash().toString();
     this.mixHash = header.getMixHash().toString();
@@ -112,6 +130,17 @@ public class BlockResult implements JsonRpcResult {
     this.ommers = ommers;
     this.transactions = transactions;
     this.coinbase = includeCoinbase ? header.getCoinbase().toString() : null;
+    this.withdrawalsRoot = header.getWithdrawalsRoot().map(Hash::toString).orElse(null);
+    this.withdrawals =
+        withdrawals
+            .map(w -> w.stream().map(WithdrawalParameter::fromWithdrawal).collect(toList()))
+            .orElse(null);
+
+    this.blobGasUsed = header.getBlobGasUsed().map(Quantity::create).orElse(null);
+    this.excessBlobGas = header.getExcessBlobGas().map(Quantity::create).orElse(null);
+    this.parentBeaconBlockRoot =
+        header.getParentBeaconBlockRoot().map(Bytes32::toHexString).orElse(null);
+    this.requestsHash = header.getRequestsHash().map(Hash::toString).orElse(null);
   }
 
   @JsonGetter(value = "number")
@@ -223,5 +252,35 @@ public class BlockResult implements JsonRpcResult {
   @JsonInclude(Include.NON_NULL)
   public String getCoinbase() {
     return coinbase;
+  }
+
+  @JsonGetter(value = "withdrawalsRoot")
+  public String getWithdrawalsRoot() {
+    return withdrawalsRoot;
+  }
+
+  @JsonGetter(value = "withdrawals")
+  public List<WithdrawalParameter> getWithdrawals() {
+    return withdrawals;
+  }
+
+  @JsonGetter(value = "blobGasUsed")
+  public String getBlobGasUsed() {
+    return blobGasUsed;
+  }
+
+  @JsonGetter(value = "excessBlobGas")
+  public String getExcessBlobGas() {
+    return excessBlobGas;
+  }
+
+  @JsonGetter(value = "parentBeaconBlockRoot")
+  public String getParentBeaconBlockRoot() {
+    return parentBeaconBlockRoot;
+  }
+
+  @JsonGetter(value = "requestsHash")
+  public String getRequestsHash() {
+    return requestsHash;
   }
 }

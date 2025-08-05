@@ -31,17 +31,17 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.awaitility.Awaitility;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mockito;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.StrictStubs.class)
+@ExtendWith(MockitoExtension.class)
 public class BftProcessorTest {
   private EventMultiplexer mockeEventMultiplexer;
 
-  @Before
+  @BeforeEach
   public void initialise() {
     mockeEventMultiplexer = mock(EventMultiplexer.class);
   }
@@ -130,6 +130,7 @@ public class BftProcessorTest {
   @Test
   public void drainEventsIntoStateMachine() throws InterruptedException {
     final BftEventQueue queue = new BftEventQueue(1000);
+    queue.start();
     final BftProcessor processor = new BftProcessor(queue, mockeEventMultiplexer);
 
     // Start the BftProcessor

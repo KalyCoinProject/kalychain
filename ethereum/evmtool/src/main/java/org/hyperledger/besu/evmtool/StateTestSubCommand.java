@@ -11,15 +11,17 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.evmtool;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.hyperledger.besu.ethereum.referencetests.ReferenceTestProtocolSchedules.shouldClearEmptyAccounts;
 import static org.hyperledger.besu.evmtool.StateTestSubCommand.COMMAND_NAME;
 
+import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.datatypes.BlobGas;
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.MutableWorldState;
 import org.hyperledger.besu.ethereum.core.Transaction;
@@ -30,93 +32,119 @@ import org.hyperledger.besu.ethereum.mainnet.TransactionValidationParams;
 import org.hyperledger.besu.ethereum.processing.TransactionProcessingResult;
 import org.hyperledger.besu.ethereum.referencetests.GeneralStateTestCaseEipSpec;
 import org.hyperledger.besu.ethereum.referencetests.GeneralStateTestCaseSpec;
-import org.hyperledger.besu.ethereum.referencetests.ReferenceTestBlockchain;
 import org.hyperledger.besu.ethereum.referencetests.ReferenceTestProtocolSchedules;
 import org.hyperledger.besu.ethereum.rlp.RLP;
-import org.hyperledger.besu.ethereum.vm.BlockHashLookup;
-import org.hyperledger.besu.ethereum.worldstate.DefaultMutableWorldState;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.log.Log;
 import org.hyperledger.besu.evm.tracing.OperationTracer;
 import org.hyperledger.besu.evm.tracing.StandardJsonTracer;
-import org.hyperledger.besu.evm.worldstate.WorldState;
 import org.hyperledger.besu.evm.worldstate.WorldUpdater;
 import org.hyperledger.besu.evmtool.exception.UnsupportedForkException;
-import org.hyperledger.besu.util.Log4j2ConfiguratorUtil;
+import org.hyperledger.besu.util.LogConfigurator;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import com.fasterxml.jackson.core.JsonParser.Feature;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.base.Stopwatch;
-import org.apache.logging.log4j.Level;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.tuweni.bytes.Bytes;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.ParentCommand;
 
+/**
+ * This class, StateTestSubCommand, is a command-line interface (CLI) command that executes an
+ * Ethereum State Test. It implements the Runnable interface, meaning it can be used in a thread of
+ * execution.
+ *
+ * <p>The class is annotated with @CommandLine.Command, which is a PicoCLI annotation that
+ * designates this class as a command-line command. The annotation parameters define the command's
+ * name, description, whether it includes standard help options, and the version provider.
+ *
+ * <p>The command's functionality is defined in the run() method, which is overridden from the
+ * Runnable interface.
+ */
 @Command(
     name = COMMAND_NAME,
     description = "Execute an Ethereum State Test.",
     mixinStandardHelpOptions = true,
     versionProvider = VersionProvider.class)
 public class StateTestSubCommand implements Runnable {
-  private static final Logger LOG = LoggerFactory.getLogger(StateTestSubCommand.class);
-
+  /**
+   * The name of the command for the StateTestSubCommand. This constant is used as the name
+   * parameter in the @CommandLine.Command annotation. It defines the command name that users should
+   * enter on the command line to invoke this command.
+   */
   public static final String COMMAND_NAME = "state-test";
-  private final InputStream input;
-  private final PrintStream output;
 
-  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"})
+  @SuppressWarnings({"FieldCanBeFinal"})
   @Option(
       names = {"--fork"},
       description = "Force the state tests to run on a specific fork.")
   private String fork = null;
 
+  @Option(
+      names = {"--test-name"},
+      description = "Limit execution to one named test.")
+  private String testName = null;
+
+  @Option(
+      names = {"--data-index"},
+      description = "Limit execution to one data variable.")
+  private Integer dataIndex = null;
+
+  @Option(
+      names = {"--gas-index"},
+      description = "Limit execution to one gas variable.")
+  private Integer gasIndex = null;
+
+  @Option(
+      names = {"--value-index"},
+      description = "Limit execution to one value variable.")
+  private Integer valueIndex = null;
+
+  @Option(
+      names = {"--fork-index"},
+      description = "Limit execution to one fork.")
+  private String forkIndex = null;
+
   @ParentCommand private final EvmToolCommand parentCommand;
 
-  @SuppressWarnings("MismatchedQueryAndUpdateOfCollection") // picocli does it magically
-  @Parameters
-  private final List<File> stateTestFiles = new ArrayList<>();
+  // picocli does it magically
+  @Parameters private final List<Path> stateTestFiles = new ArrayList<>();
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
-
+  /**
+   * Default constructor for the StateTestSubCommand class. This constructor doesn't take any
+   * arguments and initializes the parentCommand to null. PicoCLI requires this constructor.
+   */
   @SuppressWarnings("unused")
   public StateTestSubCommand() {
     // PicoCLI requires this
-    this(null, System.in, System.out);
+    this(null);
   }
 
-  public StateTestSubCommand(final EvmToolCommand parentCommand) {
-    this(parentCommand, System.in, System.out);
-  }
-
-  StateTestSubCommand(
-      final EvmToolCommand parentCommand, final InputStream input, final PrintStream output) {
+  StateTestSubCommand(final EvmToolCommand parentCommand) {
     this.parentCommand = parentCommand;
-    this.input = input;
-    this.output = output;
   }
 
   @Override
   public void run() {
-    final ObjectMapper stateTestMapper = new ObjectMapper();
-    stateTestMapper.disable(Feature.AUTO_CLOSE_SOURCE);
+    LogConfigurator.setLevel("", "OFF");
+    // presume ethereum mainnet for reference and state tests
+    SignatureAlgorithmFactory.setDefaultInstance();
+    final ObjectMapper stateTestMapper = JsonUtils.createObjectMapper();
+
     final JavaType javaType =
         stateTestMapper
             .getTypeFactory()
@@ -125,7 +153,7 @@ public class StateTestSubCommand implements Runnable {
       if (stateTestFiles.isEmpty()) {
         // if no state tests were specified use standard input to get filenames
         final BufferedReader in =
-            new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+            new BufferedReader(new InputStreamReader(parentCommand.in, UTF_8));
         while (true) {
           final String fileName = in.readLine();
           if (fileName == null) {
@@ -138,53 +166,84 @@ public class StateTestSubCommand implements Runnable {
                 stateTestMapper.readValue(file, javaType);
             executeStateTest(generalStateTests);
           } else {
-            output.println("File not found: " + fileName);
+            parentCommand.out.println("File not found: " + fileName);
           }
         }
       } else {
-        for (final File stateTestFile : stateTestFiles) {
-          final Map<String, GeneralStateTestCaseSpec> generalStateTests =
-              stateTestMapper.readValue(stateTestFile, javaType);
+        for (final Path stateTestFile : stateTestFiles) {
+          final Map<String, GeneralStateTestCaseSpec> generalStateTests;
+          if ("stdin".equals(stateTestFile.toString())) {
+            generalStateTests = stateTestMapper.readValue(parentCommand.in, javaType);
+          } else {
+            generalStateTests = stateTestMapper.readValue(stateTestFile.toFile(), javaType);
+          }
           executeStateTest(generalStateTests);
         }
       }
     } catch (final JsonProcessingException jpe) {
-      output.println("File content error: " + jpe);
+      parentCommand.out.println("File content error: " + jpe);
     } catch (final IOException e) {
-      LOG.error("Unable to read state file", e);
+      System.err.println("Unable to read state file");
+      e.printStackTrace(System.err);
     }
   }
 
   private void executeStateTest(final Map<String, GeneralStateTestCaseSpec> generalStateTests) {
-    for (final var generalStateTestEntry : generalStateTests.entrySet()) {
-      generalStateTestEntry
-          .getValue()
-          .finalStateSpecs()
-          .forEach((__, specs) -> traceTestSpecs(generalStateTestEntry.getKey(), specs));
+    int repeatCount = Math.max(1, parentCommand.getRepeatCount());
+    for (int i = 0; i < repeatCount; i++) {
+      boolean isLastIteration = (i == repeatCount - 1);
+      for (final Map.Entry<String, GeneralStateTestCaseSpec> generalStateTestEntry :
+          generalStateTests.entrySet()) {
+        if (testName == null || testName.equals(generalStateTestEntry.getKey())) {
+          generalStateTestEntry
+              .getValue()
+              .finalStateSpecs()
+              .forEach(
+                  (__, specs) ->
+                      traceTestSpecs(generalStateTestEntry.getKey(), specs, isLastIteration));
+        }
+      }
     }
   }
 
-  private void traceTestSpecs(final String test, final List<GeneralStateTestCaseEipSpec> specs) {
-    Log4j2ConfiguratorUtil.setLevel(
-        "org.hyperledger.besu.ethereum.mainnet.ProtocolScheduleBuilder", Level.OFF);
-    final var referenceTestProtocolSchedules = ReferenceTestProtocolSchedules.create();
-    Log4j2ConfiguratorUtil.setLevel(
-        "org.hyperledger.besu.ethereum.mainnet.ProtocolScheduleBuilder", null);
-
+  private void traceTestSpecs(
+      final String test,
+      final List<GeneralStateTestCaseEipSpec> specs,
+      final boolean isLastIteration) {
     final OperationTracer tracer = // You should have picked Mercy.
-        parentCommand.showJsonResults
-            ? new StandardJsonTracer(output, !parentCommand.noMemory)
+        parentCommand.showJsonResults && isLastIteration
+            ? new StandardJsonTracer(
+                parentCommand.out,
+                parentCommand.showMemory,
+                !parentCommand.hideStack,
+                parentCommand.showReturnData,
+                parentCommand.showStorage,
+                parentCommand.eip3155strict)
             : OperationTracer.NO_TRACING;
 
+    final ObjectMapper objectMapper = JsonUtils.createObjectMapper();
     for (final GeneralStateTestCaseEipSpec spec : specs) {
+      if (dataIndex != null && spec.getDataIndex() != dataIndex) {
+        continue;
+      }
+      if (gasIndex != null && spec.getGasIndex() != gasIndex) {
+        continue;
+      }
+      if (valueIndex != null && spec.getValueIndex() != valueIndex) {
+        continue;
+      }
+      if (forkIndex != null && !spec.getFork().equalsIgnoreCase(forkIndex)) {
+        continue;
+      }
 
       final BlockHeader blockHeader = spec.getBlockHeader();
-      final WorldState initialWorldState = spec.getInitialWorldState();
-      final Transaction transaction = spec.getTransaction();
-
+      final Transaction transaction = spec.getTransaction(0);
       final ObjectNode summaryLine = objectMapper.createObjectNode();
       if (transaction == null) {
-        // Check the world state root hash.
+        if ((parentCommand.showJsonAlloc || parentCommand.showJsonResults) && isLastIteration) {
+          parentCommand.out.println(
+              "{\"error\":\"Transaction was invalid, trace and alloc unavailable.\"}");
+        }
         summaryLine.put("test", test);
         summaryLine.put("fork", spec.getFork());
         summaryLine.put("d", spec.getDataIndex());
@@ -193,7 +252,7 @@ public class StateTestSubCommand implements Runnable {
         summaryLine.put("pass", spec.getExpectException() != null);
         summaryLine.put("validationError", "Transaction had out-of-bounds parameters");
       } else {
-        final MutableWorldState worldState = new DefaultMutableWorldState(initialWorldState);
+        final MutableWorldState worldState = spec.getInitialWorldState().copy();
         // Several of the GeneralStateTests check if the transaction could potentially
         // consume more gas than is left for the block it's attempted to be included in.
         // This check is performed within the `BlockImporter` rather than inside the
@@ -204,28 +263,28 @@ public class StateTestSubCommand implements Runnable {
 
         final String forkName = fork == null ? spec.getFork() : fork;
         final ProtocolSchedule protocolSchedule =
-            referenceTestProtocolSchedules.getByName(forkName);
+            ReferenceTestProtocolSchedules.getInstance().getByName(forkName);
         if (protocolSchedule == null) {
           throw new UnsupportedForkException(forkName);
         }
 
-        ProtocolSpec protocolSpec = protocolSchedule.getByBlockNumber(0);
+        final ProtocolSpec protocolSpec = protocolSchedule.getByBlockHeader(blockHeader);
         final MainnetTransactionProcessor processor = protocolSpec.getTransactionProcessor();
         final WorldUpdater worldStateUpdater = worldState.updater();
-        final ReferenceTestBlockchain blockchain =
-            new ReferenceTestBlockchain(blockHeader.getNumber());
         final Stopwatch timer = Stopwatch.createStarted();
+        // Todo: EIP-4844 use the excessBlobGas of the parent instead of BlobGas.ZERO
+        final Wei blobGasPrice = protocolSpec.getFeeMarket().blobGasPricePerGas(BlobGas.ZERO);
         final TransactionProcessingResult result =
             processor.processTransaction(
-                blockchain,
                 worldStateUpdater,
                 blockHeader,
                 transaction,
                 blockHeader.getCoinbase(),
-                new BlockHashLookup(blockHeader, blockchain),
-                false,
+                tracer,
+                (__, blockNumber) ->
+                    Hash.hash(Bytes.wrap(Long.toString(blockNumber).getBytes(UTF_8))),
                 TransactionValidationParams.processingBlock(),
-                tracer);
+                blobGasPrice);
         timer.stop();
         if (shouldClearEmptyAccounts(spec.getFork())) {
           final Account coinbase =
@@ -239,15 +298,23 @@ public class StateTestSubCommand implements Runnable {
           }
         }
         worldStateUpdater.commit();
+        worldState.persist(blockHeader);
 
         summaryLine.put("output", result.getOutput().toUnprefixedHexString());
-        final var gasUsed = transaction.getGasLimit() - result.getGasRemaining();
-        final var timeNs = timer.elapsed(TimeUnit.NANOSECONDS);
-        final var mGps = gasUsed * 1000.0f / timeNs;
+        final long gasUsed = transaction.getGasLimit() - result.getGasRemaining();
+        final long timeNs = timer.elapsed(TimeUnit.NANOSECONDS);
+        final float mGps = gasUsed * 1000.0f / timeNs;
 
-        summaryLine.put("gasUsed", StandardJsonTracer.shortNumber(gasUsed));
-        summaryLine.put("time", timeNs);
-        summaryLine.put("Mgps", String.format("%.3f", mGps));
+        if (parentCommand.eip3155strict) {
+          summaryLine.put("gasUsed", StandardJsonTracer.shortNumber(gasUsed));
+        } else {
+          summaryLine.put("gasUsed", gasUsed);
+        }
+
+        if (!parentCommand.noTime) {
+          summaryLine.put("time", timeNs);
+          summaryLine.put("Mgps", String.format("%.3f", mGps));
+        }
 
         // Check the world state root hash.
         summaryLine.put("test", test);
@@ -255,7 +322,7 @@ public class StateTestSubCommand implements Runnable {
         summaryLine.put("d", spec.getDataIndex());
         summaryLine.put("g", spec.getGasIndex());
         summaryLine.put("v", spec.getValueIndex());
-        summaryLine.put("postHash", worldState.rootHash().toHexString());
+        summaryLine.put("stateRoot", worldState.rootHash().toHexString());
         final List<Log> logs = result.getLogs();
         final Hash actualLogsHash = Hash.hash(RLP.encode(out -> out.writeList(logs, Log::writeTo)));
         summaryLine.put("postLogsHash", actualLogsHash.toHexString());
@@ -271,9 +338,17 @@ public class StateTestSubCommand implements Runnable {
               "validationError",
               "Exception '" + spec.getExpectException() + "' was expected but did not occur");
         }
+        if (!result.getValidationResult().isValid()) {
+          summaryLine.put("error", result.getValidationResult().getErrorMessage());
+        }
+        if (parentCommand.showJsonAlloc && isLastIteration) {
+          EvmToolCommand.dumpWorldState(worldState, parentCommand.out);
+        }
       }
 
-      output.println(summaryLine);
+      if (isLastIteration) {
+        parentCommand.out.println(summaryLine);
+      }
     }
   }
 }

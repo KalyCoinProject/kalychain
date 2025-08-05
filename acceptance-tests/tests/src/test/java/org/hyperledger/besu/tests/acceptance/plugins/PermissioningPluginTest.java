@@ -12,21 +12,30 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.tests.acceptance.plugins;
 
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+
+import org.hyperledger.besu.crypto.SECP256K1;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.tests.acceptance.dsl.AcceptanceTestBase;
 import org.hyperledger.besu.tests.acceptance.dsl.account.Account;
 import org.hyperledger.besu.tests.acceptance.dsl.blockchain.Amount;
 import org.hyperledger.besu.tests.acceptance.dsl.node.BesuNode;
 import org.hyperledger.besu.tests.acceptance.dsl.node.configuration.BesuNodeConfigurationBuilder;
+import org.hyperledger.besu.tests.acceptance.dsl.transaction.SignUtil;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.account.TransferTransaction;
 
+import java.math.BigInteger;
 import java.util.List;
+import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.web3j.crypto.RawTransaction;
+import org.web3j.utils.Convert;
+import org.web3j.utils.Numeric;
 
 public class PermissioningPluginTest extends AcceptanceTestBase {
   private BesuNode minerNode;
@@ -35,24 +44,17 @@ public class PermissioningPluginTest extends AcceptanceTestBase {
   private BesuNode bobNode;
   private BesuNode charlieNode;
 
-  @Before
+  private static final long GAS_LIMIT_THRESHOLD = 22000L;
+
+  @BeforeEach
   public void setUp() throws Exception {
-    final BesuNodeConfigurationBuilder builder =
-        new BesuNodeConfigurationBuilder()
-            .miningEnabled(false)
-            .plugins(List.of("testPlugins"))
-            .extraCLIOptions(List.of("--plugin-permissioning-test-enabled=true"))
-            .jsonRpcEnabled()
-            .jsonRpcTxPool()
-            .jsonRpcAdmin();
+    minerNode = besu.create(createNodeBuilder().name("miner").build());
 
-    minerNode = besu.create(builder.name("miner").build());
+    aliceNode = besu.create(createNodeBuilder().name("alice").keyFilePath("key").build());
 
-    aliceNode = besu.create(builder.name("alice").keyFilePath("key").build());
+    bobNode = besu.create(createNodeBuilder().name("bob").keyFilePath("key1").build());
 
-    bobNode = besu.create(builder.name("bob").keyFilePath("key1").build());
-
-    charlieNode = besu.create(builder.name("charlie").keyFilePath("key2").build());
+    charlieNode = besu.create(createNodeBuilder().name("charlie").keyFilePath("key2").build());
 
     cluster.start(minerNode, charlieNode);
 
@@ -63,6 +65,17 @@ public class PermissioningPluginTest extends AcceptanceTestBase {
     bobNode.awaitPeerDiscovery(net.awaitPeerCount(2));
   }
 
+  private BesuNodeConfigurationBuilder createNodeBuilder() {
+    return new BesuNodeConfigurationBuilder()
+        .miningEnabled(false)
+        .plugins(List.of("testPlugins"))
+        .extraCLIOptions(List.of("--plugin-permissioning-test-enabled=true"))
+        .jsonRpcEnabled()
+        .jsonRpcTxPool()
+        .jsonRpcAdmin();
+  }
+
+  @Disabled("flaky see https://github.com/hyperledger/besu/issues/8726")
   @Test
   public void blockedConnectionNodeCanOnlyConnectToTransactionNode() {
     minerNode.verify(admin.hasPeer(aliceNode));
@@ -95,5 +108,55 @@ public class PermissioningPluginTest extends AcceptanceTestBase {
     bobNode.verify(txPoolConditions.inTransactionPool(txHash));
     charlieNode.verify(txPoolConditions.notInTransactionPool(txHash));
     minerNode.verify(txPoolConditions.inTransactionPool(txHash));
+  }
+
+  @Test
+  public void allowFilteredByGasLimit() {
+
+    final Account sender = accounts.getPrimaryBenefactor();
+    final Account recipient = accounts.createAccount("account-two");
+    final BigInteger GAS_LIMIT = BigInteger.valueOf(GAS_LIMIT_THRESHOLD + 100);
+    final BigInteger GAS_PRICE = BigInteger.valueOf(1000);
+    final Amount amount = Amount.wei(BigInteger.valueOf(29));
+
+    final RawTransaction tx =
+        RawTransaction.createEtherTransaction(
+            sender.getNextNonce(),
+            GAS_PRICE,
+            GAS_LIMIT,
+            recipient.getAddress(),
+            Convert.toWei(amount.getValue(), amount.getUnit()).toBigIntegerExact());
+
+    final String rawSigned =
+        Numeric.toHexString(
+            SignUtil.signTransaction(tx, sender, new SECP256K1(), Optional.empty()));
+    final String txHash = aliceNode.execute(ethTransactions.sendRawTransaction(rawSigned));
+
+    aliceNode.verify(txPoolConditions.inTransactionPool(Hash.fromHexString(txHash)));
+  }
+
+  @Test
+  public void blockedFilteredByGasLimit() {
+    final Account sender = accounts.getPrimaryBenefactor();
+    final Account recipient = accounts.createAccount("account-two");
+    final BigInteger GAS_LIMIT = BigInteger.valueOf(GAS_LIMIT_THRESHOLD - 100);
+    final BigInteger GAS_PRICE = BigInteger.valueOf(1000);
+    final Amount amount = Amount.wei(BigInteger.valueOf(29));
+
+    final RawTransaction tx =
+        RawTransaction.createEtherTransaction(
+            sender.getNextNonce(),
+            GAS_PRICE,
+            GAS_LIMIT,
+            recipient.getAddress(),
+            Convert.toWei(amount.getValue(), amount.getUnit()).toBigIntegerExact());
+
+    final String rawSigned =
+        Numeric.toHexString(
+            SignUtil.signTransaction(tx, sender, new SECP256K1(), Optional.empty()));
+
+    assertThatThrownBy(() -> aliceNode.execute(ethTransactions.sendRawTransaction(rawSigned)))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("not authorized");
   }
 }

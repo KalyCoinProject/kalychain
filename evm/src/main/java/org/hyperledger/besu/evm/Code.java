@@ -15,6 +15,9 @@
 package org.hyperledger.besu.evm;
 
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.evm.code.CodeSection;
+
+import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
 
@@ -30,12 +33,18 @@ public interface Code {
   int getSize();
 
   /**
-   * Gets the code bytes. For legacy code it is the whole container. For V1 it is the code section
-   * alone.
+   * Size of the data in bytes. This is for the data only,
    *
-   * @return the code bytes
+   * @return size of code in bytes.
    */
-  Bytes getCodeBytes();
+  int getDataSize();
+
+  /**
+   * Declared size of the data in bytes. For containers with aux data this may be larger.
+   *
+   * @return the declared data size
+   */
+  int getDeclaredDataSize();
 
   /**
    * Get the bytes for the entire container, for example what EXTCODECOPY would want. For V0 it is
@@ -43,7 +52,7 @@ public interface Code {
    *
    * @return container bytes.
    */
-  Bytes getContainerBytes();
+  Bytes getBytes();
 
   /**
    * Hash of the entire container
@@ -66,4 +75,107 @@ public interface Code {
    * @return isValid
    */
   boolean isValid();
+
+  /**
+   * The Code Section Info associated with a code section. If the code does not support sections or
+   * an out-of-section code is requested null will be returned.
+   *
+   * @param section the section number to retrieve.
+   * @return The code section, or null of there is no associated section
+   */
+  CodeSection getCodeSection(final int section);
+
+  /**
+   * The number of code sections in this container.
+   *
+   * @return 1 for legacy, count for valid, zero for invalid.
+   */
+  int getCodeSectionCount();
+
+  /**
+   * Returns the EOF version of the code. Legacy code is version 0, invalid code -1.
+   *
+   * @return The version of hte ode.
+   */
+  int getEofVersion();
+
+  /**
+   * Returns the count of subcontainers, or zero if there are none or if the code version does not
+   * support subcontainers.
+   *
+   * @return The subcontainer count or zero if not supported;
+   */
+  int getSubcontainerCount();
+
+  /**
+   * Returns the subcontainer at the selected index. If the container doesn't exist or is invalid,
+   * an empty result is returned. Legacy code always returns empty.
+   *
+   * @param index the index in the container to return
+   * @param auxData any Auxiliary data to append to the subcontainer code. If fetching an initcode
+   *     container, pass null.
+   * @param evm the EVM in which we are instantiating the code
+   * @return Either the subcontainer, or empty.
+   */
+  Optional<Code> getSubContainer(final int index, final Bytes auxData, EVM evm);
+
+  /**
+   * Loads data from the appropriate data section
+   *
+   * @param offset Where within the data section to start copying
+   * @param length how many bytes to copy
+   * @return A slice of the code containing the requested data
+   */
+  Bytes getData(final int offset, final int length);
+
+  /**
+   * Read a signed 16-bit big-endian integer
+   *
+   * @param startIndex the index to start reading the integer in the code
+   * @return a java int representing the 16-bit signed integer.
+   */
+  int readBigEndianI16(final int startIndex);
+
+  /**
+   * Read an unsigned 16 bit big-endian integer
+   *
+   * @param startIndex the index to start reading the integer in the code
+   * @return a java int representing the 16-bit unsigned integer.
+   */
+  int readBigEndianU16(final int startIndex);
+
+  /**
+   * Read an unsigned 8-bit integer
+   *
+   * @param startIndex the index to start reading the integer in the code
+   * @return a java int representing the 8-bit unsigned integer.
+   */
+  int readU8(final int startIndex);
+
+  /**
+   * A more readable representation of the hex bytes, including whitespace and comments after hashes
+   *
+   * @return The pretty printed code
+   */
+  String prettyPrint();
+
+  /**
+   * Returns a bitmask of valid jump destinations for this code. The bitmask is an array of longs,
+   * where each bit represents a potential jump destination in the code.
+   *
+   * @return an array of long values representing the jump destinations, or null if not set
+   */
+  default long[] getJumpDestBitMask() {
+    return null;
+  }
+
+  /**
+   * Sets the jump destination bitmask for this code. This method is intended to be used by the
+   * EVM's JumpService to set the valid jump destinations for the code.
+   *
+   * @param jumpDestBitMask an array of long values representing the jump destinations
+   */
+  default void setJumpDestBitMask(final long[] jumpDestBitMask) {
+    // empty default method to allow setting the jump destination bitmask
+  }
 }

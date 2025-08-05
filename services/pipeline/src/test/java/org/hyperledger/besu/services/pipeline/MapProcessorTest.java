@@ -23,12 +23,14 @@ import static org.mockito.Mockito.when;
 
 import java.util.function.Function;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class MapProcessorTest {
 
-  private final Pipe<String> input = new Pipe<>(10, NO_OP_COUNTER, NO_OP_COUNTER, NO_OP_COUNTER);
-  private final Pipe<String> output = new Pipe<>(10, NO_OP_COUNTER, NO_OP_COUNTER, NO_OP_COUNTER);
+  private final Pipe<String> input =
+      new Pipe<>(10, NO_OP_COUNTER, NO_OP_COUNTER, NO_OP_COUNTER, "intput_pipe");
+  private final Pipe<String> output =
+      new Pipe<>(10, NO_OP_COUNTER, NO_OP_COUNTER, NO_OP_COUNTER, "output_pipe");
 
   @SuppressWarnings("unchecked")
   private final Function<String, String> processor = mock(Function.class);

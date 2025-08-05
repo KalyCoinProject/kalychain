@@ -16,8 +16,18 @@ package org.hyperledger.besu.consensus.common;
 
 import org.apache.tuweni.bytes.Bytes;
 
+/** The Consensus helpers. */
 public class ConsensusHelpers {
+  /** Default constructor. */
+  private ConsensusHelpers() {}
 
+  /**
+   * Zero left pad bytes.
+   *
+   * @param input the input
+   * @param requiredLength the required length
+   * @return the bytes
+   */
   public static Bytes zeroLeftPad(final Bytes input, final int requiredLength) {
     final int paddingByteCount = Math.max(0, requiredLength - input.size());
     return Bytes.concatenate(Bytes.wrap(new byte[paddingByteCount]), input)

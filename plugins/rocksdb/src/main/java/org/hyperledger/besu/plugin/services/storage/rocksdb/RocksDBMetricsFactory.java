@@ -15,7 +15,6 @@
 package org.hyperledger.besu.plugin.services.storage.rocksdb;
 
 import org.hyperledger.besu.metrics.BesuMetricCategory;
-import org.hyperledger.besu.metrics.prometheus.PrometheusMetricsSystem;
 import org.hyperledger.besu.metrics.rocksdb.RocksDBStats;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.plugin.services.metrics.Counter;
@@ -23,18 +22,21 @@ import org.hyperledger.besu.plugin.services.metrics.MetricCategory;
 import org.hyperledger.besu.plugin.services.metrics.OperationTimer;
 import org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBConfiguration;
 
-import org.rocksdb.OptimisticTransactionDB;
+import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.Statistics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Rocks db metrics factory. */
 public class RocksDBMetricsFactory {
 
+  /** The constant PUBLIC_ROCKS_DB_METRICS. */
   public static final RocksDBMetricsFactory PUBLIC_ROCKS_DB_METRICS =
       new RocksDBMetricsFactory(
           BesuMetricCategory.KVSTORE_ROCKSDB, BesuMetricCategory.KVSTORE_ROCKSDB_STATS);
 
+  /** The constant PRIVATE_ROCKS_DB_METRICS. */
   public static final RocksDBMetricsFactory PRIVATE_ROCKS_DB_METRICS =
       new RocksDBMetricsFactory(
           BesuMetricCategory.KVSTORE_PRIVATE_ROCKSDB,
@@ -45,16 +47,31 @@ public class RocksDBMetricsFactory {
   private final MetricCategory rocksDbMetricCategory;
   private final MetricCategory statsDbMetricCategory;
 
+  /**
+   * Instantiates a new RocksDb metrics factory.
+   *
+   * @param rocksDbMetricCategory the rocks db metric category
+   * @param statsDbMetricCategory the stats db metric category
+   */
   public RocksDBMetricsFactory(
       final MetricCategory rocksDbMetricCategory, final MetricCategory statsDbMetricCategory) {
     this.rocksDbMetricCategory = rocksDbMetricCategory;
     this.statsDbMetricCategory = statsDbMetricCategory;
   }
 
+  /**
+   * Create RocksDb metrics.
+   *
+   * @param metricsSystem the metrics system
+   * @param rocksDbConfiguration the rocks db configuration
+   * @param db the db
+   * @param stats the stats
+   * @return the rocks db metrics
+   */
   public RocksDBMetrics create(
       final MetricsSystem metricsSystem,
       final RocksDBConfiguration rocksDbConfiguration,
-      final OptimisticTransactionDB db,
+      final RocksDB db,
       final Statistics stats) {
     final OperationTimer readLatency =
         metricsSystem
@@ -89,10 +106,7 @@ public class RocksDBMetricsFactory {
                 "database")
             .labels(rocksDbConfiguration.getLabel());
 
-    if (metricsSystem instanceof PrometheusMetricsSystem) {
-      RocksDBStats.registerRocksDBMetrics(
-          stats, (PrometheusMetricsSystem) metricsSystem, statsDbMetricCategory);
-    }
+    RocksDBStats.registerRocksDBMetrics(stats, metricsSystem, statsDbMetricCategory);
 
     metricsSystem.createLongGauge(
         rocksDbMetricCategory,

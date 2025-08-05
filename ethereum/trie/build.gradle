@@ -16,38 +16,39 @@
 apply plugin: 'java-library'
 
 jar {
-  archiveBaseName = 'besu-trie'
+  archiveBaseName = calculateArtifactId(project)
   manifest {
     attributes(
       'Specification-Title': archiveBaseName,
       'Specification-Version': project.version,
       'Implementation-Title': archiveBaseName,
-      'Implementation-Version': calculateVersion()
+      'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash
       )
   }
 }
 
 dependencies {
-  implementation project(':crypto')
+  implementation project(':crypto:algorithms')
+  implementation project(':datatypes')
   implementation project(':ethereum:rlp')
+  implementation project(':plugin-api')
 
-  implementation "org.immutables:value-annotations"
+  implementation 'org.immutables:value-annotations'
   implementation 'com.google.guava:guava'
   implementation 'io.opentelemetry:opentelemetry-api'
-  implementation 'org.apache.tuweni:tuweni-bytes'
-  implementation 'org.bouncycastle:bcprov-jdk15on'
+  implementation 'io.consensys.tuweni:tuweni-bytes'
+  implementation 'org.bouncycastle:bcprov-jdk18on'
 
-  annotationProcessor "org.immutables:value"
+  annotationProcessor 'org.immutables:value'
 
   testImplementation project(':services:kvstore')
   testImplementation project(':testutil')
 
   testImplementation 'com.fasterxml.jackson.core:jackson-databind'
-  testImplementation 'junit:junit'
-  testImplementation 'org.apache.tuweni:tuweni-units'
+  testImplementation 'io.consensys.tuweni:tuweni-units'
   testImplementation 'org.assertj:assertj-core'
   testImplementation 'org.junit.jupiter:junit-jupiter'
   testImplementation 'org.mockito:mockito-core'
-
-  testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
+  testImplementation 'org.mockito:mockito-junit-jupiter'
 }

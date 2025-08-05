@@ -23,9 +23,11 @@ import org.hyperledger.besu.util.ExceptionUtils;
 
 import java.time.Duration;
 import java.util.Collection;
+import java.util.Queue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -34,6 +36,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -43,7 +47,6 @@ import org.slf4j.LoggerFactory;
 public class EthScheduler {
   private static final Logger LOG = LoggerFactory.getLogger(EthScheduler.class);
 
-  private final Duration defaultTimeout = Duration.ofSeconds(5);
   private final AtomicBoolean stopped = new AtomicBoolean(false);
   private final CountDownLatch shutdown = new CountDownLatch(1);
   private static final int TX_WORKER_CAPACITY = 1_000;
@@ -53,6 +56,7 @@ public class EthScheduler {
   protected final ExecutorService txWorkerExecutor;
   protected final ExecutorService servicesExecutor;
   protected final ExecutorService computationExecutor;
+  protected final ExecutorService blockCreationExecutor;
 
   private final Collection<CompletableFuture<?>> pendingFutures = new ConcurrentLinkedDeque<>();
 
@@ -83,11 +87,13 @@ public class EthScheduler {
             metricsSystem),
         MonitoredExecutors.newCachedThreadPool(
             EthScheduler.class.getSimpleName() + "-Services", metricsSystem),
-        MonitoredExecutors.newBoundedThreadPool(
+        MonitoredExecutors.newFixedThreadPool(
             EthScheduler.class.getSimpleName() + "-Computation",
             1,
             computationWorkerCount,
-            metricsSystem));
+            metricsSystem),
+        MonitoredExecutors.newCachedThreadPool(
+            EthScheduler.class.getSimpleName() + "-BlockCreation", metricsSystem));
   }
 
   protected EthScheduler(
@@ -95,12 +101,14 @@ public class EthScheduler {
       final ScheduledExecutorService scheduler,
       final ExecutorService txWorkerExecutor,
       final ExecutorService servicesExecutor,
-      final ExecutorService computationExecutor) {
+      final ExecutorService computationExecutor,
+      final ExecutorService blockCreationExecutor) {
     this.syncWorkerExecutor = syncWorkerExecutor;
     this.scheduler = scheduler;
     this.txWorkerExecutor = txWorkerExecutor;
     this.servicesExecutor = servicesExecutor;
     this.computationExecutor = computationExecutor;
+    this.blockCreationExecutor = blockCreationExecutor;
   }
 
   public <T> CompletableFuture<T> scheduleSyncWorkerTask(
@@ -133,11 +141,32 @@ public class EthScheduler {
     txWorkerExecutor.execute(command);
   }
 
+  public void executeServiceTask(final Runnable command) {
+    servicesExecutor.execute(command);
+  }
+
+  public CompletableFuture<Void> scheduleServiceTask(final Runnable task) {
+    return CompletableFuture.runAsync(task, servicesExecutor);
+  }
+
   public <T> CompletableFuture<T> scheduleServiceTask(final EthTask<T> task) {
     final CompletableFuture<T> serviceFuture = task.runAsync(servicesExecutor);
     pendingFutures.add(serviceFuture);
     serviceFuture.whenComplete((r, t) -> pendingFutures.remove(serviceFuture));
     return serviceFuture;
+  }
+
+  public <T> CompletableFuture<T> scheduleServiceTask(final Supplier<CompletableFuture<T>> future) {
+    final CompletableFuture<T> promise = new CompletableFuture<>();
+    final Future<?> workerFuture = servicesExecutor.submit(() -> propagateResult(future, promise));
+    // If returned promise is cancelled, cancel the worker future
+    promise.whenComplete(
+        (r, t) -> {
+          if (t instanceof CancellationException) {
+            workerFuture.cancel(false);
+          }
+        });
+    return promise;
   }
 
   public CompletableFuture<Void> startPipeline(final Pipeline<?> pipeline) {
@@ -198,8 +227,8 @@ public class EthScheduler {
     return promise;
   }
 
-  public <T> CompletableFuture<T> timeout(final EthTask<T> task) {
-    return timeout(task, defaultTimeout);
+  public CompletableFuture<Void> scheduleBlockCreationTask(final Runnable task) {
+    return CompletableFuture.runAsync(task, blockCreationExecutor);
   }
 
   public <T> CompletableFuture<T> timeout(final EthTask<T> task, final Duration timeout) {
@@ -227,7 +256,7 @@ public class EthScheduler {
 
   public void stop() {
     if (stopped.compareAndSet(false, true)) {
-      LOG.trace("Stopping " + getClass().getSimpleName());
+      LOG.atTrace().setMessage("Stopping {}").addArgument(getClass().getSimpleName()).log();
       syncWorkerExecutor.shutdownNow();
       txWorkerExecutor.shutdownNow();
       scheduler.shutdownNow();
@@ -235,7 +264,10 @@ public class EthScheduler {
       computationExecutor.shutdownNow();
       shutdown.countDown();
     } else {
-      LOG.trace("Attempted to stop already stopped " + getClass().getSimpleName());
+      LOG.atTrace()
+          .setMessage("Attempted to stop already stopped {}")
+          .addArgument(getClass().getSimpleName())
+          .log();
     }
   }
 
@@ -281,5 +313,50 @@ public class EthScheduler {
         },
         delay,
         unit);
+  }
+
+  public <ITEM> OrderedProcessor<ITEM> createOrderedProcessor(final Consumer<ITEM> processor) {
+    return new OrderedProcessor<>(processor);
+  }
+
+  /**
+   * This class is a way to execute a set of tasks, one by one, in a strict order, without blocking
+   * the caller in case there are still previous tasks queued
+   *
+   * @param <ITEM> the class of item to be processed
+   */
+  public class OrderedProcessor<ITEM> {
+    private final Queue<ITEM> blockAddedQueue = new ConcurrentLinkedQueue<>();
+    private final ReentrantLock blockAddedLock = new ReentrantLock();
+    private final Consumer<ITEM> processor;
+
+    private OrderedProcessor(final Consumer<ITEM> processor) {
+      this.processor = processor;
+    }
+
+    public void submit(final ITEM item) {
+      // add the item to the processing queue
+      blockAddedQueue.add(item);
+
+      if (blockAddedLock.hasQueuedThreads()) {
+        // another thread is already waiting to process the queue with our item, there is no need to
+        // schedule another thread
+        LOG.trace(
+            "Block added event queue is already being processed and an already queued thread is present, nothing to do");
+      } else {
+        servicesExecutor.submit(
+            () -> {
+              blockAddedLock.lock();
+              try {
+                // now that we have the lock, process as many items as possible
+                for (ITEM i = blockAddedQueue.poll(); i != null; i = blockAddedQueue.poll()) {
+                  processor.accept(i);
+                }
+              } finally {
+                blockAddedLock.unlock();
+              }
+            });
+      }
+    }
   }
 }

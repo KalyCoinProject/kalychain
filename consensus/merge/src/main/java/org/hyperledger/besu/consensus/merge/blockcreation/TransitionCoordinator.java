@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,6 +14,7 @@
  */
 package org.hyperledger.besu.consensus.merge.blockcreation;
 
+import org.hyperledger.besu.consensus.merge.PostMergeContext;
 import org.hyperledger.besu.consensus.merge.TransitionUtils;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
@@ -25,27 +26,43 @@ import org.hyperledger.besu.ethereum.chain.PoWObserver;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.Transaction;
+import org.hyperledger.besu.ethereum.core.Withdrawal;
+import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
-import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 
+/** The Transition coordinator. */
 public class TransitionCoordinator extends TransitionUtils<MiningCoordinator>
     implements MergeMiningCoordinator {
 
   private final MiningCoordinator miningCoordinator;
   private final MergeMiningCoordinator mergeCoordinator;
 
+  /**
+   * Instantiates a new Transition coordinator.
+   *
+   * @param miningCoordinator the mining coordinator
+   * @param mergeCoordinator the merge coordinator
+   * @param postMergeContext the post merge context
+   */
   public TransitionCoordinator(
-      final MiningCoordinator miningCoordinator, final MiningCoordinator mergeCoordinator) {
-    super(miningCoordinator, mergeCoordinator);
+      final MiningCoordinator miningCoordinator,
+      final MiningCoordinator mergeCoordinator,
+      final PostMergeContext postMergeContext) {
+    super(miningCoordinator, mergeCoordinator, postMergeContext);
     this.miningCoordinator = miningCoordinator;
     this.mergeCoordinator = (MergeMiningCoordinator) mergeCoordinator;
   }
 
+  /**
+   * Gets merge coordinator.
+   *
+   * @return the merge coordinator
+   */
   public MergeMiningCoordinator getMergeCoordinator() {
     return mergeCoordinator;
   }
@@ -88,9 +105,8 @@ public class TransitionCoordinator extends TransitionUtils<MiningCoordinator>
   }
 
   @Override
-  public void setExtraData(final Bytes extraData) {
-    miningCoordinator.setExtraData(extraData);
-    mergeCoordinator.setExtraData(extraData);
+  public Wei getMinPriorityFeePerGas() {
+    return dispatchFunctionAccordingToMergeState(MiningCoordinator::getMinPriorityFeePerGas);
   }
 
   @Override
@@ -132,8 +148,11 @@ public class TransitionCoordinator extends TransitionUtils<MiningCoordinator>
       final BlockHeader parentHeader,
       final Long timestamp,
       final Bytes32 prevRandao,
-      final Address feeRecipient) {
-    return mergeCoordinator.preparePayload(parentHeader, timestamp, prevRandao, feeRecipient);
+      final Address feeRecipient,
+      final Optional<List<Withdrawal>> withdrawals,
+      final Optional<Bytes32> parentBeaconBlockRoot) {
+    return mergeCoordinator.preparePayload(
+        parentHeader, timestamp, prevRandao, feeRecipient, withdrawals, parentBeaconBlockRoot);
   }
 
   @Override
@@ -148,12 +167,8 @@ public class TransitionCoordinator extends TransitionUtils<MiningCoordinator>
 
   @Override
   public ForkchoiceResult updateForkChoice(
-      final BlockHeader newHead,
-      final Hash finalizedBlockHash,
-      final Hash safeBlockHash,
-      final Optional<PayloadAttributes> maybePayloadAttributes) {
-    return mergeCoordinator.updateForkChoice(
-        newHead, finalizedBlockHash, safeBlockHash, maybePayloadAttributes);
+      final BlockHeader newHead, final Hash finalizedBlockHash, final Hash safeBlockHash) {
+    return mergeCoordinator.updateForkChoice(newHead, finalizedBlockHash, safeBlockHash);
   }
 
   @Override
@@ -164,12 +179,6 @@ public class TransitionCoordinator extends TransitionUtils<MiningCoordinator>
   @Override
   public Optional<Hash> getLatestValidAncestor(final BlockHeader blockHeader) {
     return mergeCoordinator.getLatestValidAncestor(blockHeader);
-  }
-
-  @Override
-  public boolean latestValidAncestorDescendsFromTerminal(final BlockHeader blockHeader) {
-    // this is nonsensical pre-merge, but should be fine to delegate
-    return mergeCoordinator.latestValidAncestorDescendsFromTerminal(blockHeader);
   }
 
   @Override
@@ -198,11 +207,6 @@ public class TransitionCoordinator extends TransitionUtils<MiningCoordinator>
   }
 
   @Override
-  public void addBadBlock(final Block block, final Optional<Throwable> maybeCause) {
-    mergeCoordinator.addBadBlock(block, maybeCause);
-  }
-
-  @Override
   public boolean isBadBlock(final Hash blockHash) {
     return mergeCoordinator.isBadBlock(blockHash);
   }
@@ -215,5 +219,15 @@ public class TransitionCoordinator extends TransitionUtils<MiningCoordinator>
   @Override
   public void finalizeProposalById(final PayloadIdentifier payloadId) {
     mergeCoordinator.finalizeProposalById(payloadId);
+  }
+
+  /**
+   * returns the instance of ethScheduler
+   *
+   * @return get the Eth scheduler
+   */
+  @Override
+  public EthScheduler getEthScheduler() {
+    return mergeCoordinator.getEthScheduler();
   }
 }

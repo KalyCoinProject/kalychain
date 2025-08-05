@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -17,6 +17,7 @@ package org.hyperledger.besu.config;
 import org.hyperledger.besu.datatypes.Address;
 
 import java.math.BigInteger;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -24,13 +25,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.ImmutableMap;
 import org.apache.tuweni.bytes.Bytes;
 
+/** The Json Bft config options. */
 public class JsonBftConfigOptions implements BftConfigOptions {
 
+  /** The constant DEFAULT. */
   public static final JsonBftConfigOptions DEFAULT =
       new JsonBftConfigOptions(JsonUtil.createEmptyObjectNode());
 
   private static final long DEFAULT_EPOCH_LENGTH = 30_000;
   private static final int DEFAULT_BLOCK_PERIOD_SECONDS = 1;
+  // 0 keeps working as before, increase to activate it
+  private static final int DEFAULT_EMPTY_BLOCK_PERIOD_SECONDS = 0;
+  private static final int DEFAULT_BLOCK_PERIOD_MILLISECONDS = 0; // Experimental for test only
   private static final int DEFAULT_ROUND_EXPIRY_SECONDS = 1;
   // In a healthy network this can be very small. This default limit will allow for suitable
   // protection for on a typical 20 node validator network with multiple rounds
@@ -40,8 +46,14 @@ public class JsonBftConfigOptions implements BftConfigOptions {
   private static final int DEFAULT_FUTURE_MESSAGES_LIMIT = 1000;
   private static final int DEFAULT_FUTURE_MESSAGES_MAX_DISTANCE = 10;
 
+  /** The Bft config root. */
   protected final ObjectNode bftConfigRoot;
 
+  /**
+   * Instantiates a new Json bft config options.
+   *
+   * @param bftConfigRoot the bft config root
+   */
   public JsonBftConfigOptions(final ObjectNode bftConfigRoot) {
     this.bftConfigRoot = bftConfigRoot;
   }
@@ -55,6 +67,18 @@ public class JsonBftConfigOptions implements BftConfigOptions {
   public int getBlockPeriodSeconds() {
     return JsonUtil.getPositiveInt(
         bftConfigRoot, "blockperiodseconds", DEFAULT_BLOCK_PERIOD_SECONDS);
+  }
+
+  @Override
+  public int getEmptyBlockPeriodSeconds() {
+    return JsonUtil.getInt(
+        bftConfigRoot, "xemptyblockperiodseconds", DEFAULT_EMPTY_BLOCK_PERIOD_SECONDS);
+  }
+
+  @Override
+  public long getBlockPeriodMilliseconds() {
+    return JsonUtil.getLong(
+        bftConfigRoot, "xblockperiodmilliseconds", DEFAULT_BLOCK_PERIOD_MILLISECONDS);
   }
 
   @Override
@@ -109,7 +133,7 @@ public class JsonBftConfigOptions implements BftConfigOptions {
       return BigInteger.ZERO;
     }
     final String weiStr = configFileContent.get();
-    if (weiStr.toLowerCase().startsWith("0x")) {
+    if (weiStr.toLowerCase(Locale.ROOT).startsWith("0x")) {
       return new BigInteger(1, Bytes.fromHexStringLenient(weiStr).toArrayUnsafe());
     }
     return new BigInteger(weiStr);
@@ -123,6 +147,9 @@ public class JsonBftConfigOptions implements BftConfigOptions {
     }
     if (bftConfigRoot.has("blockperiodseconds")) {
       builder.put("blockPeriodSeconds", getBlockPeriodSeconds());
+    }
+    if (bftConfigRoot.has("xblockperiodmilliseconds")) {
+      builder.put("xBlockPeriodMilliSeconds", getBlockPeriodMilliseconds());
     }
     if (bftConfigRoot.has("requesttimeoutseconds")) {
       builder.put("requestTimeoutSeconds", getRequestTimeoutSeconds());

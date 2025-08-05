@@ -18,8 +18,10 @@ import org.hyperledger.besu.datatypes.Address;
 
 import java.math.BigInteger;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -27,21 +29,49 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.Lists;
 import org.apache.tuweni.bytes.Bytes;
 
-public class BftFork {
+/** The Bft fork. */
+public class BftFork implements Fork {
 
+  /** The constant FORK_BLOCK_KEY. */
   public static final String FORK_BLOCK_KEY = "block";
+
+  /** The constant VALIDATORS_KEY. */
   public static final String VALIDATORS_KEY = "validators";
+
+  /** The constant BLOCK_PERIOD_SECONDS_KEY. */
   public static final String BLOCK_PERIOD_SECONDS_KEY = "blockperiodseconds";
+
+  /** The constant EMPTY_BLOCK_PERIOD_SECONDS_KEY. */
+  public static final String EMPTY_BLOCK_PERIOD_SECONDS_KEY = "xemptyblockperiodseconds";
+
+  /** The constant BLOCK_PERIOD_MILLISECONDS_KEY. */
+  public static final String BLOCK_PERIOD_MILLISECONDS_KEY = "xblockperiodmilliseconds";
+
+  /** The constant BLOCK_REWARD_KEY. */
   public static final String BLOCK_REWARD_KEY = "blockreward";
+
+  /** The constant MINING_BENEFICIARY_KEY. */
   public static final String MINING_BENEFICIARY_KEY = "miningbeneficiary";
 
+  /** The Fork config root. */
   protected final ObjectNode forkConfigRoot;
 
+  /**
+   * Instantiates a new Bft fork.
+   *
+   * @param forkConfigRoot the fork config root
+   */
   @JsonCreator
   public BftFork(final ObjectNode forkConfigRoot) {
     this.forkConfigRoot = forkConfigRoot;
   }
 
+  /**
+   * Gets fork block.
+   *
+   * @return the fork block
+   */
+  @Override
   public long getForkBlock() {
     return JsonUtil.getLong(forkConfigRoot, FORK_BLOCK_KEY)
         .orElseThrow(
@@ -50,10 +80,39 @@ public class BftFork {
                     "Fork block not specified for Bft fork in custom forks"));
   }
 
+  /**
+   * Gets block period seconds.
+   *
+   * @return the block period seconds
+   */
   public OptionalInt getBlockPeriodSeconds() {
     return JsonUtil.getPositiveInt(forkConfigRoot, BLOCK_PERIOD_SECONDS_KEY);
   }
 
+  /**
+   * Gets empty block period seconds.
+   *
+   * @return the empty block period seconds
+   */
+  public OptionalInt getEmptyBlockPeriodSeconds() {
+    // It can be 0 to disable custom empty block periods
+    return JsonUtil.getInt(forkConfigRoot, EMPTY_BLOCK_PERIOD_SECONDS_KEY);
+  }
+
+  /**
+   * Gets block period milliseconds. Experimental for test scenarios only.
+   *
+   * @return the block period milliseconds
+   */
+  public OptionalLong getBlockPeriodMilliseconds() {
+    return JsonUtil.getLong(forkConfigRoot, BLOCK_PERIOD_MILLISECONDS_KEY);
+  }
+
+  /**
+   * Gets block reward wei.
+   *
+   * @return the block reward wei
+   */
   public Optional<BigInteger> getBlockRewardWei() {
     final Optional<String> configFileContent = JsonUtil.getString(forkConfigRoot, BLOCK_REWARD_KEY);
 
@@ -61,12 +120,17 @@ public class BftFork {
       return Optional.empty();
     }
     final String weiStr = configFileContent.get();
-    if (weiStr.toLowerCase().startsWith("0x")) {
+    if (weiStr.toLowerCase(Locale.ROOT).startsWith("0x")) {
       return Optional.of(new BigInteger(1, Bytes.fromHexStringLenient(weiStr).toArrayUnsafe()));
     }
     return Optional.of(new BigInteger(weiStr));
   }
 
+  /**
+   * Gets mining beneficiary.
+   *
+   * @return the mining beneficiary
+   */
   public Optional<Address> getMiningBeneficiary() {
     try {
       return JsonUtil.getString(forkConfigRoot, MINING_BENEFICIARY_KEY)
@@ -79,10 +143,21 @@ public class BftFork {
     }
   }
 
+  /**
+   * Is mining beneficiary configured boolean.
+   *
+   * @return the boolean
+   */
   public boolean isMiningBeneficiaryConfigured() {
     return JsonUtil.hasKey(forkConfigRoot, MINING_BENEFICIARY_KEY);
   }
 
+  /**
+   * Gets validators.
+   *
+   * @return the validators
+   * @throws IllegalArgumentException the illegal argument exception
+   */
   public Optional<List<String>> getValidators() throws IllegalArgumentException {
     final Optional<ArrayNode> validatorNode = JsonUtil.getArrayNode(forkConfigRoot, VALIDATORS_KEY);
 

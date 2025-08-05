@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -35,7 +35,11 @@ public class TransactionPoolEvictionService {
         Optional.of(
             vertx.setPeriodic(
                 TimeUnit.MINUTES.toMillis(1),
-                id -> transactionPool.getPendingTransactions().evictOldTransactions()));
+                id -> {
+                  if (transactionPool.isEnabled()) {
+                    transactionPool.evictOldTransactions();
+                  }
+                }));
   }
 
   public void stop() {

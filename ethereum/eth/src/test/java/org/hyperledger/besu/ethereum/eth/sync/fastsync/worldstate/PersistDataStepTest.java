@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -23,11 +23,11 @@ import static org.mockito.Mockito.verify;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
-import org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider;
-import org.hyperledger.besu.ethereum.trie.MerklePatriciaTrie;
-import org.hyperledger.besu.ethereum.trie.SimpleMerklePatriciaTrie;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.trie.MerkleTrie;
+import org.hyperledger.besu.ethereum.trie.forest.storage.ForestWorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.trie.patricia.SimpleMerklePatriciaTrie;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
+import org.hyperledger.besu.services.kvstore.InMemoryKeyValueStorage;
 import org.hyperledger.besu.services.tasks.Task;
 
 import java.nio.charset.StandardCharsets;
@@ -35,19 +35,22 @@ import java.util.List;
 import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class PersistDataStepTest {
 
-  private final WorldStateStorage worldStateStorage =
-      new InMemoryKeyValueStorageProvider().createWorldStateStorage(DataStorageFormat.FOREST);
+  final ForestWorldStateKeyValueStorage worldStateKeyValueStorage =
+      new ForestWorldStateKeyValueStorage(new InMemoryKeyValueStorage());
+  private final WorldStateStorageCoordinator worldStateStorageCoordinator =
+      new WorldStateStorageCoordinator(worldStateKeyValueStorage);
+
   private final FastWorldDownloadState downloadState = mock(FastWorldDownloadState.class);
 
   private final Bytes rootNodeData = Bytes.of(1, 1, 1, 1);
   private final BlockHeader blockHeader =
       new BlockHeaderTestFixture().stateRoot(Hash.hash(rootNodeData)).buildHeader();
 
-  private final PersistDataStep persistDataStep = new PersistDataStep(worldStateStorage);
+  private final PersistDataStep persistDataStep = new PersistDataStep(worldStateStorageCoordinator);
 
   @Test
   public void shouldPersistDataWhenPresentWithoutChildren() {
@@ -75,8 +78,8 @@ public class PersistDataStepTest {
         persistDataStep.persist(tasks, blockHeader, downloadState);
     assertThat(result).isSameAs(tasks);
 
-    assertThat(worldStateStorage.contains(withData.getData().getHash())).isTrue();
-    assertThat(worldStateStorage.contains(withoutData.getData().getHash())).isFalse();
+    assertThat(worldStateKeyValueStorage.contains(withData.getData().getHash())).isTrue();
+    assertThat(worldStateKeyValueStorage.contains(withoutData.getData().getHash())).isFalse();
   }
 
   @Test
@@ -87,7 +90,7 @@ public class PersistDataStepTest {
         persistDataStep.persist(tasks, blockHeader, downloadState);
     assertThat(result).isSameAs(tasks);
 
-    assertThat(worldStateStorage.contains(rootNode.getData().getHash())).isFalse();
+    assertThat(worldStateKeyValueStorage.contains(rootNode.getData().getHash())).isFalse();
     verify(downloadState).setRootNodeData(rootNode.getData().getData());
   }
 
@@ -97,7 +100,7 @@ public class PersistDataStepTest {
 
   private Task<NodeDataRequest> createTaskWithData(final Bytes data) {
     final StubTask task = createTaskWithoutData(data);
-    MerklePatriciaTrie<Bytes, String> trie =
+    MerkleTrie<Bytes, String> trie =
         new SimpleMerklePatriciaTrie<>(
             value -> (value != null) ? Bytes.wrap(value.getBytes(StandardCharsets.UTF_8)) : null);
     trie.put(data, "01");
@@ -119,7 +122,7 @@ public class PersistDataStepTest {
   private void assertDataPersisted(final List<Task<NodeDataRequest>> tasks) {
     tasks.forEach(
         task ->
-            assertThat(worldStateStorage.getNodeData(null, task.getData().getHash()))
+            assertThat(worldStateKeyValueStorage.getNodeData(task.getData().getHash()))
                 .isEqualTo(Optional.of(task.getData().getData())));
   }
 }

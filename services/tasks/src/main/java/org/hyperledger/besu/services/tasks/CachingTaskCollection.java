@@ -20,27 +20,47 @@ import java.util.HashSet;
 import java.util.Queue;
 import java.util.Set;
 
+/**
+ * The Caching task collection.
+ *
+ * @param <T> the type parameter
+ */
 public class CachingTaskCollection<T> implements TaskCollection<T> {
 
+  /** The constant DEFAULT_CACHE_SIZE. */
   public static final int DEFAULT_CACHE_SIZE = 1_000_000;
+
   private final int maxCacheSize;
 
   // The underlying collection
   private final TaskCollection<T> wrappedCollection;
+
   /**
    * A cache of tasks to operate on before going to {@link CachingTaskCollection#wrappedCollection}
    */
   private final Queue<Task<T>> cache = new ArrayDeque<>();
+
   // Tasks that have been removed, but not marked completed yet
   private final Set<Task<T>> outstandingTasks = new HashSet<>();
 
   private boolean closed = false;
 
+  /**
+   * Instantiates a new Caching task collection.
+   *
+   * @param collection the collection
+   * @param maxCacheSize the max cache size
+   */
   public CachingTaskCollection(final TaskCollection<T> collection, final int maxCacheSize) {
     this.wrappedCollection = collection;
     this.maxCacheSize = maxCacheSize;
   }
 
+  /**
+   * Instantiates a new Caching task collection.
+   *
+   * @param collection the collection
+   */
   public CachingTaskCollection(final TaskCollection<T> collection) {
     this(collection, DEFAULT_CACHE_SIZE);
   }
@@ -83,6 +103,11 @@ public class CachingTaskCollection<T> implements TaskCollection<T> {
     return wrappedCollection.size() + cache.size();
   }
 
+  /**
+   * Cache size.
+   *
+   * @return the cache size
+   */
   public synchronized int cacheSize() {
     return outstandingTasks.size() + cache.size();
   }

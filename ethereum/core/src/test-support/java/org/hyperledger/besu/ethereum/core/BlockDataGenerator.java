@@ -15,7 +15,6 @@
 package org.hyperledger.besu.ethereum.core;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static java.util.stream.Collectors.toUnmodifiableList;
 import static java.util.stream.Collectors.toUnmodifiableSet;
 import static org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider.createInMemoryWorldStateArchive;
 
@@ -23,20 +22,22 @@ import org.hyperledger.besu.crypto.KeyPair;
 import org.hyperledger.besu.crypto.SecureRandomProvider;
 import org.hyperledger.besu.crypto.SignatureAlgorithm;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.datatypes.AccessListEntry;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.TransactionType;
+import org.hyperledger.besu.datatypes.VersionedHash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.mainnet.BodyValidation;
 import org.hyperledger.besu.ethereum.mainnet.MainnetBlockHeaderFunctions;
+import org.hyperledger.besu.ethereum.rlp.BytesValueRLPOutput;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
-import org.hyperledger.besu.evm.AccessListEntry;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.account.MutableAccount;
 import org.hyperledger.besu.evm.log.Log;
 import org.hyperledger.besu.evm.log.LogTopic;
 import org.hyperledger.besu.evm.log.LogsBloomFilter;
 import org.hyperledger.besu.evm.worldstate.WorldUpdater;
-import org.hyperledger.besu.plugin.data.TransactionType;
 
 import java.math.BigInteger;
 import java.security.InvalidAlgorithmParameterException;
@@ -57,7 +58,6 @@ import java.util.OptionalLong;
 import java.util.Random;
 import java.util.Set;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.tuweni.bytes.Bytes;
@@ -125,7 +125,7 @@ public class BlockDataGenerator {
       final List<UInt256> storageKeys) {
     final List<Block> seq = new ArrayList<>(count);
 
-    final MutableWorldState worldState = worldStateArchive.getMutable();
+    final MutableWorldState worldState = worldStateArchive.getWorldState();
 
     long nextBlockNumber = nextBlock;
     Hash parentHash = parent;
@@ -140,7 +140,7 @@ public class BlockDataGenerator {
         // Mutate accounts
         accountsToSetup.forEach(
             hash -> {
-              final MutableAccount a = stateUpdater.getAccount(hash).getMutable();
+              final MutableAccount a = stateUpdater.getAccount(hash);
               a.incrementNonce();
               a.setBalance(Wei.of(positiveLong()));
               storageKeys.forEach(key -> a.setStorageValue(key, UInt256.ONE));
@@ -180,7 +180,7 @@ public class BlockDataGenerator {
     final WorldUpdater updater = worldState.updater();
     final List<Account> accounts = new ArrayList<>(count);
     for (int i = 0; i < count; i++) {
-      final MutableAccount account = updater.getOrCreate(address()).getMutable();
+      final MutableAccount account = updater.getOrCreate(address());
       if (random.nextFloat() < percentContractAccounts) {
         // Some percentage of accounts are contract accounts
         account.setCode(bytesValue(5, 50));
@@ -303,6 +303,8 @@ public class BlockDataGenerator {
             .extraData(options.getExtraData(bytes32()))
             .mixHash(hash())
             .nonce(blockNonce)
+            .withdrawalsRoot(options.getWithdrawalsRoot(null))
+            .requestsHash(options.getRequestsHash(null))
             .blockHeaderFunctions(
                 options.getBlockHeaderFunctions(new MainnetBlockHeaderFunctions()));
     options.getBaseFee(Optional.of(Wei.of(uint256(2)))).ifPresent(blockHeaderBuilder::baseFee);
@@ -327,7 +329,8 @@ public class BlockDataGenerator {
       defaultTxs.add(transaction(options.getTransactionTypes()));
     }
 
-    return new BlockBody(options.getTransactions(defaultTxs), ommers);
+    return new BlockBody(
+        options.getTransactions(defaultTxs), ommers, options.getWithdrawals(Optional.empty()));
   }
 
   private BlockHeader ommer() {
@@ -335,7 +338,9 @@ public class BlockDataGenerator {
   }
 
   private TransactionType transactionType() {
-    return transactionType(TransactionType.values());
+    // TODO: when TransactionType.EIP4844 is fully supported, revert this.
+    return transactionType(
+        TransactionType.FRONTIER, TransactionType.ACCESS_LIST, TransactionType.EIP1559);
   }
 
   private TransactionType transactionType(final TransactionType... transactionTypes) {
@@ -364,19 +369,14 @@ public class BlockDataGenerator {
 
   public Transaction transaction(
       final TransactionType transactionType, final Bytes payload, final Address to) {
-    switch (transactionType) {
-      case FRONTIER:
-        return frontierTransaction(payload, to);
-      case EIP1559:
-        return eip1559Transaction(payload, to);
-      case ACCESS_LIST:
-        return accessListTransaction(payload, to);
-      default:
-        throw new RuntimeException(
-            String.format(
-                "Developer Error. No random transaction generator defined for %s",
-                transactionType));
-    }
+    return switch (transactionType) {
+      case FRONTIER -> frontierTransaction(payload, to);
+      case EIP1559 -> eip1559Transaction(payload, to);
+      case ACCESS_LIST -> accessListTransaction(payload, to);
+      case BLOB -> blobTransaction(payload, to);
+      case DELEGATE_CODE -> null;
+        // no default, all types accounted for.
+    };
   }
 
   private Transaction accessListTransaction(final Bytes payload, final Address to) {
@@ -395,13 +395,12 @@ public class BlockDataGenerator {
 
   private List<AccessListEntry> accessList() {
     final List<Address> accessedAddresses =
-        Stream.generate(this::address).limit(1L + random.nextInt(3)).collect(toUnmodifiableList());
+        Stream.generate(this::address).limit(1L + random.nextInt(3)).toList();
     final List<AccessListEntry> accessedStorage = new ArrayList<>();
     for (int i = 0; i < accessedAddresses.size(); ++i) {
       accessedStorage.add(
           new AccessListEntry(
-              accessedAddresses.get(i),
-              Stream.generate(this::bytes32).limit(2L * i).collect(toUnmodifiableList())));
+              accessedAddresses.get(i), Stream.generate(this::bytes32).limit(2L * i).toList()));
     }
     return accessedStorage;
   }
@@ -417,6 +416,22 @@ public class BlockDataGenerator {
         .value(Wei.of(positiveLong()))
         .payload(payload)
         .chainId(BigInteger.ONE)
+        .signAndBuild(generateKeyPair());
+  }
+
+  private Transaction blobTransaction(final Bytes payload, final Address to) {
+    return Transaction.builder()
+        .type(TransactionType.BLOB)
+        .nonce(random.nextLong())
+        .maxPriorityFeePerGas(Wei.wrap(bytesValue(4)))
+        .maxFeePerGas(Wei.wrap(bytesValue(4)))
+        .gasLimit(positiveLong())
+        .to(to)
+        .value(Wei.of(positiveLong()))
+        .payload(payload)
+        .chainId(BigInteger.ONE)
+        .maxFeePerBlobGas(Wei.of(1))
+        .versionedHashes(List.of(VersionedHash.DEFAULT_VERSIONED_HASH))
         .signAndBuild(generateKeyPair());
   }
 
@@ -441,7 +456,8 @@ public class BlockDataGenerator {
   }
 
   public Set<Transaction> transactions(final int n) {
-    return transactions(n, TransactionType.values());
+    return transactions(
+        n, TransactionType.FRONTIER, TransactionType.ACCESS_LIST, TransactionType.EIP1559);
   }
 
   public Set<Transaction> transactionsWithAllTypes() {
@@ -451,7 +467,8 @@ public class BlockDataGenerator {
   public Set<Transaction> transactionsWithAllTypes(final int atLeast) {
     checkArgument(atLeast >= 0);
     final HashSet<TransactionType> remainingTransactionTypes =
-        new HashSet<>(Set.of(TransactionType.values()));
+        new HashSet<>(
+            Set.of(TransactionType.FRONTIER, TransactionType.ACCESS_LIST, TransactionType.EIP1559));
     final HashSet<Transaction> transactions = new HashSet<>();
     while (transactions.size() < atLeast || !remainingTransactionTypes.isEmpty()) {
       final Transaction newTransaction = transaction();
@@ -505,7 +522,7 @@ public class BlockDataGenerator {
   }
 
   public List<Log> logs(final int logsCount, final int topicsPerLog) {
-    return Stream.generate(() -> log(topicsPerLog)).limit(logsCount).collect(Collectors.toList());
+    return Stream.generate(() -> log(topicsPerLog)).limit(logsCount).toList();
   }
 
   public Log log() {
@@ -513,8 +530,7 @@ public class BlockDataGenerator {
   }
 
   public Log log(final int topicCount) {
-    final List<LogTopic> topics =
-        Stream.generate(this::logTopic).limit(topicCount).collect(Collectors.toList());
+    final List<LogTopic> topics = Stream.generate(this::logTopic).limit(topicCount).toList();
     return new Log(address(), bytesValue(5, 15), topics);
   }
 
@@ -619,6 +635,9 @@ public class BlockDataGenerator {
     private Optional<Difficulty> difficulty = Optional.empty();
     private final List<Transaction> transactions = new ArrayList<>();
     private final List<BlockHeader> ommers = new ArrayList<>();
+
+    private Optional<Optional<List<Withdrawal>>> withdrawals = Optional.empty();
+    private Optional<Optional<List<Request>>> requests = Optional.empty();
     private Optional<Bytes> extraData = Optional.empty();
     private Optional<BlockHeaderFunctions> blockHeaderFunctions = Optional.empty();
     private Optional<Hash> receiptsRoot = Optional.empty();
@@ -627,9 +646,16 @@ public class BlockDataGenerator {
     private Optional<Long> timestamp = Optional.empty();
     private boolean hasOmmers = true;
     private boolean hasTransactions = true;
-    private TransactionType[] transactionTypes = TransactionType.values();
+    private TransactionType[] transactionTypes = {
+      TransactionType.FRONTIER, TransactionType.ACCESS_LIST, TransactionType.EIP1559
+    };
     private Optional<Address> coinbase = Optional.empty();
     private Optional<Optional<Wei>> maybeBaseFee = Optional.empty();
+
+    private Optional<Hash> withdrawalsRoot = Optional.empty();
+    private Optional<Hash> requestsHash = Optional.empty();
+
+    private Optional<Optional<Wei>> maybeMaxFeePerBlobGas = Optional.empty();
 
     public static BlockOptions create() {
       return new BlockOptions();
@@ -687,6 +713,23 @@ public class BlockDataGenerator {
       return timestamp;
     }
 
+    public Hash getWithdrawalsRoot(final Hash defaultValue) {
+      return withdrawalsRoot.orElse(defaultValue);
+    }
+
+    public Optional<List<Withdrawal>> getWithdrawals(
+        final Optional<List<Withdrawal>> defaultValue) {
+      return withdrawals.orElse(defaultValue);
+    }
+
+    public Hash getRequestsHash(final Hash defaultValue) {
+      return requestsHash.orElse(defaultValue);
+    }
+
+    public Optional<List<Request>> getRequests(final Optional<List<Request>> defaultValue) {
+      return requests.orElse(defaultValue);
+    }
+
     public boolean hasTransactions() {
       return hasTransactions;
     }
@@ -707,6 +750,29 @@ public class BlockDataGenerator {
 
     public BlockOptions addTransaction(final Collection<Transaction> txs) {
       return addTransaction(txs.toArray(new Transaction[] {}));
+    }
+
+    public BlockOptions setWithdrawals(final Optional<List<Withdrawal>> withdrawals) {
+      this.withdrawals = Optional.of(withdrawals);
+      if (withdrawals.isPresent()) {
+        final List<Withdrawal> withdrawalList = withdrawals.get();
+        final ArrayList<Bytes> bytesList = new ArrayList<>(withdrawalList.size());
+        withdrawalList.forEach(
+            w -> {
+              final BytesValueRLPOutput rlpOutput = new BytesValueRLPOutput();
+              w.writeTo(rlpOutput);
+              bytesList.add(rlpOutput.encoded());
+            });
+        this.withdrawalsRoot = Optional.of(Util.getRootFromListOfBytes(bytesList));
+      } else {
+        this.withdrawalsRoot = Optional.empty();
+      }
+      return this;
+    }
+
+    public BlockOptions setRequests(final Optional<List<Request>> requests) {
+      this.requests = Optional.of(requests);
+      return this;
     }
 
     public BlockOptions setBlockNumber(final long blockNumber) {
@@ -789,6 +855,25 @@ public class BlockDataGenerator {
 
     public BlockOptions setBaseFee(final Optional<Wei> baseFee) {
       this.maybeBaseFee = Optional.of(baseFee);
+      return this;
+    }
+
+    public BlockOptions setWithdrawalsRoot(final Hash withdrawalsRoot) {
+      this.withdrawalsRoot = Optional.of(withdrawalsRoot);
+      return this;
+    }
+
+    public BlockOptions setRequestsHash(final Hash requestsHash) {
+      this.requestsHash = Optional.of(requestsHash);
+      return this;
+    }
+
+    public Optional<Wei> getMaxFeePerBlobGas(final Optional<Wei> defaultValue) {
+      return maybeMaxFeePerBlobGas.orElse(defaultValue);
+    }
+
+    public BlockOptions setMaxFeePerBlobGas(final Optional<Wei> maxFeePerBlobGas) {
+      this.maybeMaxFeePerBlobGas = Optional.of(maxFeePerBlobGas);
       return this;
     }
   }

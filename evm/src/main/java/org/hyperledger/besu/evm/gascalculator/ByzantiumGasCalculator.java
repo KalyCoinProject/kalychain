@@ -11,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evm.gascalculator;
 
@@ -25,12 +24,19 @@ import java.math.BigInteger;
 
 import org.apache.tuweni.bytes.Bytes;
 
+/** The Byzantium gas calculator. */
 public class ByzantiumGasCalculator extends SpuriousDragonGasCalculator {
+  /** word size */
+  protected static final int WORD_SIZE = 32;
+
   private static final int GQUADDIVISOR = 20;
-  private static final int WORD_SIZE = 32;
   private static final int BITS_IN_BYTE = 8;
 
+  /** The constant MAX_FIRST_EXPONENT_BYTES. */
   public static final int MAX_FIRST_EXPONENT_BYTES = 32;
+
+  /** Default constructor. */
+  public ByzantiumGasCalculator() {}
 
   @Override
   public long modExpGasCost(final Bytes input) {
@@ -53,6 +59,13 @@ public class ByzantiumGasCalculator extends SpuriousDragonGasCalculator {
     return (numerator == Long.MAX_VALUE) ? Long.MAX_VALUE : numerator / GQUADDIVISOR;
   }
 
+  /**
+   * Adjusted exponent length.
+   *
+   * @param exponentLength the exponent length
+   * @param firstExpBytes the first exp bytes
+   * @return the long
+   */
   public static long adjustedExponentLength(
       final long exponentLength, final BigInteger firstExpBytes) {
     final int bitLength = bitLength(firstExpBytes);
@@ -63,7 +76,13 @@ public class ByzantiumGasCalculator extends SpuriousDragonGasCalculator {
     }
   }
 
-  private static int bitLength(final BigInteger n) {
+  /**
+   * Compute the length in bits of the given integer
+   *
+   * @param n big integer for which to calculate length
+   * @return bit length
+   */
+  protected static int bitLength(final BigInteger n) {
     return n.compareTo(BigInteger.ZERO) == 0 ? 0 : (n.bitLength() - 1);
   }
 }

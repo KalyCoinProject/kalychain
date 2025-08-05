@@ -21,23 +21,21 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParame
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.FilterParameter;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.subscription.blockheaders.NewBlockHeadersSubscription;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.subscription.logs.LogsSubscription;
-import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.subscription.logs.PrivateLogsSubscription;
-import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.subscription.request.PrivateSubscribeRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.subscription.request.SubscribeRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.subscription.request.SubscriptionType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.subscription.syncing.SyncingSubscription;
 
 import java.util.function.Function;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class SubscriptionBuilderTest {
 
   private static final String CONNECTION_ID = "connectionId";
   private SubscriptionBuilder subscriptionBuilder;
 
-  @Before
+  @BeforeEach
   public void before() {
     subscriptionBuilder = new SubscriptionBuilder();
   }
@@ -49,29 +47,6 @@ public class SubscriptionBuilderTest {
         new SubscribeRequest(SubscriptionType.LOGS, filterParameter, null, CONNECTION_ID);
     final LogsSubscription expectedSubscription =
         new LogsSubscription(1L, CONNECTION_ID, filterParameter);
-
-    final Subscription builtSubscription =
-        subscriptionBuilder.build(1L, CONNECTION_ID, subscribeRequest);
-
-    assertThat(builtSubscription).usingRecursiveComparison().isEqualTo(expectedSubscription);
-  }
-
-  @Test
-  public void shouldBuildPrivateLogsSubscriptionWhenSubscribeRequestTypeIsPrivateLogs() {
-    final String privacyGroupId = "ZDmkMK7CyxA1F1rktItzKFTfRwApg7aWzsTtm2IOZ5Y=";
-    final String enclavePublicKey = "C1bVtMxLCUHmBVHXoZzzBgPbW/wj5axDpW9X8l91SGo=";
-    final FilterParameter filterParameter = filterParameter();
-    final PrivateSubscribeRequest subscribeRequest =
-        new PrivateSubscribeRequest(
-            SubscriptionType.LOGS,
-            filterParameter,
-            null,
-            CONNECTION_ID,
-            privacyGroupId,
-            enclavePublicKey);
-    final PrivateLogsSubscription expectedSubscription =
-        new PrivateLogsSubscription(
-            1L, CONNECTION_ID, filterParameter, privacyGroupId, enclavePublicKey);
 
     final Subscription builtSubscription =
         subscriptionBuilder.build(1L, CONNECTION_ID, subscribeRequest);

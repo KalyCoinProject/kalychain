@@ -25,7 +25,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.io.Resources;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class JsonGenesisConfigOptionsTest {
 
@@ -233,28 +233,6 @@ public class JsonGenesisConfigOptionsTest {
     assertThat(configOptions.isConsensusMigration()).isTrue();
   }
 
-  @Test
-  public void configWithMigrationFromIbftLegacyToQbft() {
-    final ObjectNode configNode = loadConfigWithMigrationFromIbftLegacyToQbft();
-
-    final JsonGenesisConfigOptions configOptions =
-        JsonGenesisConfigOptions.fromJsonObject(configNode);
-
-    assertThat(configOptions.isIbftLegacy()).isTrue();
-    assertThat(configOptions.isQbft()).isTrue();
-    assertThat(configOptions.isConsensusMigration()).isTrue();
-  }
-
-  @Test
-  public void configWithoutMigration() {
-    final ObjectNode configNode = loadCompleteDataSet();
-
-    final JsonGenesisConfigOptions configOptions =
-        JsonGenesisConfigOptions.fromJsonObject(configNode);
-
-    assertThat(configOptions.isIbftLegacy()).isFalse();
-  }
-
   private ObjectNode loadConfigWithMigrationFromIbft2ToQbft() {
     try {
       final String configText =
@@ -265,13 +243,5 @@ public class JsonGenesisConfigOptionsTest {
     } catch (final IOException e) {
       throw new RuntimeException("Failed to load resource", e);
     }
-  }
-
-  private ObjectNode loadConfigWithMigrationFromIbftLegacyToQbft() {
-    ObjectNode configNode = loadConfigWithMigrationFromIbft2ToQbft();
-    JsonNode consensusConfig = configNode.get("ibft2");
-    configNode.remove("ibft2");
-    configNode.set("ibft", consensusConfig);
-    return configNode;
   }
 }

@@ -18,11 +18,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hyperledger.besu.metrics.noop.NoOpMetricsSystem.NO_OP_COUNTER;
 
 import com.google.common.collect.Iterators;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class IteratorSourceStageTest {
 
-  private final Pipe<String> output = new Pipe<>(10, NO_OP_COUNTER, NO_OP_COUNTER, NO_OP_COUNTER);
+  private final Pipe<String> output =
+      new Pipe<>(10, NO_OP_COUNTER, NO_OP_COUNTER, NO_OP_COUNTER, "output_pipe");
 
   private final IteratorSourceStage<String> stage =
       new IteratorSourceStage<>("name", Iterators.forArray("a", "b", "c", "d"), output);

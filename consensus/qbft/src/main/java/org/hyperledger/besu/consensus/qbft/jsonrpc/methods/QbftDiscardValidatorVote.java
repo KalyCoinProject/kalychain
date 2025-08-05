@@ -18,19 +18,27 @@ import org.hyperledger.besu.consensus.common.validator.ValidatorProvider;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Qbft discard validator vote. */
 public class QbftDiscardValidatorVote implements JsonRpcMethod {
   private static final Logger LOG = LoggerFactory.getLogger(QbftDiscardValidatorVote.class);
   private final ValidatorProvider validatorProvider;
 
+  /**
+   * Instantiates a new Qbft discard validator vote.
+   *
+   * @param validatorProvider the validator provider
+   */
   public QbftDiscardValidatorVote(final ValidatorProvider validatorProvider) {
     this.validatorProvider = validatorProvider;
   }
@@ -43,14 +51,22 @@ public class QbftDiscardValidatorVote implements JsonRpcMethod {
   @Override
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
     if (validatorProvider.getVoteProviderAtHead().isPresent()) {
-      final Address validatorAddress = requestContext.getRequiredParameter(0, Address.class);
+      final Address validatorAddress;
+      try {
+        validatorAddress = requestContext.getRequiredParameter(0, Address.class);
+      } catch (JsonRpcParameterException e) {
+        throw new InvalidJsonRpcParameters(
+            "Invalid validator address parameter (index 0)",
+            RpcErrorType.INVALID_ADDRESS_PARAMS,
+            e);
+      }
       LOG.trace("Received RPC rpcName={} address={}", getName(), validatorAddress);
       validatorProvider.getVoteProviderAtHead().get().discardVote(validatorAddress);
 
       return new JsonRpcSuccessResponse(requestContext.getRequest().getId(), true);
     } else {
       return new JsonRpcErrorResponse(
-          requestContext.getRequest().getId(), JsonRpcError.METHOD_NOT_ENABLED);
+          requestContext.getRequest().getId(), RpcErrorType.METHOD_NOT_ENABLED);
     }
   }
 }

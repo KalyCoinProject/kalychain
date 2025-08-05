@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,9 +14,13 @@
  */
 package org.hyperledger.besu.consensus.merge;
 
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.PARIS;
+
 import org.hyperledger.besu.config.GenesisConfigOptions;
 import org.hyperledger.besu.datatypes.Wei;
-import org.hyperledger.besu.ethereum.core.PrivacyParameters;
+import org.hyperledger.besu.ethereum.GasLimitCalculator;
+import org.hyperledger.besu.ethereum.chain.BadBlockManager;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.mainnet.BlockHeaderValidator;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolScheduleBuilder;
@@ -24,41 +28,71 @@ import org.hyperledger.besu.ethereum.mainnet.ProtocolSpecAdapters;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSpecBuilder;
 import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
 import org.hyperledger.besu.evm.MainnetEVMs;
+import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 import org.hyperledger.besu.evm.internal.EvmConfiguration;
+import org.hyperledger.besu.plugin.services.MetricsSystem;
 
 import java.math.BigInteger;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 
+/** The Merge protocol schedule. */
 public class MergeProtocolSchedule {
 
   private static final BigInteger DEFAULT_CHAIN_ID = BigInteger.valueOf(1);
 
-  public static ProtocolSchedule create(
-      final GenesisConfigOptions config, final boolean isRevertReasonEnabled) {
-    return create(config, PrivacyParameters.DEFAULT, isRevertReasonEnabled);
-  }
+  /** Default constructor. */
+  MergeProtocolSchedule() {}
 
+  /**
+   * Create protocol schedule.
+   *
+   * @param config the config
+   * @param isRevertReasonEnabled the is revert reason enabled
+   * @param miningConfiguration the mining parameters
+   * @param badBlockManager the cache to use to keep invalid blocks
+   * @param isParallelTxProcessingEnabled indicates whether parallel transaction is enabled.
+   * @return the protocol schedule
+   */
   public static ProtocolSchedule create(
       final GenesisConfigOptions config,
-      final PrivacyParameters privacyParameters,
-      final boolean isRevertReasonEnabled) {
+      final boolean isRevertReasonEnabled,
+      final MiningConfiguration miningConfiguration,
+      final BadBlockManager badBlockManager,
+      final boolean isParallelTxProcessingEnabled,
+      final MetricsSystem metricsSystem) {
+
+    Map<Long, Function<ProtocolSpecBuilder, ProtocolSpecBuilder>> postMergeModifications =
+        new HashMap<>();
+    postMergeModifications.put(
+        0L,
+        (specBuilder) ->
+            MergeProtocolSchedule.applyParisSpecificModifications(
+                specBuilder, config.getChainId()));
+    unapplyModificationsFromShanghaiOnwards(config, postMergeModifications);
 
     return new ProtocolScheduleBuilder(
             config,
-            DEFAULT_CHAIN_ID,
-            ProtocolSpecAdapters.create(
-                0,
-                (specBuilder) ->
-                    MergeProtocolSchedule.applyMergeSpecificModifications(
-                        specBuilder, config.getChainId())),
-            privacyParameters,
+            Optional.of(DEFAULT_CHAIN_ID),
+            new ProtocolSpecAdapters(postMergeModifications),
             isRevertReasonEnabled,
-            config.isQuorum(),
-            EvmConfiguration.DEFAULT)
+            EvmConfiguration.DEFAULT,
+            miningConfiguration,
+            badBlockManager,
+            isParallelTxProcessingEnabled,
+            metricsSystem)
         .createProtocolSchedule();
   }
 
-  private static ProtocolSpecBuilder applyMergeSpecificModifications(
+  /**
+   * Apply Paris specific modifications because the Merge Transition code does not utilise {@link
+   * org.hyperledger.besu.ethereum.mainnet.MainnetProtocolSpecFactory.parisDefinition} until the
+   * shanghaiDefinition is utilised. This is due to the way the Transition works via TTD rather than
+   * via a blockNumber so it can't be looked up in the schedule.
+   */
+  private static ProtocolSpecBuilder applyParisSpecificModifications(
       final ProtocolSpecBuilder specBuilder, final Optional<BigInteger> chainId) {
 
     return specBuilder
@@ -66,14 +100,28 @@ public class MergeProtocolSchedule {
             (gasCalculator, jdCacheConfig) ->
                 MainnetEVMs.paris(
                     gasCalculator, chainId.orElse(BigInteger.ZERO), EvmConfiguration.DEFAULT))
-        .blockProcessorBuilder(MergeBlockProcessor::new)
         .blockHeaderValidatorBuilder(MergeProtocolSchedule::getBlockHeaderValidator)
         .blockReward(Wei.ZERO)
-        .difficultyCalculator((a, b, c) -> BigInteger.ZERO)
-        .skipZeroBlockRewards(true);
+        .difficultyCalculator((a, b) -> BigInteger.ZERO)
+        .skipZeroBlockRewards(true)
+        .isPoS(true)
+        .hardforkId(PARIS);
   }
 
-  private static BlockHeaderValidator.Builder getBlockHeaderValidator(final FeeMarket feeMarket) {
+  private static BlockHeaderValidator.Builder getBlockHeaderValidator(
+      final FeeMarket feeMarket,
+      final GasCalculator gasCalculator,
+      final GasLimitCalculator gasLimitCalculator) {
     return MergeValidationRulesetFactory.mergeBlockHeaderValidator(feeMarket);
+  }
+
+  private static void unapplyModificationsFromShanghaiOnwards(
+      final GenesisConfigOptions config,
+      final Map<Long, Function<ProtocolSpecBuilder, ProtocolSpecBuilder>> postMergeModifications) {
+    // Any post-Paris fork can rely on the MainnetProtocolSpec definitions again
+    // Must allow for config to skip Shanghai and go straight to a later fork.
+    if (!config.getForkBlockTimestamps().isEmpty()) {
+      postMergeModifications.put(config.getForkBlockTimestamps().getFirst(), Function.identity());
+    }
   }
 }

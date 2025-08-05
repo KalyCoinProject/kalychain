@@ -22,6 +22,7 @@ import java.util.function.Consumer;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.MutableBytes;
 import org.apache.tuweni.units.bigints.UInt256Value;
+import org.apache.tuweni.units.bigints.UInt64Value;
 
 /**
  * An output used to encode data in RLP encoding.
@@ -70,6 +71,15 @@ public interface RLPOutput {
    * @param v The value to write.
    */
   void writeBytes(Bytes v);
+
+  /**
+   * Writes a scalar 64 bits unsigned int (encoded without leading zeros)
+   *
+   * @param v unsigned 64 bit integer value
+   */
+  default void writeUInt64Scalar(final UInt64Value<?> v) {
+    writeBytes(v.toBytes().trimLeadingZeros());
+  }
 
   /**
    * Writes a scalar (encoded with no leading zeroes).

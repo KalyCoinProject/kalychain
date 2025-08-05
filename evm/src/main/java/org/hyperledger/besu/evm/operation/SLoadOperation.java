@@ -20,12 +20,13 @@ import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
-import org.hyperledger.besu.evm.internal.FixedStack.OverflowException;
-import org.hyperledger.besu.evm.internal.FixedStack.UnderflowException;
+import org.hyperledger.besu.evm.internal.OverflowException;
+import org.hyperledger.besu.evm.internal.UnderflowException;
 
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt256;
 
+/** The SLoad operation. */
 public class SLoadOperation extends AbstractOperation {
 
   private final long warmCost;
@@ -34,8 +35,13 @@ public class SLoadOperation extends AbstractOperation {
   private final OperationResult warmSuccess;
   private final OperationResult coldSuccess;
 
+  /**
+   * Instantiates a new SLoad operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public SLoadOperation(final GasCalculator gasCalculator) {
-    super(0x54, "SLOAD", 1, 1, 1, gasCalculator);
+    super(0x54, "SLOAD", 1, 1, gasCalculator);
     final long baseCost = gasCalculator.getSloadOperationGasCost();
     warmCost = baseCost + gasCalculator.getWarmStorageReadCost();
     coldCost = baseCost + gasCalculator.getColdSloadCost();

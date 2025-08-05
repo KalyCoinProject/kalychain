@@ -14,15 +14,15 @@
  */
 package org.hyperledger.besu.evm.worldstate;
 
+import org.hyperledger.besu.collections.trie.BytesTrieSet;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.evm.account.Account;
-import org.hyperledger.besu.evm.account.EvmAccount;
 import org.hyperledger.besu.evm.account.MutableAccount;
+import org.hyperledger.besu.evm.internal.EvmConfiguration;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -30,24 +30,51 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * An abstract implementation of a {@link WorldUpdater} that buffers update over the {@link
- * WorldView} provided in the constructor in memory.
+ * WorldView}* provided in the constructor in memory.
  *
  * <p>Concrete implementation have to implement the {@link #commit()} method.
+ *
+ * @param <W> the type parameter
+ * @param <A> the type parameter
  */
 public abstract class AbstractWorldUpdater<W extends WorldView, A extends Account>
     implements WorldUpdater {
 
   private final W world;
+  private final EvmConfiguration evmConfiguration;
 
+  /** The Updated accounts. */
   protected Map<Address, UpdateTrackingAccount<A>> updatedAccounts = new ConcurrentHashMap<>();
-  protected Set<Address> deletedAccounts = Collections.synchronizedSet(new HashSet<>());
 
-  protected AbstractWorldUpdater(final W world) {
+  /** The Deleted accounts. */
+  protected Set<Address> deletedAccounts =
+      Collections.synchronizedSet(new BytesTrieSet<>(Address.SIZE));
+
+  /**
+   * Instantiates a new Abstract world updater.
+   *
+   * @param world the world
+   * @param evmConfiguration the EVM Configuration parameters
+   */
+  protected AbstractWorldUpdater(final W world, final EvmConfiguration evmConfiguration) {
     this.world = world;
+    this.evmConfiguration = evmConfiguration;
   }
 
+  /**
+   * Gets for mutation.
+   *
+   * @param address the address
+   * @return the for mutation
+   */
   protected abstract A getForMutation(Address address);
 
+  /**
+   * Track update tracking account.
+   *
+   * @param account the account
+   * @return the update tracking account
+   */
   protected UpdateTrackingAccount<A> track(final UpdateTrackingAccount<A> account) {
     final Address address = account.getAddress();
     updatedAccounts.put(address, account);
@@ -56,11 +83,11 @@ public abstract class AbstractWorldUpdater<W extends WorldView, A extends Accoun
   }
 
   @Override
-  public EvmAccount createAccount(final Address address, final long nonce, final Wei balance) {
+  public MutableAccount createAccount(final Address address, final long nonce, final Wei balance) {
     final UpdateTrackingAccount<A> account = new UpdateTrackingAccount<>(address);
     account.setNonce(nonce);
     account.setBalance(balance);
-    return new WrappedEvmAccount(track(account));
+    return track(account);
   }
 
   @Override
@@ -73,15 +100,15 @@ public abstract class AbstractWorldUpdater<W extends WorldView, A extends Accoun
     if (deletedAccounts.contains(address)) {
       return null;
     }
-    return world.get(address);
+    return getForMutation(address);
   }
 
   @Override
-  public EvmAccount getAccount(final Address address) {
+  public MutableAccount getAccount(final Address address) {
     // We may have updated it already, so check that first.
     final MutableAccount existing = updatedAccounts.get(address);
     if (existing != null) {
-      return new WrappedEvmAccount(existing);
+      return existing;
     }
     if (deletedAccounts.contains(address)) {
       return null;
@@ -92,7 +119,7 @@ public abstract class AbstractWorldUpdater<W extends WorldView, A extends Accoun
     if (origin == null) {
       return null;
     } else {
-      return new WrappedEvmAccount(track(new UpdateTrackingAccount<>(origin)));
+      return track(new UpdateTrackingAccount<>(origin));
     }
   }
 
@@ -105,18 +132,19 @@ public abstract class AbstractWorldUpdater<W extends WorldView, A extends Accoun
   /**
    * Creates an updater that buffer updates on top of this updater.
    *
-   * <p>
-   *
    * @return a new updater on top of this updater. Updates made to the returned object will become
    *     visible on this updater when the returned updater is committed. Note however that updates
    *     to this updater <b>may or may not</b> be reflected to the created updater, so it is
    *     <b>strongly</b> advised to not update this updater until the returned one is discarded
-   *     (either after having been committed, or because the updates it represent are meant to be
+   *     (either after having been committed, or because the updates it represents are meant to be
    *     discarded).
    */
   @Override
   public WorldUpdater updater() {
-    return new StackedUpdater<>(this);
+    return switch (evmConfiguration.worldUpdaterMode()) {
+      case STACKED -> new StackedUpdater<>(this, evmConfiguration);
+      case JOURNALED -> new JournaledUpdater<>(this, evmConfiguration);
+    };
   }
 
   /**
@@ -130,8 +158,8 @@ public abstract class AbstractWorldUpdater<W extends WorldView, A extends Accoun
 
   @Override
   public Optional<WorldUpdater> parentUpdater() {
-    if (world instanceof WorldUpdater) {
-      return Optional.of((WorldUpdater) world);
+    if (world instanceof WorldUpdater worldUpdater) {
+      return Optional.of(worldUpdater);
     } else {
       return Optional.empty();
     }
@@ -155,6 +183,7 @@ public abstract class AbstractWorldUpdater<W extends WorldView, A extends Accoun
     return deletedAccounts;
   }
 
+  /** Reset. */
   protected void reset() {
     updatedAccounts.clear();
     deletedAccounts.clear();

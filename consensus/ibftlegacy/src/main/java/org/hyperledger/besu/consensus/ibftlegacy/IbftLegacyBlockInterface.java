@@ -14,12 +14,14 @@
  */
 package org.hyperledger.besu.consensus.ibftlegacy;
 
-import org.hyperledger.besu.consensus.common.BlockInterface;
+import org.hyperledger.besu.consensus.common.bft.BftBlockHashing;
+import org.hyperledger.besu.consensus.common.bft.BftBlockHeaderFunctions;
+import org.hyperledger.besu.consensus.common.bft.BftBlockInterface;
+import org.hyperledger.besu.consensus.common.bft.BftExtraDataCodec;
 import org.hyperledger.besu.consensus.common.validator.ValidatorVote;
 import org.hyperledger.besu.consensus.common.validator.VoteType;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
-import org.hyperledger.besu.ethereum.core.BlockHeaderBuilder;
 
 import java.util.Collection;
 import java.util.Optional;
@@ -27,11 +29,16 @@ import java.util.Optional;
 import com.google.common.collect.ImmutableBiMap;
 import org.apache.tuweni.bytes.Bytes;
 
-public class IbftLegacyBlockInterface implements BlockInterface {
+/** The Ibft legacy block interface. */
+public class IbftLegacyBlockInterface extends BftBlockInterface {
 
+  /** The constant NO_VOTE_SUBJECT. */
   public static final Address NO_VOTE_SUBJECT = Address.wrap(Bytes.wrap(new byte[Address.SIZE]));
 
+  /** The constant ADD_NONCE. */
   public static final long ADD_NONCE = 0xFFFFFFFFFFFFFFFFL;
+
+  /** The constant DROP_NONCE. */
   public static final long DROP_NONCE = 0x0L;
 
   private static final ImmutableBiMap<VoteType, Long> voteToValue =
@@ -39,16 +46,31 @@ public class IbftLegacyBlockInterface implements BlockInterface {
           VoteType.ADD, ADD_NONCE,
           VoteType.DROP, DROP_NONCE);
 
+  private static final IbftExtraDataCodec ibftExtraDataCodec = new IbftExtraDataCodec();
+
+  /**
+   * Constructor for IbftLegacyBlockInterface.
+   *
+   * @param bftExtraDataCodec the codec for BFT extra data
+   */
+  public IbftLegacyBlockInterface(final BftExtraDataCodec bftExtraDataCodec) {
+    super(bftExtraDataCodec);
+  }
+
   @Override
   public Address getProposerOfBlock(final BlockHeader header) {
-    final IbftExtraData ibftExtraData = IbftExtraData.decode(header);
+    final IbftLegacyExtraData ibftExtraData = ibftExtraDataCodec.decode(header);
     return IbftBlockHashing.recoverProposerAddress(header, ibftExtraData);
   }
 
   @Override
   public Address getProposerOfBlock(final org.hyperledger.besu.plugin.data.BlockHeader header) {
     return getProposerOfBlock(
-        BlockHeader.convertPluginBlockHeader(header, new LegacyIbftBlockHeaderFunctions()));
+        BlockHeader.convertPluginBlockHeader(
+            header,
+            new BftBlockHeaderFunctions(
+                h -> new BftBlockHashing(ibftExtraDataCodec).calculateDataHashForCommittedSeal(h),
+                ibftExtraDataCodec)));
   }
 
   @Override
@@ -64,24 +86,17 @@ public class IbftLegacyBlockInterface implements BlockInterface {
     return Optional.empty();
   }
 
-  public static BlockHeaderBuilder insertVoteToHeaderBuilder(
-      final BlockHeaderBuilder builder, final Optional<ValidatorVote> vote) {
-    if (vote.isPresent()) {
-      final ValidatorVote voteToCast = vote.get();
-      builder.nonce(voteToValue.get(voteToCast.getVotePolarity()));
-      builder.coinbase(voteToCast.getRecipient());
-    } else {
-      builder.nonce(voteToValue.get(VoteType.DROP));
-      builder.coinbase(NO_VOTE_SUBJECT);
-    }
-    return builder;
-  }
-
   @Override
   public Collection<Address> validatorsInBlock(final BlockHeader header) {
-    return IbftExtraData.decode(header).getValidators();
+    return ibftExtraDataCodec.decode(header).getValidators();
   }
 
+  /**
+   * Is valid vote value.
+   *
+   * @param value the value
+   * @return the boolean
+   */
   public static boolean isValidVoteValue(final long value) {
     return voteToValue.values().contains(value);
   }

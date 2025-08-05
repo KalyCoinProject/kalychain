@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,14 +18,21 @@ import static org.hyperledger.besu.ethereum.eth.sync.fastsync.worldstate.NodeDat
 
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.RequestType;
-import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapSyncState;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapSyncConfiguration;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapSyncProcessState;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapWorldDownloadState;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.AccountFlatDatabaseHealingRangeRequest;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.AccountTrieNodeHealingRequest;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.StorageFlatDatabaseHealingRangeRequest;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.StorageTrieNodeHealingRequest;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.TrieNodeHealingRequest;
 import org.hyperledger.besu.ethereum.eth.sync.worldstate.WorldStateDownloaderException;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 import org.hyperledger.besu.services.tasks.TasksPriorityProvider;
 
-import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -34,7 +41,7 @@ import org.apache.tuweni.bytes.Bytes32;
 
 public abstract class SnapDataRequest implements TasksPriorityProvider {
 
-  protected Optional<TrieNodeDataRequest> possibleParent = Optional.empty();
+  protected Optional<TrieNodeHealingRequest> possibleParent = Optional.empty();
   protected int depth;
   protected long priority;
   protected final AtomicInteger pendingChildren = new AtomicInteger(0);
@@ -50,6 +57,21 @@ public abstract class SnapDataRequest implements TasksPriorityProvider {
   public static AccountRangeDataRequest createAccountRangeDataRequest(
       final Hash rootHash, final Bytes32 startKeyHash, final Bytes32 endKeyHash) {
     return new AccountRangeDataRequest(rootHash, startKeyHash, endKeyHash);
+  }
+
+  public static AccountFlatDatabaseHealingRangeRequest createAccountFlatHealingRangeRequest(
+      final Hash rootHash, final Bytes32 startKeyHash, final Bytes32 endKeyHash) {
+    return new AccountFlatDatabaseHealingRangeRequest(rootHash, startKeyHash, endKeyHash);
+  }
+
+  public static StorageFlatDatabaseHealingRangeRequest createStorageFlatHealingRangeRequest(
+      final Hash rootHash,
+      final Bytes32 accountHash,
+      final Bytes32 storageRoot,
+      final Bytes32 startKeyHash,
+      final Bytes32 endKeyHash) {
+    return new StorageFlatDatabaseHealingRangeRequest(
+        rootHash, accountHash, storageRoot, startKeyHash, endKeyHash);
   }
 
   public static AccountRangeDataRequest createAccountDataRequest(
@@ -70,22 +92,22 @@ public abstract class SnapDataRequest implements TasksPriorityProvider {
         rootHash, accountHash, storageRoot, startKeyHash, endKeyHash);
   }
 
-  public static AccountTrieNodeDataRequest createAccountTrieNodeDataRequest(
-      final Hash hash, final Bytes location, final HashSet<Bytes> inconsistentAccounts) {
-    return new AccountTrieNodeDataRequest(hash, hash, location, inconsistentAccounts);
+  public static AccountTrieNodeHealingRequest createAccountTrieNodeDataRequest(
+      final Hash hash, final Bytes location, final Set<Bytes> inconsistentAccounts) {
+    return new AccountTrieNodeHealingRequest(hash, hash, location, inconsistentAccounts);
   }
 
-  public static AccountTrieNodeDataRequest createAccountTrieNodeDataRequest(
+  public static AccountTrieNodeHealingRequest createAccountTrieNodeDataRequest(
       final Hash hash,
       final Hash rootHash,
       final Bytes location,
-      final HashSet<Bytes> inconsistentAccounts) {
-    return new AccountTrieNodeDataRequest(hash, rootHash, location, inconsistentAccounts);
+      final Set<Bytes> inconsistentAccounts) {
+    return new AccountTrieNodeHealingRequest(hash, rootHash, location, inconsistentAccounts);
   }
 
-  public static StorageTrieNodeDataRequest createStorageTrieNodeDataRequest(
+  public static StorageTrieNodeHealingRequest createStorageTrieNodeDataRequest(
       final Hash hash, final Hash accountHash, final Hash rootHash, final Bytes location) {
-    return new StorageTrieNodeDataRequest(hash, accountHash, rootHash, location);
+    return new StorageTrieNodeHealingRequest(hash, accountHash, rootHash, location);
   }
 
   public static BytecodeRequest createBytecodeRequest(
@@ -94,31 +116,34 @@ public abstract class SnapDataRequest implements TasksPriorityProvider {
   }
 
   public int persist(
-      final WorldStateStorage worldStateStorage,
-      final WorldStateStorage.Updater updater,
+      final WorldStateStorageCoordinator worldStateStorageCoordinator,
+      final WorldStateKeyValueStorage.Updater updater,
       final SnapWorldDownloadState downloadState,
-      final SnapSyncState snapSyncState) {
-    return doPersist(worldStateStorage, updater, downloadState, snapSyncState);
+      final SnapSyncProcessState snapSyncState,
+      final SnapSyncConfiguration snapSyncConfiguration) {
+    return doPersist(
+        worldStateStorageCoordinator, updater, downloadState, snapSyncState, snapSyncConfiguration);
   }
 
   protected abstract int doPersist(
-      final WorldStateStorage worldStateStorage,
-      final WorldStateStorage.Updater updater,
+      final WorldStateStorageCoordinator worldStateStorageCoordinator,
+      final WorldStateKeyValueStorage.Updater updater,
       final SnapWorldDownloadState downloadState,
-      final SnapSyncState snapSyncState);
+      final SnapSyncProcessState snapSyncState,
+      final SnapSyncConfiguration snapSyncConfiguration);
 
   public abstract boolean isResponseReceived();
 
-  public boolean isExpired(final SnapSyncState snapSyncState) {
+  public boolean isExpired(final SnapSyncProcessState snapSyncState) {
     return false;
   }
 
   public abstract Stream<SnapDataRequest> getChildRequests(
       final SnapWorldDownloadState downloadState,
-      final WorldStateStorage worldStateStorage,
-      final SnapSyncState snapSyncState);
+      final WorldStateStorageCoordinator worldStateStorageCoordinator,
+      final SnapSyncProcessState snapSyncState);
 
-  protected void registerParent(final TrieNodeDataRequest parent) {
+  public void registerParent(final TrieNodeHealingRequest parent) {
     if (this.possibleParent.isPresent()) {
       throw new WorldStateDownloaderException("Cannot set parent twice");
     }
@@ -132,12 +157,18 @@ public abstract class SnapDataRequest implements TasksPriorityProvider {
   }
 
   protected int saveParent(
-      final WorldStateStorage worldStateStorage,
-      final WorldStateStorage.Updater updater,
+      final WorldStateStorageCoordinator worldStateStorageCoordinator,
+      final WorldStateKeyValueStorage.Updater updater,
       final SnapWorldDownloadState downloadState,
-      final SnapSyncState snapSyncState) {
+      final SnapSyncProcessState snapSyncState,
+      final SnapSyncConfiguration snapSyncConfiguration) {
     if (pendingChildren.decrementAndGet() == 0) {
-      return persist(worldStateStorage, updater, downloadState, snapSyncState);
+      return persist(
+          worldStateStorageCoordinator,
+          updater,
+          downloadState,
+          snapSyncState,
+          snapSyncConfiguration);
     }
     return 0;
   }

@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,14 +18,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.hyperledger.besu.crypto.KeyPair;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.datatypes.TransactionType;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.core.TransactionTestFixture;
-import org.hyperledger.besu.plugin.data.TransactionType;
 
 import java.util.Optional;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class LondonFeeMarketTest {
 
@@ -40,7 +40,7 @@ public class LondonFeeMarketTest {
             .gasPrice(Wei.of(7))
             .createTransaction(KEY_PAIR1);
 
-    final LondonFeeMarket londonFeeMarket = new LondonFeeMarket(0);
+    final BaseFeeMarket londonFeeMarket = FeeMarket.london(0);
     assertThat(londonFeeMarket.satisfiesFloorTxFee(transaction)).isTrue();
   }
 
@@ -54,7 +54,7 @@ public class LondonFeeMarketTest {
             .gasPrice(null)
             .createTransaction(KEY_PAIR1);
 
-    final LondonFeeMarket londonFeeMarket = new LondonFeeMarket(0);
+    final BaseFeeMarket londonFeeMarket = FeeMarket.london(0);
     assertThat(londonFeeMarket.satisfiesFloorTxFee(transaction)).isFalse();
   }
 
@@ -68,7 +68,7 @@ public class LondonFeeMarketTest {
             .gasPrice(null)
             .createTransaction(KEY_PAIR1);
 
-    final LondonFeeMarket londonFeeMarket = new LondonFeeMarket(0, Optional.of(Wei.ZERO));
+    final BaseFeeMarket londonFeeMarket = FeeMarket.london(0, Optional.of(Wei.ZERO));
     assertThat(londonFeeMarket.satisfiesFloorTxFee(transaction)).isTrue();
   }
 }

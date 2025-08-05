@@ -16,7 +16,6 @@ package org.hyperledger.besu.ethereum.eth.sync;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -36,6 +35,8 @@ import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockDataGenerator;
 import org.hyperledger.besu.ethereum.core.BlockDataGenerator.BlockOptions;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
 import org.hyperledger.besu.ethereum.core.BlockImporter;
 import org.hyperledger.besu.ethereum.core.BlockchainSetupUtil;
 import org.hyperledger.besu.ethereum.core.Difficulty;
@@ -44,23 +45,26 @@ import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthMessages;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeers;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManager;
+import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestBuilder;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestUtil;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.manager.RespondingEthPeer;
 import org.hyperledger.besu.ethereum.eth.manager.RespondingEthPeer.Responder;
-import org.hyperledger.besu.ethereum.eth.messages.EthPV62;
+import org.hyperledger.besu.ethereum.eth.messages.EthProtocolMessages;
 import org.hyperledger.besu.ethereum.eth.messages.NewBlockHashesMessage;
 import org.hyperledger.besu.ethereum.eth.messages.NewBlockMessage;
 import org.hyperledger.besu.ethereum.eth.sync.BlockPropagationManager.ProcessingBlocksManager;
 import org.hyperledger.besu.ethereum.eth.sync.state.PendingBlocksManager;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncState;
+import org.hyperledger.besu.ethereum.forkid.ForkIdManager;
 import org.hyperledger.besu.ethereum.mainnet.MainnetBlockHeaderFunctions;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
+import org.hyperledger.besu.plugin.services.storage.DataStorageFormat;
 import org.hyperledger.besu.testutil.TestClock;
+import org.hyperledger.besu.util.number.ByteUnits;
 
 import java.util.Collections;
 import java.util.List;
@@ -68,7 +72,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
@@ -93,6 +97,7 @@ public abstract class AbstractBlockPropagationManagerTest {
   protected SyncState syncState;
   protected final MetricsSystem metricsSystem = new NoOpMetricsSystem();
   private final Hash finalizedHash = Hash.fromHexStringLenient("0x1337");
+  private final int maxMessageSize = 10 * ByteUnits.MEGABYTE;
 
   protected void setup(final DataStorageFormat dataStorageFormat) {
     blockchainUtil = BlockchainSetupUtil.forTesting(dataStorageFormat);
@@ -100,16 +105,19 @@ public abstract class AbstractBlockPropagationManagerTest {
     protocolSchedule = blockchainUtil.getProtocolSchedule();
     final ProtocolContext tempProtocolContext = blockchainUtil.getProtocolContext();
     protocolContext =
-        new ProtocolContext(
-            blockchain,
-            tempProtocolContext.getWorldStateArchive(),
-            tempProtocolContext.getConsensusContext(ConsensusContext.class));
+        new ProtocolContext.Builder()
+            .withBlockchain(blockchain)
+            .withWorldStateArchive(tempProtocolContext.getWorldStateArchive())
+            .withConsensusContext(tempProtocolContext.getConsensusContext(ConsensusContext.class))
+            .build();
     ethProtocolManager =
-        EthProtocolManagerTestUtil.create(
-            blockchain,
-            blockchainUtil.getWorldArchive(),
-            blockchainUtil.getTransactionPool(),
-            EthProtocolConfiguration.defaultConfig());
+        EthProtocolManagerTestBuilder.builder()
+            .setProtocolSchedule(protocolSchedule)
+            .setBlockchain(blockchain)
+            .setWorldStateArchive(blockchainUtil.getWorldArchive())
+            .setTransactionPool(blockchainUtil.getTransactionPool())
+            .setEthereumWireProtocolConfiguration(EthProtocolConfiguration.defaultConfig())
+            .build();
     syncConfig = SynchronizerConfiguration.builder().blockPropagationRange(-3, 5).build();
     syncState = new SyncState(blockchain, ethProtocolManager.ethContext().getEthPeers());
     blockBroadcaster = mock(BlockBroadcaster.class);
@@ -218,11 +226,14 @@ public abstract class AbstractBlockPropagationManagerTest {
     final RespondingEthPeer peer = EthProtocolManagerTestUtil.createPeer(ethProtocolManager, 0);
     final NewBlockMessage nextAnnouncement =
         NewBlockMessage.create(
-            nextBlock, getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get());
+            nextBlock,
+            getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get(),
+            maxMessageSize);
     final NewBlockMessage nextNextAnnouncement =
         NewBlockMessage.create(
             nextNextBlock,
-            getFullBlockchain().getTotalDifficultyByHash(nextNextBlock.getHash()).get());
+            getFullBlockchain().getTotalDifficultyByHash(nextNextBlock.getHash()).get(),
+            maxMessageSize);
     final Responder responder = RespondingEthPeer.blockchainResponder(getFullBlockchain());
 
     // Broadcast first message
@@ -252,11 +263,14 @@ public abstract class AbstractBlockPropagationManagerTest {
     final RespondingEthPeer peer = EthProtocolManagerTestUtil.createPeer(ethProtocolManager, 0);
     final NewBlockMessage nextAnnouncement =
         NewBlockMessage.create(
-            nextBlock, getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get());
+            nextBlock,
+            getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get(),
+            maxMessageSize);
     final NewBlockMessage nextNextAnnouncement =
         NewBlockMessage.create(
             nextNextBlock,
-            getFullBlockchain().getTotalDifficultyByHash(nextNextBlock.getHash()).get());
+            getFullBlockchain().getTotalDifficultyByHash(nextNextBlock.getHash()).get(),
+            maxMessageSize);
     final Responder responder = RespondingEthPeer.blockchainResponder(getFullBlockchain());
 
     // Broadcast second message first
@@ -295,7 +309,9 @@ public abstract class AbstractBlockPropagationManagerTest {
                     block1.getHash(), block1.getHeader().getNumber())));
     final NewBlockMessage block2Msg =
         NewBlockMessage.create(
-            block2, getFullBlockchain().getTotalDifficultyByHash(block2.getHash()).get());
+            block2,
+            getFullBlockchain().getTotalDifficultyByHash(block2.getHash()).get(),
+            maxMessageSize);
     final NewBlockHashesMessage block3Msg =
         NewBlockHashesMessage.create(
             Collections.singletonList(
@@ -303,7 +319,9 @@ public abstract class AbstractBlockPropagationManagerTest {
                     block3.getHash(), block3.getHeader().getNumber())));
     final NewBlockMessage block4Msg =
         NewBlockMessage.create(
-            block4, getFullBlockchain().getTotalDifficultyByHash(block4.getHash()).get());
+            block4,
+            getFullBlockchain().getTotalDifficultyByHash(block4.getHash()).get(),
+            maxMessageSize);
     final Responder responder = RespondingEthPeer.blockchainResponder(getFullBlockchain());
 
     // Broadcast older blocks
@@ -324,10 +342,11 @@ public abstract class AbstractBlockPropagationManagerTest {
 
   @Test
   public void handlesDuplicateAnnouncements() {
+
     final ProtocolSchedule stubProtocolSchedule = spy(protocolSchedule);
-    final ProtocolSpec stubProtocolSpec = spy(protocolSchedule.getByBlockNumber(2));
+    final ProtocolSpec stubProtocolSpec = spy(protocolSchedule.getByBlockHeader(blockHeader(2)));
     final BlockImporter stubBlockImporter = spy(stubProtocolSpec.getBlockImporter());
-    doReturn(stubProtocolSpec).when(stubProtocolSchedule).getByBlockNumber(anyLong());
+    doReturn(stubProtocolSpec).when(stubProtocolSchedule).getByBlockHeader(any());
     doReturn(stubBlockImporter).when(stubProtocolSpec).getBlockImporter();
     final BlockPropagationManager blockPropagationManager =
         new BlockPropagationManager(
@@ -357,7 +376,9 @@ public abstract class AbstractBlockPropagationManagerTest {
                     nextBlock.getHash(), nextBlock.getHeader().getNumber())));
     final NewBlockMessage newBlock =
         NewBlockMessage.create(
-            nextBlock, getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get());
+            nextBlock,
+            getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get(),
+            maxMessageSize);
     final Responder responder = RespondingEthPeer.blockchainResponder(getFullBlockchain());
 
     // Broadcast first message
@@ -377,9 +398,9 @@ public abstract class AbstractBlockPropagationManagerTest {
   @Test
   public void handlesPendingDuplicateAnnouncements() {
     final ProtocolSchedule stubProtocolSchedule = spy(protocolSchedule);
-    final ProtocolSpec stubProtocolSpec = spy(protocolSchedule.getByBlockNumber(2));
+    final ProtocolSpec stubProtocolSpec = spy(protocolSchedule.getByBlockHeader(blockHeader(2)));
     final BlockImporter stubBlockImporter = spy(stubProtocolSpec.getBlockImporter());
-    doReturn(stubProtocolSpec).when(stubProtocolSchedule).getByBlockNumber(anyLong());
+    doReturn(stubProtocolSpec).when(stubProtocolSchedule).getByBlockHeader(any());
     doReturn(stubBlockImporter).when(stubProtocolSpec).getBlockImporter();
     final BlockPropagationManager blockPropagationManager =
         new BlockPropagationManager(
@@ -408,7 +429,9 @@ public abstract class AbstractBlockPropagationManagerTest {
                     nextBlock.getHash(), nextBlock.getHeader().getNumber())));
     final NewBlockMessage newBlock =
         NewBlockMessage.create(
-            nextBlock, getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get());
+            nextBlock,
+            getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get(),
+            maxMessageSize);
 
     // Broadcast messages
     EthProtocolManagerTestUtil.broadcastMessage(ethProtocolManager, peer, newBlock);
@@ -462,7 +485,9 @@ public abstract class AbstractBlockPropagationManagerTest {
     final RespondingEthPeer peer = EthProtocolManagerTestUtil.createPeer(ethProtocolManager, 0);
     final NewBlockMessage futureAnnouncement =
         NewBlockMessage.create(
-            futureBlock, getFullBlockchain().getTotalDifficultyByHash(futureBlock.getHash()).get());
+            futureBlock,
+            getFullBlockchain().getTotalDifficultyByHash(futureBlock.getHash()).get(),
+            maxMessageSize);
 
     // Broadcast
     EthProtocolManagerTestUtil.broadcastMessage(ethProtocolManager, peer, futureAnnouncement);
@@ -517,7 +542,8 @@ public abstract class AbstractBlockPropagationManagerTest {
 
     // Setup peer and messages
     final RespondingEthPeer peer = EthProtocolManagerTestUtil.createPeer(ethProtocolManager, 0);
-    final NewBlockMessage oldAnnouncement = NewBlockMessage.create(oldBlock, Difficulty.ZERO);
+    final NewBlockMessage oldAnnouncement =
+        NewBlockMessage.create(oldBlock, Difficulty.ZERO, maxMessageSize);
 
     // Broadcast
     EthProtocolManagerTestUtil.broadcastMessage(ethProtocolManager, peer, oldAnnouncement);
@@ -554,7 +580,7 @@ public abstract class AbstractBlockPropagationManagerTest {
     blockPropagationManager.start();
     final RespondingEthPeer peer = EthProtocolManagerTestUtil.createPeer(ethProtocolManager, 0);
     final NewBlockMessage blockAnnouncementMsg =
-        NewBlockMessage.create(blockToPurge, Difficulty.ZERO);
+        NewBlockMessage.create(blockToPurge, Difficulty.ZERO, maxMessageSize);
 
     // Broadcast
     EthProtocolManagerTestUtil.broadcastMessage(ethProtocolManager, peer, blockAnnouncementMsg);
@@ -592,7 +618,8 @@ public abstract class AbstractBlockPropagationManagerTest {
         getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHeader().getParentHash()).get();
     final Difficulty totalDifficulty =
         getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get();
-    final NewBlockMessage nextAnnouncement = NewBlockMessage.create(nextBlock, totalDifficulty);
+    final NewBlockMessage nextAnnouncement =
+        NewBlockMessage.create(nextBlock, totalDifficulty, maxMessageSize);
 
     // Broadcast message
     EthProtocolManagerTestUtil.broadcastMessage(ethProtocolManager, peer, nextAnnouncement);
@@ -616,13 +643,20 @@ public abstract class AbstractBlockPropagationManagerTest {
     final EthContext ethContext =
         new EthContext(
             new EthPeers(
-                "eth",
+                () -> protocolSchedule.getByBlockHeader(blockchain.getChainHeadHeader()),
                 TestClock.fixed(),
                 metricsSystem,
+                EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE,
+                Collections.emptyList(),
+                Bytes.random(64),
                 25,
-                EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE),
+                25,
+                false,
+                SyncMode.SNAP,
+                new ForkIdManager(blockchain, Collections.emptyList(), Collections.emptyList())),
             new EthMessages(),
-            ethScheduler);
+            ethScheduler,
+            null);
     final BlockPropagationManager blockPropagationManager =
         new BlockPropagationManager(
             syncConfig,
@@ -722,7 +756,8 @@ public abstract class AbstractBlockPropagationManagerTest {
 
     final Difficulty totalDifficulty =
         getFullBlockchain().getTotalDifficultyByHash(block.getHash()).get();
-    final NewBlockMessage newBlockMessage = NewBlockMessage.create(block, totalDifficulty);
+    final NewBlockMessage newBlockMessage =
+        NewBlockMessage.create(block, totalDifficulty, maxMessageSize);
 
     // Broadcast message
     EthProtocolManagerTestUtil.broadcastMessage(ethProtocolManager, peer, newBlockMessage);
@@ -745,16 +780,24 @@ public abstract class AbstractBlockPropagationManagerTest {
                 return invocation.getArgument(0, Supplier.class).get();
               }
             });
+
     final EthContext ethContext =
         new EthContext(
             new EthPeers(
-                "eth",
+                () -> protocolSchedule.getByBlockHeader(blockchain.getChainHeadHeader()),
                 TestClock.fixed(),
                 metricsSystem,
+                EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE,
+                Collections.emptyList(),
+                Bytes.random(64),
                 25,
-                EthProtocolConfiguration.DEFAULT_MAX_MESSAGE_SIZE),
+                25,
+                false,
+                SyncMode.SNAP,
+                new ForkIdManager(blockchain, Collections.emptyList(), Collections.emptyList())),
             new EthMessages(),
-            ethScheduler);
+            ethScheduler,
+            null);
     final BlockPropagationManager blockPropagationManager =
         new BlockPropagationManager(
             syncConfig,
@@ -768,8 +811,7 @@ public abstract class AbstractBlockPropagationManagerTest {
 
     blockchainUtil.importFirstBlocks(2);
     final Block firstBlock = blockchainUtil.getBlock(1);
-    final BadBlockManager badBlocksManager =
-        protocolSchedule.getByBlockNumber(1).getBadBlocksManager();
+    final BadBlockManager badBlocksManager = protocolContext.getBadBlockManager();
     final Block badBlock =
         new BlockDataGenerator()
             .block(
@@ -856,7 +898,7 @@ public abstract class AbstractBlockPropagationManagerTest {
         new ForkchoiceEvent(null, null, this.finalizedHash));
     assertThat(blockPropagationManager.isRunning()).isFalse();
     assertThat(ethProtocolManager.ethContext().getEthMessages().messageCodesHandled())
-        .doesNotContain(EthPV62.NEW_BLOCK_HASHES, EthPV62.NEW_BLOCK);
+        .doesNotContain(EthProtocolMessages.NEW_BLOCK_HASHES, EthProtocolMessages.NEW_BLOCK);
   }
 
   @Test
@@ -912,7 +954,9 @@ public abstract class AbstractBlockPropagationManagerTest {
     final RespondingEthPeer peer = EthProtocolManagerTestUtil.createPeer(ethProtocolManager, 0);
     final NewBlockMessage nextAnnouncement =
         NewBlockMessage.create(
-            nextBlock, getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get());
+            nextBlock,
+            getFullBlockchain().getTotalDifficultyByHash(nextBlock.getHash()).get(),
+            maxMessageSize);
     final Responder responder = RespondingEthPeer.blockchainResponder(getFullBlockchain());
 
     syncState.setReachedTerminalDifficulty(true);
@@ -980,4 +1024,8 @@ public abstract class AbstractBlockPropagationManagerTest {
   }
 
   public abstract Blockchain getFullBlockchain();
+
+  private BlockHeader blockHeader(final long number) {
+    return new BlockHeaderTestFixture().number(number).buildHeader();
+  }
 }

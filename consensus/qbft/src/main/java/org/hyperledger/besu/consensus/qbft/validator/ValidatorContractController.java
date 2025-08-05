@@ -15,9 +15,12 @@
 package org.hyperledger.besu.consensus.qbft.validator;
 
 import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.ethereum.mainnet.TransactionValidationParams;
 import org.hyperledger.besu.ethereum.transaction.CallParameter;
+import org.hyperledger.besu.ethereum.transaction.ImmutableCallParameter;
 import org.hyperledger.besu.ethereum.transaction.TransactionSimulator;
 import org.hyperledger.besu.ethereum.transaction.TransactionSimulatorResult;
+import org.hyperledger.besu.evm.tracing.OperationTracer;
 
 import java.util.Collection;
 import java.util.List;
@@ -32,12 +35,22 @@ import org.web3j.abi.datatypes.DynamicArray;
 import org.web3j.abi.datatypes.Function;
 import org.web3j.abi.datatypes.Type;
 
+/** The Validator contract controller. */
 public class ValidatorContractController {
+  /** The constant GET_VALIDATORS. */
   public static final String GET_VALIDATORS = "getValidators";
+
+  /** The constant CONTRACT_ERROR_MSG. */
   public static final String CONTRACT_ERROR_MSG = "Failed validator smart contract call";
+
   private final TransactionSimulator transactionSimulator;
   private final Function getValidatorsFunction;
 
+  /**
+   * Instantiates a new Validator contract controller.
+   *
+   * @param transactionSimulator the transaction simulator
+   */
   public ValidatorContractController(final TransactionSimulator transactionSimulator) {
     this.transactionSimulator = transactionSimulator;
 
@@ -52,6 +65,13 @@ public class ValidatorContractController {
     }
   }
 
+  /**
+   * Gets validators.
+   *
+   * @param blockNumber the block number
+   * @param contractAddress the contract address
+   * @return the validators
+   */
   public Collection<Address> getValidators(final long blockNumber, final Address contractAddress) {
     return callFunction(blockNumber, getValidatorsFunction, contractAddress)
         .map(this::parseGetValidatorsResult)
@@ -72,8 +92,11 @@ public class ValidatorContractController {
       final long blockNumber, final Function function, final Address contractAddress) {
     final Bytes payload = Bytes.fromHexString(FunctionEncoder.encode(function));
     final CallParameter callParams =
-        new CallParameter(null, contractAddress, -1, null, null, payload);
-    return transactionSimulator.process(callParams, blockNumber);
+        ImmutableCallParameter.builder().to(contractAddress).input(payload).build();
+    final TransactionValidationParams transactionValidationParams =
+        TransactionValidationParams.transactionSimulatorAllowExceedingBalance();
+    return transactionSimulator.process(
+        callParams, transactionValidationParams, OperationTracer.NO_TRACING, blockNumber);
   }
 
   @SuppressWarnings("rawtypes")
@@ -82,7 +105,7 @@ public class ValidatorContractController {
     if (result.isSuccessful()) {
       final List<Type> decodedList =
           FunctionReturnDecoder.decode(
-              result.getResult().getOutput().toHexString(), function.getOutputParameters());
+              result.result().getOutput().toHexString(), function.getOutputParameters());
 
       if (decodedList.isEmpty()) {
         throw new IllegalStateException(
@@ -91,7 +114,8 @@ public class ValidatorContractController {
 
       return decodedList;
     } else {
-      throw new IllegalStateException("Failed validator smart contract call");
+      throw new IllegalStateException(
+          "Failed validator smart contract call: " + result.getValidationResult());
     }
   }
 }

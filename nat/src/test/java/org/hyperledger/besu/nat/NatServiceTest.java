@@ -12,7 +12,6 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.nat;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,11 +32,11 @@ import org.hyperledger.besu.nat.upnp.UpnpNatManager;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class NatServiceTest {
 
   @Test

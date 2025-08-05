@@ -14,11 +14,10 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters;
 
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
-
+import java.util.List;
 import java.util.Optional;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 
@@ -38,11 +37,12 @@ public class JsonRpcParameter {
    * @param <T> The type of parameter.
    * @return Returns the parameter cast as T if available, otherwise throws exception.
    */
-  public <T> T required(final Object[] params, final int index, final Class<T> paramClass) {
+  public <T> T required(final Object[] params, final int index, final Class<T> paramClass)
+      throws JsonRpcParameterException {
     return optional(params, index, paramClass)
         .orElseThrow(
             () ->
-                new InvalidJsonRpcParameters(
+                new JsonRpcParameterException(
                     "Missing required json rpc parameter at index " + index));
   }
 
@@ -56,9 +56,8 @@ public class JsonRpcParameter {
    * @param <T> The type of parameter.
    * @return Returns the parameter cast as T if available.
    */
-  @SuppressWarnings("unchecked")
-  public <T> Optional<T> optional(
-      final Object[] params, final int index, final Class<T> paramClass) {
+  public <T> Optional<T> optional(final Object[] params, final int index, final Class<T> paramClass)
+      throws JsonRpcParameterException {
     if (params == null || params.length <= index || params[index] == null) {
       return Optional.empty();
     }
@@ -67,14 +66,12 @@ public class JsonRpcParameter {
     final Object rawParam = params[index];
     if (paramClass.isAssignableFrom(rawParam.getClass())) {
       // If we're dealing with a simple type, just cast the value
-      param = (T) rawParam;
+      param = paramClass.cast(rawParam);
     } else {
-      // Otherwise, serialize param back to json and then deserialize to the paramClass type
       try {
-        final String json = mapper.writeValueAsString(rawParam);
-        param = mapper.readValue(json, paramClass);
-      } catch (final JsonProcessingException e) {
-        throw new InvalidJsonRpcParameters(
+        param = mapper.convertValue(rawParam, paramClass);
+      } catch (final Exception e) {
+        throw new JsonRpcParameterException(
             String.format(
                 "Invalid json rpc parameter at index %d. Supplied value was: '%s' of type: '%s' - expected type: '%s'",
                 index, rawParam, rawParam.getClass().getName(), paramClass.getName()),
@@ -83,5 +80,37 @@ public class JsonRpcParameter {
     }
 
     return Optional.of(param);
+  }
+
+  public <T> Optional<List<T>> optionalList(
+      final Object[] params, final int index, final Class<T> listClass)
+      throws JsonRpcParameterException {
+    if (params == null || params.length <= index || params[index] == null) {
+      return Optional.empty();
+    }
+    Object rawParam = params[index];
+    if (List.class.isAssignableFrom(rawParam.getClass())) {
+      try {
+        List<T> returnedList = mapper.convertValue(rawParam, new TypeReference<>() {});
+        return Optional.of(returnedList);
+      } catch (Exception e) {
+        throw new JsonRpcParameterException(
+            String.format(
+                "Invalid json rpc parameter at index %d. Supplied value was: '%s' of type: '%s' - expected type: '%s'",
+                index, rawParam, rawParam.getClass().getName(), listClass.getName()),
+            e);
+      }
+    }
+    return Optional.empty();
+  }
+
+  public static class JsonRpcParameterException extends Exception {
+    public JsonRpcParameterException(final String message) {
+      super(message);
+    }
+
+    public JsonRpcParameterException(final String message, final Throwable cause) {
+      super(message, cause);
+    }
   }
 }

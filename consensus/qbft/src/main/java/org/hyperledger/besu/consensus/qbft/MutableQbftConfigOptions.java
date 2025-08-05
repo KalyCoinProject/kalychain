@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -28,6 +28,11 @@ import java.util.OptionalLong;
 public class MutableQbftConfigOptions extends MutableBftConfigOptions implements QbftConfigOptions {
   private Optional<String> validatorContractAddress;
 
+  /**
+   * Instantiates a new Mutable qbft config options.
+   *
+   * @param qbftConfigOptions the qbft config options
+   */
   public MutableQbftConfigOptions(final QbftConfigOptions qbftConfigOptions) {
     super(qbftConfigOptions);
     this.validatorContractAddress =
@@ -39,6 +44,11 @@ public class MutableQbftConfigOptions extends MutableBftConfigOptions implements
     return validatorContractAddress;
   }
 
+  /**
+   * Sets validator contract address.
+   *
+   * @param validatorContractAddress the validator contract address
+   */
   public void setValidatorContractAddress(final Optional<String> validatorContractAddress) {
     this.validatorContractAddress = validatorContractAddress;
   }

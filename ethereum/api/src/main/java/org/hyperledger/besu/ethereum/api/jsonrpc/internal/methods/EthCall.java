@@ -14,30 +14,37 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 
-import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError.BLOCK_NOT_FOUND;
-import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError.INTERNAL_ERROR;
+import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType.BLOCK_NOT_FOUND;
+import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType.INTERNAL_ERROR;
 
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.StateOverrideMap;
 import org.hyperledger.besu.datatypes.Wei;
-import org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcErrorConverter;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcRequestException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParameterOrBlockHash;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonCallParameter;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
-import org.hyperledger.besu.ethereum.mainnet.ImmutableTransactionValidationParams;
 import org.hyperledger.besu.ethereum.mainnet.TransactionValidationParams;
 import org.hyperledger.besu.ethereum.mainnet.ValidationResult;
 import org.hyperledger.besu.ethereum.processing.TransactionProcessingResult;
+import org.hyperledger.besu.ethereum.transaction.CallParameter;
 import org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason;
 import org.hyperledger.besu.ethereum.transaction.TransactionSimulator;
 import org.hyperledger.besu.ethereum.transaction.TransactionSimulatorResult;
 import org.hyperledger.besu.evm.tracing.OperationTracer;
+
+import java.util.Optional;
+
+import com.google.common.annotations.VisibleForTesting;
 
 public class EthCall extends AbstractBlockParameterOrBlockHashMethod {
   private final TransactionSimulator transactionSimulator;
@@ -56,39 +63,64 @@ public class EthCall extends AbstractBlockParameterOrBlockHashMethod {
   @Override
   protected BlockParameterOrBlockHash blockParameterOrBlockHash(
       final JsonRpcRequestContext request) {
-    return request.getRequiredParameter(1, BlockParameterOrBlockHash.class);
+    try {
+      return request.getRequiredParameter(1, BlockParameterOrBlockHash.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid block or block hash parameters (index 1)", RpcErrorType.INVALID_BLOCK_PARAMS, e);
+    }
   }
 
   @Override
   protected Object resultByBlockHash(final JsonRpcRequestContext request, final Hash blockHash) {
-    JsonCallParameter callParams = JsonCallParameterUtil.validateAndGetCallParams(request);
     final BlockHeader header = blockchainQueries.get().getBlockHeaderByHash(blockHash).orElse(null);
 
     if (header == null) {
       return errorResponse(request, BLOCK_NOT_FOUND);
     }
+    return resultByBlockHeader(request, header);
+  }
+
+  @Override
+  protected Object resultByBlockHeader(
+      final JsonRpcRequestContext request, final BlockHeader header) {
+    CallParameter callParams = CallParameterUtil.validateAndGetCallParams(request);
+    Optional<StateOverrideMap> maybeStateOverrides = getAddressStateOverrideMap(request);
+    // TODO implement for block overrides
 
     return transactionSimulator
         .process(
             callParams,
+            maybeStateOverrides,
             buildTransactionValidationParams(header, callParams),
             OperationTracer.NO_TRACING,
+            (mutableWorldState, transactionSimulatorResult) -> {
+              return transactionSimulatorResult.map(
+                  result ->
+                      result
+                          .getValidationResult()
+                          .either(
+                              (() ->
+                                  result.isSuccessful()
+                                      ? new JsonRpcSuccessResponse(
+                                          request.getRequest().getId(),
+                                          result.getOutput().toString())
+                                      : errorResponse(request, result)),
+                              reason -> errorResponse(request, result)));
+            },
             header)
-        .map(
-            result ->
-                result
-                    .getValidationResult()
-                    .either(
-                        (() ->
-                            result.isSuccessful()
-                                ? new JsonRpcSuccessResponse(
-                                    request.getRequest().getId(), result.getOutput().toString())
-                                : errorResponse(request, result)),
-                        reason ->
-                            new JsonRpcErrorResponse(
-                                request.getRequest().getId(),
-                                JsonRpcErrorConverter.convertTransactionInvalidReason(reason))))
         .orElse(errorResponse(request, INTERNAL_ERROR));
+  }
+
+  @VisibleForTesting
+  protected Optional<StateOverrideMap> getAddressStateOverrideMap(
+      final JsonRpcRequestContext request) {
+    try {
+      return request.getOptionalParameter(2, StateOverrideMap.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcRequestException(
+          "Invalid account overrides parameter (index 2)", RpcErrorType.INVALID_CALL_PARAMS, e);
+    }
   }
 
   @Override
@@ -98,24 +130,21 @@ public class EthCall extends AbstractBlockParameterOrBlockHashMethod {
 
   private JsonRpcErrorResponse errorResponse(
       final JsonRpcRequestContext request, final TransactionSimulatorResult result) {
-    final JsonRpcError jsonRpcError;
-
     final ValidationResult<TransactionInvalidReason> validationResult =
         result.getValidationResult();
     if (validationResult != null && !validationResult.isValid()) {
-      jsonRpcError =
-          JsonRpcErrorConverter.convertTransactionInvalidReason(
-              validationResult.getInvalidReason());
+      return errorResponse(request, JsonRpcError.from(validationResult));
     } else {
-      final TransactionProcessingResult resultTrx = result.getResult();
+      final TransactionProcessingResult resultTrx = result.result();
       if (resultTrx != null && resultTrx.getRevertReason().isPresent()) {
-        jsonRpcError = JsonRpcError.REVERT_ERROR;
-        jsonRpcError.setData(resultTrx.getRevertReason().get().toHexString());
-      } else {
-        jsonRpcError = JsonRpcError.INTERNAL_ERROR;
+
+        return errorResponse(
+            request,
+            new JsonRpcError(
+                RpcErrorType.REVERT_ERROR, resultTrx.getRevertReason().get().toHexString()));
       }
+      return errorResponse(request, RpcErrorType.INTERNAL_ERROR);
     }
-    return errorResponse(request, jsonRpcError);
   }
 
   private JsonRpcErrorResponse errorResponse(
@@ -123,32 +152,39 @@ public class EthCall extends AbstractBlockParameterOrBlockHashMethod {
     return new JsonRpcErrorResponse(request.getRequest().getId(), jsonRpcError);
   }
 
-  private TransactionValidationParams buildTransactionValidationParams(
-      final BlockHeader header, final JsonCallParameter callParams) {
-
-    ImmutableTransactionValidationParams.Builder transactionValidationParams =
-        ImmutableTransactionValidationParams.builder()
-            .from(TransactionValidationParams.transactionSimulator());
-
-    // if it is not set explicitly whether we want a strict check of the balance or not. this will
-    // be decided according to the provided parameters
-    if (callParams.isMaybeStrict().isEmpty()) {
-      transactionValidationParams.isAllowExceedingBalance(
-          isAllowExeedingBalanceAutoSelection(header, callParams));
-    } else {
-      transactionValidationParams.isAllowExceedingBalance(
-          !callParams.isMaybeStrict().orElse(Boolean.FALSE));
-    }
-    return transactionValidationParams.build();
+  private JsonRpcErrorResponse errorResponse(
+      final JsonRpcRequestContext request, final RpcErrorType rpcErrorType) {
+    return errorResponse(request, new JsonRpcError(rpcErrorType));
   }
 
-  private boolean isAllowExeedingBalanceAutoSelection(
-      final BlockHeader header, final JsonCallParameter callParams) {
+  private TransactionValidationParams buildTransactionValidationParams(
+      final BlockHeader header, final CallParameter callParams) {
 
-    boolean isZeroGasPrice =
-        callParams.getGasPrice() == null || Wei.ZERO.equals(callParams.getGasPrice());
+    final boolean isAllowExceedingBalance;
+    // if it is not set explicitly whether we want a strict check of the balance or not. this will
+    // be decided according to the provided parameters
+    if (callParams.getStrict().isEmpty()) {
+      isAllowExceedingBalance = isAllowExceedingBalanceAutoSelection(header, callParams);
+
+    } else {
+      isAllowExceedingBalance = !callParams.getStrict().orElse(Boolean.FALSE);
+    }
+    return isAllowExceedingBalance
+        ? TransactionValidationParams.transactionSimulatorAllowExceedingBalanceAndFutureNonce()
+        : TransactionValidationParams.transactionSimulatorAllowFutureNonce();
+  }
+
+  private boolean isAllowExceedingBalanceAutoSelection(
+      final BlockHeader header, final CallParameter callParams) {
+
+    boolean isZeroGasPrice = callParams.getGasPrice().map(Wei.ZERO::equals).orElse(true);
 
     if (header.getBaseFee().isPresent()) {
+      if (callParams.getBlobVersionedHashes().isPresent()
+          && (callParams.getMaxFeePerBlobGas().isEmpty()
+              || callParams.getMaxFeePerBlobGas().get().equals(Wei.ZERO))) {
+        return true;
+      }
       boolean isZeroMaxFeePerGas = callParams.getMaxFeePerGas().orElse(Wei.ZERO).equals(Wei.ZERO);
       boolean isZeroMaxPriorityFeePerGas =
           callParams.getMaxPriorityFeePerGas().orElse(Wei.ZERO).equals(Wei.ZERO);

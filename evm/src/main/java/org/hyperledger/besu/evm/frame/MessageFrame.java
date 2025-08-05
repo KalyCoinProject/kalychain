@@ -17,31 +17,40 @@ package org.hyperledger.besu.evm.frame;
 import static com.google.common.base.Preconditions.checkState;
 import static java.util.Collections.emptySet;
 
+import org.hyperledger.besu.collections.trie.BytesTrieSet;
+import org.hyperledger.besu.collections.undo.UndoScalar;
+import org.hyperledger.besu.collections.undo.UndoSet;
+import org.hyperledger.besu.collections.undo.UndoTable;
 import org.hyperledger.besu.datatypes.Address;
-import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.VersionedHash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.evm.Code;
-import org.hyperledger.besu.evm.internal.FixedStack.UnderflowException;
+import org.hyperledger.besu.evm.blockhash.BlockHashLookup;
 import org.hyperledger.besu.evm.internal.MemoryEntry;
 import org.hyperledger.besu.evm.internal.OperandStack;
+import org.hyperledger.besu.evm.internal.ReturnStack;
 import org.hyperledger.besu.evm.internal.StorageEntry;
+import org.hyperledger.besu.evm.internal.UnderflowException;
 import org.hyperledger.besu.evm.log.Log;
 import org.hyperledger.besu.evm.operation.Operation;
 import org.hyperledger.besu.evm.worldstate.WorldUpdater;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.function.Function;
+import java.util.function.Supplier;
 
+import com.google.common.base.Suppliers;
+import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Table;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.bytes.MutableBytes;
@@ -51,7 +60,7 @@ import org.apache.tuweni.units.bigints.UInt256;
  * A container object for all the states associated with a message.
  *
  * <p>A message corresponds to an interaction between two accounts. A Transaction spawns at least
- * one message when its processed. Messages can also spawn messages depending on the code executed
+ * one message when it's processed. Messages can also spawn messages depending on the code executed
  * within a message.
  *
  * <p>Note that there is no specific Message object in the code base. Instead, message executions
@@ -187,6 +196,7 @@ public class MessageFrame {
     MESSAGE_CALL,
   }
 
+  /** The constant DEFAULT_MAX_STACK_SIZE. */
   public static final int DEFAULT_MAX_STACK_SIZE = 1024;
 
   // Global data fields.
@@ -194,133 +204,94 @@ public class MessageFrame {
 
   // Metadata fields.
   private final Type type;
-  private State state;
+  private State state = State.NOT_STARTED;
 
   // Machine state fields.
   private long gasRemaining;
-  private final Function<Long, Hash> blockHashLookup;
-  private final int maxStackSize;
   private int pc;
-  private final Memory memory;
+  private int section = 0;
+  private final Memory memory = new Memory();
   private final OperandStack stack;
-  private Bytes output;
-  private Bytes returnData;
+  private final Supplier<ReturnStack> returnStack;
+  private Bytes output = Bytes.EMPTY;
+  private Bytes returnData = Bytes.EMPTY;
+  private Code createdCode = null;
   private final boolean isStatic;
 
-  // Transaction substate fields.
-  private final List<Log> logs;
-  private long gasRefund;
-  private final Set<Address> selfDestructs;
-  private final Map<Address, Wei> refunds;
-  private final Set<Address> warmedUpAddresses;
-  private final Multimap<Address, Bytes32> warmedUpStorage;
+  // Transaction state fields.
+  private final List<Log> logs = new ArrayList<>();
+  private final Map<Address, Wei> refunds = new HashMap<>();
 
   // Execution Environment fields.
   private final Address recipient;
-  private final Address originator;
   private final Address contract;
-  private final Wei gasPrice;
   private final Bytes inputData;
   private final Address sender;
   private final Wei value;
   private final Wei apparentValue;
   private final Code code;
-  private final BlockValues blockValues;
-  private final int depth;
-  private final MessageFrame parentMessageFrame;
-  private final Deque<MessageFrame> messageFrameStack;
-  private final Address miningBeneficiary;
+
   private Optional<Bytes> revertReason;
 
   private final Map<String, Object> contextVariables;
 
-  // Miscellaneous fields.
   private Optional<ExceptionalHaltReason> exceptionalHaltReason = Optional.empty();
   private Operation currentOperation;
   private final Consumer<MessageFrame> completer;
   private Optional<MemoryEntry> maybeUpdatedMemory = Optional.empty();
   private Optional<StorageEntry> maybeUpdatedStorage = Optional.empty();
 
+  private final TxValues txValues;
+
+  /** The mark of the undoable collections at the creation of this message frame */
+  private final long undoMark;
+
+  /**
+   * Builder builder.
+   *
+   * @return the builder
+   */
   public static Builder builder() {
     return new Builder();
   }
 
   private MessageFrame(
       final Type type,
-      final Deque<MessageFrame> messageFrameStack,
       final WorldUpdater worldUpdater,
       final long initialGas,
       final Address recipient,
-      final Address originator,
       final Address contract,
-      final Wei gasPrice,
       final Bytes inputData,
       final Address sender,
       final Wei value,
       final Wei apparentValue,
       final Code code,
-      final BlockValues blockValues,
-      final int depth,
       final boolean isStatic,
       final Consumer<MessageFrame> completer,
-      final Address miningBeneficiary,
-      final Function<Long, Hash> blockHashLookup,
       final Map<String, Object> contextVariables,
       final Optional<Bytes> revertReason,
-      final int maxStackSize,
-      final Set<Address> accessListWarmAddresses,
-      final Multimap<Address, Bytes32> accessListWarmStorage) {
+      final TxValues txValues) {
+
+    this.txValues = txValues;
     this.type = type;
-    this.messageFrameStack = messageFrameStack;
-    this.parentMessageFrame = messageFrameStack.peek();
     this.worldUpdater = worldUpdater;
     this.gasRemaining = initialGas;
-    this.blockHashLookup = blockHashLookup;
-    this.maxStackSize = maxStackSize;
-    this.pc = 0;
-    this.memory = new Memory();
-    this.stack = new OperandStack(maxStackSize);
-    this.output = Bytes.EMPTY;
-    this.returnData = Bytes.EMPTY;
-    this.logs = new ArrayList<>();
-    this.gasRefund = 0L;
-    this.selfDestructs = new HashSet<>();
-    this.refunds = new HashMap<>();
+    this.stack = new OperandStack(txValues.maxStackSize());
+    this.returnStack = Suppliers.memoize(ReturnStack::new);
+    this.pc = code.isValid() ? code.getCodeSection(0).getEntryPoint() : 0;
     this.recipient = recipient;
-    this.originator = originator;
     this.contract = contract;
-    this.gasPrice = gasPrice;
     this.inputData = inputData;
     this.sender = sender;
     this.value = value;
     this.apparentValue = apparentValue;
     this.code = code;
-    this.blockValues = blockValues;
-    this.depth = depth;
-    this.state = State.NOT_STARTED;
     this.isStatic = isStatic;
     this.completer = completer;
-    this.miningBeneficiary = miningBeneficiary;
     this.contextVariables = contextVariables;
     this.revertReason = revertReason;
 
-    this.warmedUpAddresses = new HashSet<>(accessListWarmAddresses);
-    this.warmedUpAddresses.add(sender);
-    this.warmedUpAddresses.add(contract);
-    this.warmedUpStorage = HashMultimap.create(accessListWarmStorage);
-
-    // the warmed up addresses will always be a superset of the address keys in the warmed up
-    // storage, so we can do both warm-ups in one pass
-    accessListWarmAddresses.forEach(
-        address ->
-            Optional.ofNullable(worldUpdater.get(address))
-                .ifPresent(
-                    account ->
-                        warmedUpStorage
-                            .get(address)
-                            .forEach(
-                                storageKeyBytes ->
-                                    account.getStorageValue(UInt256.fromBytes(storageKeyBytes)))));
+    this.undoMark = txValues.transientStorage().mark();
   }
 
   /**
@@ -341,6 +312,24 @@ public class MessageFrame {
     this.pc = pc;
   }
 
+  /**
+   * Set the code section index.
+   *
+   * @param section the code section index
+   */
+  public void setSection(final int section) {
+    this.section = section;
+  }
+
+  /**
+   * Return the current code section. Always zero for legacy code.
+   *
+   * @return the current code section
+   */
+  public int getSection() {
+    return section;
+  }
+
   /** Deducts the remaining gas. */
   public void clearGasRemaining() {
     this.gasRemaining = 0L;
@@ -353,7 +342,8 @@ public class MessageFrame {
    * @return the amount of gas available, after deductions.
    */
   public long decrementRemainingGas(final long amount) {
-    return this.gasRemaining -= amount;
+    this.gasRemaining -= amount;
+    return this.gasRemaining;
   }
 
   /**
@@ -399,6 +389,24 @@ public class MessageFrame {
    */
   public void setOutputData(final Bytes output) {
     this.output = output;
+  }
+
+  /**
+   * Sets the created code from CREATE* operations
+   *
+   * @param createdCode the code that was created
+   */
+  public void setCreatedCode(final Code createdCode) {
+    this.createdCode = createdCode;
+  }
+
+  /**
+   * gets the created code from CREATE* operations
+   *
+   * @return the code that was created
+   */
+  public Code getCreatedCode() {
+    return createdCode;
   }
 
   /** Clears the output data buffer. */
@@ -489,6 +497,33 @@ public class MessageFrame {
   }
 
   /**
+   * Return the current return stack size.
+   *
+   * @return The current return stack size
+   */
+  public int returnStackSize() {
+    return returnStack.get().size();
+  }
+
+  /**
+   * The top item of the return stack
+   *
+   * @return The top item of the return stack, or null if the stack is empty
+   */
+  public ReturnStack.ReturnStackItem peekReturnStack() {
+    return returnStack.get().peek();
+  }
+
+  /**
+   * Pushes a new return stack item onto the return stack
+   *
+   * @param returnStackItem item to be pushed
+   */
+  public void pushReturnStackItem(final ReturnStack.ReturnStackItem returnStackItem) {
+    returnStack.get().push(returnStackItem);
+  }
+
+  /**
    * Returns whether the message frame is static or not.
    *
    * @return {@code} true if the frame is static; otherwise {@code false}
@@ -545,6 +580,11 @@ public class MessageFrame {
     return revertReason;
   }
 
+  /**
+   * Sets revert reason.
+   *
+   * @param revertReason the revert reason
+   */
   public void setRevertReason(final Bytes revertReason) {
     this.revertReason = Optional.ofNullable(revertReason);
   }
@@ -559,6 +599,17 @@ public class MessageFrame {
    */
   public MutableBytes readMutableMemory(final long offset, final long length) {
     return readMutableMemory(offset, length, false);
+  }
+
+  /**
+   * Read bytes in memory without expanding the word capacity.
+   *
+   * @param offset The offset in memory
+   * @param length The length of the bytes to read
+   * @return The bytes in the specified range
+   */
+  public Bytes shadowReadMemory(final long offset, final long length) {
+    return memory.getBytesWithoutGrowth(offset, length);
   }
 
   /**
@@ -583,11 +634,11 @@ public class MessageFrame {
    */
   public MutableBytes readMutableMemory(
       final long offset, final long length, final boolean explicitMemoryRead) {
-    final MutableBytes value = memory.getMutableBytes(offset, length);
+    final MutableBytes memBytes = memory.getMutableBytes(offset, length);
     if (explicitMemoryRead) {
-      setUpdatedMemory(offset, value);
+      setUpdatedMemory(offset, memBytes);
     }
-    return value;
+    return memBytes;
   }
 
   /**
@@ -683,6 +734,26 @@ public class MessageFrame {
     }
   }
 
+  /**
+   * Copies bytes within memory.
+   *
+   * <p>Copying behaves as if the values are copied to an intermediate buffer before writing.
+   *
+   * @param dst The destination address
+   * @param src The source address
+   * @param length the number of bytes to copy
+   * @param explicitMemoryUpdate true if triggered by a memory opcode, false otherwise
+   */
+  public void copyMemory(
+      final long dst, final long src, final long length, final boolean explicitMemoryUpdate) {
+    if (length > 0) {
+      memory.copy(dst, src, length);
+      if (explicitMemoryUpdate) {
+        setUpdatedMemory(dst, memory.getBytes(dst, length));
+      }
+    }
+  }
+
   private void setUpdatedMemory(
       final long offset, final long sourceOffset, final long length, final Bytes value) {
     final long endIndex = sourceOffset + length;
@@ -720,9 +791,16 @@ public class MessageFrame {
     maybeUpdatedMemory = Optional.of(new MemoryEntry(offset, value));
   }
 
+  /**
+   * Storage was updated.
+   *
+   * @param storageAddress the storage address
+   * @param value the value
+   */
   public void storageWasUpdated(final UInt256 storageAddress, final Bytes value) {
     maybeUpdatedStorage = Optional.of(new StorageEntry(storageAddress, value));
   }
+
   /**
    * Accumulate a log.
    *
@@ -761,12 +839,12 @@ public class MessageFrame {
    * @param amount The amount to increment the refund
    */
   public void incrementGasRefund(final long amount) {
-    this.gasRefund += amount;
+    this.txValues.gasRefunds().set(this.txValues.gasRefunds().get() + amount);
   }
 
   /** Clear the accumulated gas refund. */
   public void clearGasRefund() {
-    gasRefund = 0L;
+    this.txValues.gasRefunds().set(0L);
   }
 
   /**
@@ -775,7 +853,7 @@ public class MessageFrame {
    * @return accumulated gas refund
    */
   public long getGasRefund() {
-    return gasRefund;
+    return txValues.gasRefunds().get();
   }
 
   /**
@@ -784,7 +862,7 @@ public class MessageFrame {
    * @param address The recipient to self-destruct
    */
   public void addSelfDestruct(final Address address) {
-    selfDestructs.add(address);
+    txValues.selfDestructs().add(address);
   }
 
   /**
@@ -793,12 +871,7 @@ public class MessageFrame {
    * @param addresses The addresses to self-destruct
    */
   public void addSelfDestructs(final Set<Address> addresses) {
-    selfDestructs.addAll(addresses);
-  }
-
-  /** Removes all entries in the self-destruct set. */
-  public void clearSelfDestructs() {
-    selfDestructs.clear();
+    txValues.selfDestructs().addAll(addresses);
   }
 
   /**
@@ -807,7 +880,47 @@ public class MessageFrame {
    * @return the self-destruct set
    */
   public Set<Address> getSelfDestructs() {
-    return selfDestructs;
+    return txValues.selfDestructs();
+  }
+
+  /**
+   * Add recipient to the create set if not already present.
+   *
+   * @param address The recipient to create
+   */
+  public void addCreate(final Address address) {
+    txValues.creates().add(address);
+  }
+
+  /**
+   * Add addresses to the create set if they are not already present.
+   *
+   * @param addresses The addresses to create
+   */
+  public void addCreates(final Set<Address> addresses) {
+    txValues.creates().addAll(addresses);
+  }
+
+  /**
+   * Returns the create set.
+   *
+   * @return the create set
+   */
+  public Set<Address> getCreates() {
+    return txValues.creates();
+  }
+
+  /**
+   * Was the account at this address created in this transaction? (in any of the previously executed
+   * message frames in this transaction).
+   *
+   * @param address the address to check
+   * @return true if the account was created in any parent or prior message frame in this
+   *     transaction. False if the account existed in the world state at the beginning of the
+   *     transaction.
+   */
+  public boolean wasCreatedInTransaction(final Address address) {
+    return txValues.creates().contains((address));
   }
 
   /**
@@ -836,22 +949,18 @@ public class MessageFrame {
    * @return true if the address was already warmed up
    */
   public boolean warmUpAddress(final Address address) {
-    if (warmedUpAddresses.add(address)) {
-      return parentMessageFrame != null && parentMessageFrame.isWarm(address);
-    } else {
-      return true;
-    }
+    return !txValues.warmedUpAddresses().add(address);
   }
 
-  private boolean isWarm(final Address address) {
-    MessageFrame frame = this;
-    while (frame != null) {
-      if (frame.warmedUpAddresses.contains(address)) {
-        return true;
-      }
-      frame = frame.parentMessageFrame;
-    }
-    return false;
+  /**
+   * Returns whether an address has been warmed up. Is deliberately publicly exposed for access from
+   * tracers.
+   *
+   * @param address the address context
+   * @return whether the address has been warmed up
+   */
+  public boolean isAddressWarm(final Address address) {
+    return txValues.warmedUpAddresses().contains(address);
   }
 
   /**
@@ -862,31 +971,7 @@ public class MessageFrame {
    * @return true if the storage slot was already warmed up
    */
   public boolean warmUpStorage(final Address address, final Bytes32 slot) {
-    if (warmedUpStorage.put(address, slot)) {
-      return parentMessageFrame != null && parentMessageFrame.isWarm(address, slot);
-    } else {
-      return true;
-    }
-  }
-
-  private boolean isWarm(final Address address, final Bytes32 slot) {
-    MessageFrame frame = this;
-    while (frame != null) {
-      if (frame.warmedUpStorage.containsEntry(address, slot)) {
-        return true;
-      }
-      frame = frame.parentMessageFrame;
-    }
-    return false;
-  }
-
-  public void mergeWarmedUpFields(final MessageFrame childFrame) {
-    if (childFrame == this) {
-      return;
-    }
-
-    warmedUpAddresses.addAll(childFrame.warmedUpAddresses);
-    warmedUpStorage.putAll(childFrame.warmedUpStorage);
+    return txValues.warmedUpStorage().put(address, slot, Boolean.TRUE) != null;
   }
 
   /**
@@ -953,12 +1038,21 @@ public class MessageFrame {
   }
 
   /**
-   * Returns the message stack depth.
+   * Returns the message stack size.
    *
-   * @return the message stack depth
+   * @return the message stack size
    */
-  public int getMessageStackDepth() {
-    return depth;
+  public int getMessageStackSize() {
+    return txValues.messageFrameStack().size();
+  }
+
+  /**
+   * Returns the Call Depth, where the rootmost call is depth 0
+   *
+   * @return the call depth
+   */
+  public int getDepth() {
+    return getMessageStackSize() - 1;
   }
 
   /**
@@ -967,7 +1061,7 @@ public class MessageFrame {
    * @return the recipient that originated the message
    */
   public Address getOriginatorAddress() {
-    return originator;
+    return txValues.originator();
   }
 
   /**
@@ -985,7 +1079,16 @@ public class MessageFrame {
    * @return the current gas price
    */
   public Wei getGasPrice() {
-    return gasPrice;
+    return txValues.gasPrice();
+  }
+
+  /**
+   * Returns the current blob gas price.
+   *
+   * @return the current blob gas price
+   */
+  public Wei getBlobGasPrice() {
+    return txValues.blobGasPrice();
   }
 
   /**
@@ -1021,7 +1124,7 @@ public class MessageFrame {
    * @return the current block header
    */
   public BlockValues getBlockValues() {
-    return blockValues;
+    return txValues.blockValues();
   }
 
   /** Performs updates based on the message frame's execution. */
@@ -1035,14 +1138,33 @@ public class MessageFrame {
    * @return the current message frame stack
    */
   public Deque<MessageFrame> getMessageFrameStack() {
-    return messageFrameStack;
+    return txValues.messageFrameStack();
   }
 
+  /**
+   * The return stack used for EOF code sections.
+   *
+   * @return the return stack
+   */
+  public ReturnStack getReturnStack() {
+    return returnStack.get();
+  }
+
+  /**
+   * Sets exceptional halt reason.
+   *
+   * @param exceptionalHaltReason the exceptional halt reason
+   */
   public void setExceptionalHaltReason(
       final Optional<ExceptionalHaltReason> exceptionalHaltReason) {
     this.exceptionalHaltReason = exceptionalHaltReason;
   }
 
+  /**
+   * Gets exceptional halt reason.
+   *
+   * @return the exceptional halt reason
+   */
   public Optional<ExceptionalHaltReason> getExceptionalHaltReason() {
     return exceptionalHaltReason;
   }
@@ -1053,248 +1175,550 @@ public class MessageFrame {
    * @return the current mining beneficiary
    */
   public Address getMiningBeneficiary() {
-    return miningBeneficiary;
+    return txValues.miningBeneficiary();
   }
 
-  public Function<Long, Hash> getBlockHashLookup() {
-    return blockHashLookup;
+  /**
+   * Gets block hash lookup.
+   *
+   * @return the block hash lookup
+   */
+  public BlockHashLookup getBlockHashLookup() {
+    return txValues.blockHashLookup();
   }
 
+  /**
+   * Gets current operation.
+   *
+   * @return the current operation
+   */
   public Operation getCurrentOperation() {
     return currentOperation;
   }
 
+  /**
+   * Gets max stack size.
+   *
+   * @return the max stack size
+   */
   public int getMaxStackSize() {
-    return maxStackSize;
+    return txValues.maxStackSize();
   }
 
+  /**
+   * Gets context variable.
+   *
+   * @param <T> the type parameter
+   * @param name the name
+   * @return the context variable
+   */
   @SuppressWarnings({"unchecked", "TypeParameterUnusedInFormals"})
   public <T> T getContextVariable(final String name) {
     return (T) contextVariables.get(name);
   }
 
+  /**
+   * Gets context variable.
+   *
+   * @param <T> the type parameter
+   * @param name the name
+   * @param defaultValue the default value
+   * @return the context variable
+   */
   @SuppressWarnings("unchecked")
   public <T> T getContextVariable(final String name, final T defaultValue) {
     return (T) contextVariables.getOrDefault(name, defaultValue);
   }
 
+  /**
+   * Has context variable.
+   *
+   * @param name the name
+   * @return the boolean
+   */
   public boolean hasContextVariable(final String name) {
     return contextVariables.containsKey(name);
   }
 
+  /**
+   * Sets current operation.
+   *
+   * @param currentOperation the current operation
+   */
   public void setCurrentOperation(final Operation currentOperation) {
     this.currentOperation = currentOperation;
   }
 
+  /**
+   * Gets warmedUp Storage.
+   *
+   * @return the warmed up storage
+   */
+  public Table<Address, Bytes32, Boolean> getWarmedUpStorage() {
+    return txValues.warmedUpStorage();
+  }
+
+  /**
+   * Gets maybe updated memory.
+   *
+   * @return the maybe updated memory
+   */
   public Optional<MemoryEntry> getMaybeUpdatedMemory() {
     return maybeUpdatedMemory;
   }
 
+  /**
+   * Gets maybe updated storage.
+   *
+   * @return the maybe updated storage
+   */
   public Optional<StorageEntry> getMaybeUpdatedStorage() {
     return maybeUpdatedStorage;
   }
 
+  /**
+   * Gets the transient storage value, including values from parent frames if not set
+   *
+   * @param accountAddress The address of the executing context
+   * @param slot the slot to retrieve
+   * @return the data value read
+   */
+  public Bytes32 getTransientStorageValue(final Address accountAddress, final Bytes32 slot) {
+    Bytes32 v = txValues.transientStorage().get(accountAddress, slot);
+    return v == null ? Bytes32.ZERO : v;
+  }
+
+  /**
+   * Gets the transient storage value, including values from parent frames if not set
+   *
+   * @param accountAddress The address of the executing context
+   * @param slot the slot to set
+   * @param value the value to set in the transient store
+   */
+  public void setTransientStorageValue(
+      final Address accountAddress, final Bytes32 slot, final Bytes32 value) {
+    txValues.transientStorage().put(accountAddress, slot, value);
+  }
+
+  /** Undo all the changes done by this message frame, such as when a revert is called for. */
+  public void rollback() {
+    txValues.undoChanges(undoMark);
+  }
+
+  /**
+   * Accessor for versionedHashes, if present.
+   *
+   * @return optional list of hashes
+   */
+  public Optional<List<VersionedHash>> getVersionedHashes() {
+    return txValues.versionedHashes();
+  }
+
+  /** Reset. */
   public void reset() {
     maybeUpdatedMemory = Optional.empty();
     maybeUpdatedStorage = Optional.empty();
   }
 
+  /** The MessageFrame Builder. */
   public static class Builder {
 
+    private MessageFrame parentMessageFrame;
     private Type type;
-    private Deque<MessageFrame> messageFrameStack;
     private WorldUpdater worldUpdater;
     private Long initialGas;
     private Address address;
     private Address originator;
     private Address contract;
     private Wei gasPrice;
+    private Wei blobGasPrice = Wei.ZERO;
     private Bytes inputData;
     private Address sender;
     private Wei value;
     private Wei apparentValue;
     private Code code;
     private BlockValues blockValues;
-    private int depth = -1;
     private int maxStackSize = DEFAULT_MAX_STACK_SIZE;
     private boolean isStatic = false;
     private Consumer<MessageFrame> completer;
     private Address miningBeneficiary;
-    private Function<Long, Hash> blockHashLookup;
+    private BlockHashLookup blockHashLookup;
     private Map<String, Object> contextVariables;
     private Optional<Bytes> reason = Optional.empty();
     private Set<Address> accessListWarmAddresses = emptySet();
     private Multimap<Address, Bytes32> accessListWarmStorage = HashMultimap.create();
 
+    private Optional<List<VersionedHash>> versionedHashes = Optional.empty();
+
+    /** Instantiates a new Builder. */
+    public Builder() {
+      // constructor added to deal with JavaDoc linting rules.
+    }
+
+    /**
+     * The "parent" message frame. When present some fields will be populated from the parent and
+     * ignored if passed in via builder
+     *
+     * @param parentMessageFrame the parent message frame
+     * @return the builder
+     */
+    public Builder parentMessageFrame(final MessageFrame parentMessageFrame) {
+      this.parentMessageFrame = parentMessageFrame;
+      return this;
+    }
+
+    /**
+     * Sets Type.
+     *
+     * @param type the type
+     * @return the builder
+     */
     public Builder type(final Type type) {
       this.type = type;
       return this;
     }
 
-    public Builder messageFrameStack(final Deque<MessageFrame> messageFrameStack) {
-      this.messageFrameStack = messageFrameStack;
-      return this;
-    }
-
+    /**
+     * Sets World updater.
+     *
+     * @param worldUpdater the world updater
+     * @return the builder
+     */
     public Builder worldUpdater(final WorldUpdater worldUpdater) {
       this.worldUpdater = worldUpdater;
       return this;
     }
 
+    /**
+     * Sets Initial gas.
+     *
+     * @param initialGas the initial gas
+     * @return the builder
+     */
     public Builder initialGas(final long initialGas) {
       this.initialGas = initialGas;
       return this;
     }
 
+    /**
+     * Sets Address.
+     *
+     * @param address the address
+     * @return the builder
+     */
     public Builder address(final Address address) {
       this.address = address;
       return this;
     }
 
+    /**
+     * Sets Originator.
+     *
+     * @param originator the originator
+     * @return the builder
+     */
     public Builder originator(final Address originator) {
       this.originator = originator;
       return this;
     }
 
+    /**
+     * Sets Contract.
+     *
+     * @param contract the contract
+     * @return the builder
+     */
     public Builder contract(final Address contract) {
       this.contract = contract;
       return this;
     }
 
+    /**
+     * Sets Gas price.
+     *
+     * @param gasPrice the gas price
+     * @return the builder
+     */
     public Builder gasPrice(final Wei gasPrice) {
       this.gasPrice = gasPrice;
       return this;
     }
 
+    /**
+     * Sets Blob Gas price.
+     *
+     * @param blobGasPrice the blob gas price
+     * @return the builder
+     */
+    public Builder blobGasPrice(final Wei blobGasPrice) {
+      this.blobGasPrice = blobGasPrice;
+      return this;
+    }
+
+    /**
+     * Sets Input data.
+     *
+     * @param inputData the input data
+     * @return the builder
+     */
     public Builder inputData(final Bytes inputData) {
       this.inputData = inputData;
       return this;
     }
 
+    /**
+     * Sets Sender address.
+     *
+     * @param sender the sender
+     * @return the builder
+     */
     public Builder sender(final Address sender) {
       this.sender = sender;
       return this;
     }
 
+    /**
+     * Sets Value.
+     *
+     * @param value the value
+     * @return the builder
+     */
     public Builder value(final Wei value) {
       this.value = value;
       return this;
     }
 
+    /**
+     * Sets Apparent value.
+     *
+     * @param apparentValue the apparent value
+     * @return the builder
+     */
     public Builder apparentValue(final Wei apparentValue) {
       this.apparentValue = apparentValue;
       return this;
     }
 
+    /**
+     * Sets Code.
+     *
+     * @param code the code
+     * @return the builder
+     */
     public Builder code(final Code code) {
       this.code = code;
       return this;
     }
 
+    /**
+     * Sets Block values.
+     *
+     * @param blockValues the block values
+     * @return the builder
+     */
     public Builder blockValues(final BlockValues blockValues) {
       this.blockValues = blockValues;
       return this;
     }
 
-    public Builder depth(final int depth) {
-      this.depth = depth;
-      return this;
-    }
-
+    /**
+     * Sets Is static.
+     *
+     * @param isStatic the is static
+     * @return the builder
+     */
     public Builder isStatic(final boolean isStatic) {
       this.isStatic = isStatic;
       return this;
     }
 
+    /**
+     * Sets Max stack size.
+     *
+     * @param maxStackSize the max stack size
+     * @return the builder
+     */
     public Builder maxStackSize(final int maxStackSize) {
       this.maxStackSize = maxStackSize;
       return this;
     }
 
+    /**
+     * Sets Completer.
+     *
+     * @param completer the completer
+     * @return the builder
+     */
     public Builder completer(final Consumer<MessageFrame> completer) {
       this.completer = completer;
       return this;
     }
 
+    /**
+     * Sets Mining beneficiary.
+     *
+     * @param miningBeneficiary the mining beneficiary
+     * @return the builder
+     */
     public Builder miningBeneficiary(final Address miningBeneficiary) {
       this.miningBeneficiary = miningBeneficiary;
       return this;
     }
 
-    public Builder blockHashLookup(final Function<Long, Hash> blockHashLookup) {
+    /**
+     * Sets Block hash lookup.
+     *
+     * @param blockHashLookup the block hash lookup
+     * @return the builder
+     */
+    public Builder blockHashLookup(final BlockHashLookup blockHashLookup) {
       this.blockHashLookup = blockHashLookup;
       return this;
     }
 
+    /**
+     * Sets Context variables.
+     *
+     * @param contextVariables the context variables
+     * @return the builder
+     */
     public Builder contextVariables(final Map<String, Object> contextVariables) {
       this.contextVariables = contextVariables;
       return this;
     }
 
+    /**
+     * Sets Reason.
+     *
+     * @param reason the reason
+     * @return the builder
+     */
     public Builder reason(final Bytes reason) {
       this.reason = Optional.ofNullable(reason);
       return this;
     }
 
+    /**
+     * Sets Access list warm addresses.
+     *
+     * @param accessListWarmAddresses the access list warm addresses
+     * @return the builder
+     */
     public Builder accessListWarmAddresses(final Set<Address> accessListWarmAddresses) {
       this.accessListWarmAddresses = accessListWarmAddresses;
       return this;
     }
 
+    /**
+     * Sets Access list warm storage.
+     *
+     * @param accessListWarmStorage the access list warm storage
+     * @return the builder
+     */
     public Builder accessListWarmStorage(final Multimap<Address, Bytes32> accessListWarmStorage) {
       this.accessListWarmStorage = accessListWarmStorage;
       return this;
     }
 
+    /**
+     * Sets versioned hashes list.
+     *
+     * @param versionedHashes the Optional list of versioned hashes
+     * @return the builder
+     */
+    public Builder versionedHashes(final Optional<List<VersionedHash>> versionedHashes) {
+      this.versionedHashes = versionedHashes;
+      return this;
+    }
+
     private void validate() {
+      if (parentMessageFrame == null) {
+        checkState(worldUpdater != null, "Missing message frame world updater");
+        checkState(originator != null, "Missing message frame originator");
+        checkState(gasPrice != null, "Missing message frame getGasRemaining price");
+        checkState(blobGasPrice != null, "Missing message frame blob gas price");
+        checkState(blockValues != null, "Missing message frame block header");
+        checkState(miningBeneficiary != null, "Missing mining beneficiary");
+        checkState(blockHashLookup != null, "Missing block hash lookup");
+      }
       checkState(type != null, "Missing message frame type");
-      checkState(messageFrameStack != null, "Missing message frame message frame stack");
-      checkState(worldUpdater != null, "Missing message frame world updater");
       checkState(initialGas != null, "Missing message frame initial getGasRemaining");
       checkState(address != null, "Missing message frame recipient");
-      checkState(originator != null, "Missing message frame originator");
       checkState(contract != null, "Missing message frame contract");
-      checkState(gasPrice != null, "Missing message frame getGasRemaining price");
       checkState(inputData != null, "Missing message frame input data");
       checkState(sender != null, "Missing message frame sender");
       checkState(value != null, "Missing message frame value");
       checkState(apparentValue != null, "Missing message frame apparent value");
       checkState(code != null, "Missing message frame code");
-      checkState(blockValues != null, "Missing message frame block header");
-      checkState(depth > -1, "Missing message frame depth");
       checkState(completer != null, "Missing message frame completer");
-      checkState(miningBeneficiary != null, "Missing mining beneficiary");
-      checkState(blockHashLookup != null, "Missing block hash lookup");
     }
 
+    /**
+     * Build MessageFrame.
+     *
+     * @return instance of MessageFrame
+     */
     public MessageFrame build() {
       validate();
 
-      return new MessageFrame(
-          type,
-          messageFrameStack,
-          worldUpdater,
-          initialGas,
-          address,
-          originator,
-          contract,
-          gasPrice,
-          inputData,
-          sender,
-          value,
-          apparentValue,
-          code,
-          blockValues,
-          depth,
-          isStatic,
-          completer,
-          miningBeneficiary,
-          blockHashLookup,
-          contextVariables == null ? Map.of() : contextVariables,
-          reason,
-          maxStackSize,
-          accessListWarmAddresses,
-          accessListWarmStorage);
+      WorldUpdater updater;
+      boolean newStatic;
+      TxValues newTxValues;
+
+      if (parentMessageFrame == null) {
+        newTxValues =
+            new TxValues(
+                blockHashLookup,
+                maxStackSize,
+                UndoSet.of(new BytesTrieSet<>(Address.SIZE)),
+                UndoTable.of(HashBasedTable.create()),
+                originator,
+                gasPrice,
+                blobGasPrice,
+                blockValues,
+                new ArrayDeque<>(),
+                miningBeneficiary,
+                versionedHashes,
+                UndoTable.of(HashBasedTable.create()),
+                UndoSet.of(new BytesTrieSet<>(Address.SIZE)),
+                UndoSet.of(new BytesTrieSet<>(Address.SIZE)),
+                new UndoScalar<>(0L));
+        updater = worldUpdater;
+        newStatic = isStatic;
+      } else {
+        newTxValues = parentMessageFrame.txValues;
+        updater = parentMessageFrame.getWorldUpdater().updater();
+        newStatic = isStatic || parentMessageFrame.isStatic;
+        parentMessageFrame.warmUpAddress(contract);
+      }
+
+      MessageFrame messageFrame =
+          new MessageFrame(
+              type,
+              updater,
+              initialGas,
+              address,
+              contract,
+              inputData,
+              sender,
+              value,
+              apparentValue,
+              code,
+              newStatic,
+              completer,
+              contextVariables == null ? Map.of() : contextVariables,
+              reason,
+              newTxValues);
+      newTxValues.messageFrameStack().addFirst(messageFrame);
+      messageFrame.warmUpAddress(sender);
+      messageFrame.warmUpAddress(contract);
+      for (Address a : accessListWarmAddresses) {
+        messageFrame.warmUpAddress(a);
+      }
+      for (var e : accessListWarmStorage.entries()) {
+        messageFrame.warmUpStorage(e.getKey(), e.getValue());
+      }
+      return messageFrame;
     }
   }
 }

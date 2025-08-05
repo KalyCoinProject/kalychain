@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,9 +14,10 @@
  */
 package org.hyperledger.besu.evm.gascalculator;
 
+import org.hyperledger.besu.datatypes.AccessListEntry;
 import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.Transaction;
 import org.hyperledger.besu.datatypes.Wei;
-import org.hyperledger.besu.evm.AccessListEntry;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.operation.BalanceOperation;
@@ -40,6 +41,7 @@ import org.hyperledger.besu.evm.precompile.SHA256PrecompiledContract;
 import org.hyperledger.besu.evm.processor.AbstractMessageProcessor;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.units.bigints.UInt256;
@@ -73,6 +75,13 @@ public interface GasCalculator {
    * @return the gas cost to execute the ECREC precompiled contract
    */
   long getEcrecPrecompiledContractGasCost();
+
+  /**
+   * Returns the gas cost to execute the {@link ECRECPrecompiledContract}.
+   *
+   * @return the gas cost to execute the P256Verify precompiled contract
+   */
+  long getP256VerifyPrecompiledContractGasCost();
 
   /**
    * Returns the gas cost to execute the {@link SHA256PrecompiledContract}.
@@ -144,6 +153,20 @@ public interface GasCalculator {
   long callOperationBaseGasCost();
 
   /**
+   * Returns the gas cost to transfer funds in a call operation.
+   *
+   * @return the gas cost to transfer funds in a call operation
+   */
+  long callValueTransferGasCost();
+
+  /**
+   * Returns the gas cost to create a new account.
+   *
+   * @return the gas cost to create a new account
+   */
+  long newAccountGasCost();
+
+  /**
    * Returns the gas cost for one of the various CALL operations.
    *
    * @param frame The current frame
@@ -155,6 +178,7 @@ public interface GasCalculator {
    * @param transferValue The wei being transferred
    * @param recipient The CALL recipient (may be null if self destructed or new)
    * @param contract The address of the recipient (never null)
+   * @param accountIsWarm The address of the contract is "warm" as per EIP-2929
    * @return The gas cost for the CALL operation
    */
   long callOperationGasCost(
@@ -166,8 +190,14 @@ public interface GasCalculator {
       long outputDataLength,
       Wei transferValue,
       Account recipient,
-      Address contract);
+      Address contract,
+      boolean accountIsWarm);
 
+  /**
+   * Gets additional call stipend.
+   *
+   * @return the additional call stipend
+   */
   long getAdditionalCallStipend();
 
   /**
@@ -181,20 +211,42 @@ public interface GasCalculator {
   long gasAvailableForChildCall(MessageFrame frame, long stipend, boolean transfersValue);
 
   /**
-   * Returns the amount of gas the CREATE operation will consume.
+   * For EXT*CALL, the minimum amount of gas the parent must retain. First described in EIP-7069
    *
-   * @param frame The current frame
-   * @return the amount of gas the CREATE operation will consume
+   * @return MIN_RETAINED_GAS
    */
-  long createOperationGasCost(MessageFrame frame);
+  long getMinRetainedGas();
 
   /**
-   * Returns the amount of gas the CREATE2 operation will consume.
+   * For EXT*CALL, the minimum amount of gas that a child must receive. First described in EIP-7069
    *
-   * @param frame The current frame
-   * @return the amount of gas the CREATE2 operation will consume
+   * @return MIN_CALLEE_GAS
    */
-  long create2OperationGasCost(MessageFrame frame);
+  long getMinCalleeGas();
+
+  /**
+   * Returns the base create cost, or TX_CREATE_COST as defined in the execution specs
+   *
+   * @return the TX_CREATE value for this gas schedule
+   */
+  long txCreateCost();
+
+  /**
+   * For Creates that need to hash the initcode, this is the gas cost for such hashing
+   *
+   * @param initCodeLength length of the init code, in bytes
+   * @return gas cost to charge for hashing
+   */
+  long createKeccakCost(int initCodeLength);
+
+  /**
+   * The cost of a create operation's initcode charge. This is just the initcode cost, separate from
+   * the operation base cost and initcode hashing cost.
+   *
+   * @param initCodeLength Number of bytes in the initcode
+   * @return the gas cost for the create initcode
+   */
+  long initcodeCost(final int initCodeLength);
 
   /**
    * Returns the amount of gas parent will provide its child CREATE.
@@ -348,22 +400,24 @@ public interface GasCalculator {
   /**
    * Returns the cost for an SSTORE operation.
    *
-   * @param account the account that storage will be changed in
-   * @param key the key the new value is to be stored under
    * @param newValue the new value to be stored
+   * @param currentValue the supplier of the current value
+   * @param originalValue the supplier of the original value
    * @return the gas cost for the SSTORE operation
    */
-  long calculateStorageCost(Account account, UInt256 key, UInt256 newValue);
+  long calculateStorageCost(
+      UInt256 newValue, Supplier<UInt256> currentValue, Supplier<UInt256> originalValue);
 
   /**
    * Returns the refund amount for an SSTORE operation.
    *
-   * @param account the account that storage will be changed in
-   * @param key the key the new value is to be stored under
    * @param newValue the new value to be stored
+   * @param currentValue the supplier of the current value
+   * @param originalValue the supplier of the original value
    * @return the gas refund for the SSTORE operation
    */
-  long calculateStorageRefundAmount(Account account, UInt256 key, UInt256 newValue);
+  long calculateStorageRefundAmount(
+      UInt256 newValue, Supplier<UInt256> currentValue, Supplier<UInt256> originalValue);
 
   /**
    * Returns the refund amount for deleting an account in a {@link SelfDestructOperation}.
@@ -411,6 +465,12 @@ public interface GasCalculator {
     return false;
   }
 
+  /**
+   * Mod exp gas cost.
+   *
+   * @param input the input
+   * @return the long
+   */
   default long modExpGasCost(final Bytes input) {
     return 0L;
   }
@@ -424,14 +484,24 @@ public interface GasCalculator {
   long codeDepositGasCost(int codeSize);
 
   /**
-   * Returns the intrinsic gas cost of a transaction pauload, i.e. the cost deriving from its
+   * Returns the intrinsic gas cost of a transaction payload, i.e. the cost deriving from its
    * encoded binary representation when stored on-chain.
    *
-   * @param transactionPayload The encoded transaction, as bytes
-   * @param isContractCreate Is this transaction a contract creation transaction?
+   * @param transaction The encoded transaction
+   * @param baselineGas The gas used by access lists and code delegation authorizations
    * @return the transaction's intrinsic gas cost
    */
-  long transactionIntrinsicGasCost(Bytes transactionPayload, boolean isContractCreate);
+  long transactionIntrinsicGasCost(Transaction transaction, long baselineGas);
+
+  /**
+   * Returns the floor gas cost of a transaction payload, i.e. the minimum gas cost that a
+   * transaction will be charged based on its calldata. Introduced in EIP-7623 in Prague.
+   *
+   * @param transactionPayload The encoded transaction, as bytes
+   * @param payloadZeroBytes The number of zero bytes in the payload
+   * @return the transaction's floor gas cost
+   */
+  long transactionFloorCost(final Bytes transactionPayload, final long payloadZeroBytes);
 
   /**
    * Returns the gas cost of the explicitly declared access list.
@@ -442,7 +512,7 @@ public interface GasCalculator {
   default long accessListGasCost(final List<AccessListEntry> accessListEntries) {
     return accessListGasCost(
         accessListEntries.size(),
-        accessListEntries.stream().mapToInt(e -> e.getStorageKeys().size()).sum());
+        accessListEntries.stream().mapToInt(e -> e.storageKeys().size()).sum());
   }
 
   /**
@@ -466,11 +536,91 @@ public interface GasCalculator {
   }
 
   /**
-   * Maximum Cost of a Transaction of a certain length.
+   * Minimum gas cost of a transaction.
    *
-   * @param size the length of the transaction, in bytes
-   * @return the maximum gas cost
+   * @return the minimum gas cost
    */
-  // what would be the gas for a PMT with hash of all non-zeros
-  long getMaximumTransactionCost(int size);
+  long getMinimumTransactionCost();
+
+  /**
+   * Returns the cost of a loading from Transient Storage
+   *
+   * @return the cost of a TLOAD from a storage slot
+   */
+  default long getTransientLoadOperationGasCost() {
+    return 0L;
+  }
+
+  /**
+   * Returns the cost of a storing to Transient Storage
+   *
+   * @return the cost of a TSTORE to a storage slot
+   */
+  default long getTransientStoreOperationGasCost() {
+    return 0L;
+  }
+
+  /**
+   * Returns the blob gas cost per blob. This is the gas cost for each blob of data that is added to
+   * the block.
+   *
+   * @return the blob gas cost per blob
+   */
+  default long getBlobGasPerBlob() {
+    return 0L;
+  }
+
+  /**
+   * Return the gas cost given the number of blobs
+   *
+   * @param blobCount the number of blobs
+   * @return the total gas cost
+   */
+  default long blobGasCost(final long blobCount) {
+    return 0L;
+  }
+
+  /**
+   * Returns the upfront gas cost for EIP 7702 authorization processing.
+   *
+   * @param delegateCodeListLength The length of the code delegation list
+   * @return the gas cost
+   */
+  default long delegateCodeGasCost(final int delegateCodeListLength) {
+    return 0L;
+  }
+
+  /**
+   * Calculates the refund for processing the 7702 code delegation list if a delegator account
+   * already exists in the trie.
+   *
+   * @param alreadyExistingAccountSize The number of accounts already in the trie
+   * @return the gas refund
+   */
+  default long calculateDelegateCodeGasRefund(final long alreadyExistingAccountSize) {
+    return 0L;
+  }
+
+  /**
+   * Calculate the gas refund for a transaction.
+   *
+   * @param transaction the transaction
+   * @param initialFrame the initial frame
+   * @param codeDelegationRefund the code delegation refund
+   * @return the gas refund
+   */
+  long calculateGasRefund(
+      Transaction transaction, MessageFrame initialFrame, long codeDelegationRefund);
+
+  /**
+   * Compute the gas cost for delegated code resolution.
+   *
+   * @param frame the message frame
+   * @param targetAccount the account
+   * @return the gas cost
+   */
+  default long calculateCodeDelegationResolutionGas(
+      final MessageFrame frame, final Account targetAccount) {
+    return 0L;
+  }
 }

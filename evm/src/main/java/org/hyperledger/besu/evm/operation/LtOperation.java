@@ -18,14 +18,21 @@ import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
-import org.apache.tuweni.units.bigints.UInt256;
+import org.apache.tuweni.bytes.Bytes;
 
+/** The LT operation. */
 public class LtOperation extends AbstractFixedCostOperation {
 
+  /** The LT operation success result. */
   static final OperationResult ltSuccess = new OperationResult(3, null);
 
+  /**
+   * Instantiates a new LT operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public LtOperation(final GasCalculator gasCalculator) {
-    super(0x10, "LT", 2, 1, 1, gasCalculator, gasCalculator.getVeryLowTierGasCost());
+    super(0x10, "LT", 2, 1, gasCalculator, gasCalculator.getVeryLowTierGasCost());
   }
 
   @Override
@@ -34,11 +41,17 @@ public class LtOperation extends AbstractFixedCostOperation {
     return staticOperation(frame);
   }
 
+  /**
+   * Performs LT operation.
+   *
+   * @param frame the frame
+   * @return the operation result
+   */
   public static OperationResult staticOperation(final MessageFrame frame) {
-    final UInt256 value0 = UInt256.fromBytes(frame.popStackItem());
-    final UInt256 value1 = UInt256.fromBytes(frame.popStackItem());
+    final Bytes value0 = frame.popStackItem().trimLeadingZeros();
+    final Bytes value1 = frame.popStackItem().trimLeadingZeros();
 
-    final UInt256 result = value0.compareTo(value1) < 0 ? UInt256.ONE : UInt256.ZERO;
+    final Bytes result = value0.compareTo(value1) < 0 ? BYTES_ONE : Bytes.EMPTY;
 
     frame.pushStackItem(result);
 

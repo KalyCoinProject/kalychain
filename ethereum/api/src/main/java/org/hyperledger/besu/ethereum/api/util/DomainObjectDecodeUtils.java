@@ -14,9 +14,10 @@
  */
 package org.hyperledger.besu.ethereum.api.util;
 
-import org.hyperledger.besu.config.GoQuorumOptions;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcRequestException;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.core.Transaction;
+import org.hyperledger.besu.ethereum.core.encoding.EncodingContext;
 import org.hyperledger.besu.ethereum.core.encoding.TransactionDecoder;
 import org.hyperledger.besu.ethereum.rlp.RLPException;
 
@@ -28,10 +29,13 @@ public class DomainObjectDecodeUtils {
       throws InvalidJsonRpcRequestException {
     try {
       Bytes txnBytes = Bytes.fromHexString(rawTransaction);
-      final boolean isGoQuorumCompatibilityMode = GoQuorumOptions.getGoQuorumCompatibilityMode();
-      return TransactionDecoder.decodeOpaqueBytes(txnBytes, isGoQuorumCompatibilityMode);
-    } catch (final IllegalArgumentException | RLPException e) {
-      throw new InvalidJsonRpcRequestException("Invalid raw transaction hex", e);
+      return TransactionDecoder.decodeOpaqueBytes(txnBytes, EncodingContext.POOLED_TRANSACTION);
+    } catch (final IllegalArgumentException e) {
+      throw new InvalidJsonRpcRequestException(
+          "Invalid raw transaction hex", RpcErrorType.INVALID_TRANSACTION_PARAMS, e);
+    } catch (final RLPException r) {
+      throw new InvalidJsonRpcRequestException(
+          "Invalid RLP in raw transaction hex", RpcErrorType.INVALID_TRANSACTION_PARAMS, r);
     }
   }
 }

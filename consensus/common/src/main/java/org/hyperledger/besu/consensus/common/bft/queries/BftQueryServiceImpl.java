@@ -18,11 +18,11 @@ import org.hyperledger.besu.consensus.common.PoaQueryServiceImpl;
 import org.hyperledger.besu.consensus.common.bft.BftBlockInterface;
 import org.hyperledger.besu.consensus.common.bft.BftExtraData;
 import org.hyperledger.besu.consensus.common.validator.ValidatorProvider;
-import org.hyperledger.besu.crypto.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
-import org.hyperledger.besu.plugin.data.Address;
 import org.hyperledger.besu.plugin.services.query.BftQueryService;
 
 import java.util.Collection;
@@ -30,12 +30,22 @@ import java.util.Collections;
 
 import org.apache.tuweni.bytes.Bytes32;
 
+/** The Bft query service. */
 public class BftQueryServiceImpl extends PoaQueryServiceImpl implements BftQueryService {
 
   private final ValidatorProvider validatorProvider;
   private final String consensusMechanismName;
   private final BftBlockInterface bftBlockInterface;
 
+  /**
+   * Instantiates a new Bft query service.
+   *
+   * @param blockInterface the block interface
+   * @param blockchain the blockchain
+   * @param validatorProvider the validator provider
+   * @param nodeKey the node key
+   * @param consensusMechanismName the consensus mechanism name
+   */
   public BftQueryServiceImpl(
       final BftBlockInterface blockInterface,
       final Blockchain blockchain,

@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,34 +16,49 @@ package org.hyperledger.besu.evm.operation;
 
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
+import org.apache.tuweni.bytes.Bytes;
+
 /**
  * All {@link Operation} implementations should inherit from this class to get the setting of some
  * members for free.
  */
 public abstract class AbstractOperation implements Operation {
 
+  static final Bytes BYTES_ONE = Bytes.of(1);
+
   private final int opcode;
   private final String name;
   private final int stackItemsConsumed;
   private final int stackItemsProduced;
-  private final int opSize;
   private final GasCalculator gasCalculator;
 
+  /**
+   * Instantiates a new Abstract operation.
+   *
+   * @param opcode the opcode
+   * @param name the name
+   * @param stackItemsConsumed the stack items consumed
+   * @param stackItemsProduced the stack items produced
+   * @param gasCalculator the gas calculator
+   */
   protected AbstractOperation(
       final int opcode,
       final String name,
       final int stackItemsConsumed,
       final int stackItemsProduced,
-      final int opSize,
       final GasCalculator gasCalculator) {
     this.opcode = opcode & 0xff;
     this.name = name;
     this.stackItemsConsumed = stackItemsConsumed;
     this.stackItemsProduced = stackItemsProduced;
-    this.opSize = opSize;
     this.gasCalculator = gasCalculator;
   }
 
+  /**
+   * Gets Gas calculator.
+   *
+   * @return the gas calculator
+   */
   protected GasCalculator gasCalculator() {
     return gasCalculator;
   }
@@ -66,10 +81,5 @@ public abstract class AbstractOperation implements Operation {
   @Override
   public int getStackItemsProduced() {
     return stackItemsProduced;
-  }
-
-  @Override
-  public int getOpSize() {
-    return opSize;
   }
 }

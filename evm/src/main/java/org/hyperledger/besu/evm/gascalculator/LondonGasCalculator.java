@@ -14,10 +14,11 @@
  */
 package org.hyperledger.besu.evm.gascalculator;
 
-import org.hyperledger.besu.evm.account.Account;
+import java.util.function.Supplier;
 
 import org.apache.tuweni.units.bigints.UInt256;
 
+/** The London gas calculator. */
 public class LondonGasCalculator extends BerlinGasCalculator {
 
   // redefinitions for EIP-3529
@@ -28,7 +29,19 @@ public class LondonGasCalculator extends BerlinGasCalculator {
   // redefinitions for EIP-3529
   private static final int NEW_MAX_REFUND_QUOTIENT = 5;
 
-  public LondonGasCalculator() {}
+  /**
+   * Instantiates a new LondonGasCalculator
+   *
+   * @param maxPrecompile the max precompile
+   */
+  protected LondonGasCalculator(final int maxPrecompile) {
+    super(maxPrecompile);
+  }
+
+  /** Instantiates a new LondonGasCalculator */
+  public LondonGasCalculator() {
+    super();
+  }
 
   // Redefined refund amount from EIP-3529
   @Override
@@ -40,14 +53,17 @@ public class LondonGasCalculator extends BerlinGasCalculator {
   @Override
   // As per https://eips.ethereum.org/EIPS/eip-3529
   public long calculateStorageRefundAmount(
-      final Account account, final UInt256 key, final UInt256 newValue) {
-    final UInt256 currentValue = account.getStorageValue(key);
-    if (currentValue.equals(newValue)) {
+      final UInt256 newValue,
+      final Supplier<UInt256> currentValue,
+      final Supplier<UInt256> originalValue) {
+
+    final UInt256 localCurrentValue = currentValue.get();
+    if (localCurrentValue.equals(newValue)) {
       return 0L;
     } else {
-      final UInt256 originalValue = account.getOriginalStorageValue(key);
-      if (originalValue.equals(currentValue)) {
-        if (originalValue.isZero()) {
+      final UInt256 localOriginalValue = originalValue.get();
+      if (localOriginalValue.equals(localCurrentValue)) {
+        if (localOriginalValue.isZero()) {
           return 0L;
         } else if (newValue.isZero()) {
           return SSTORE_CLEARS_SCHEDULE;
@@ -56,18 +72,18 @@ public class LondonGasCalculator extends BerlinGasCalculator {
         }
       } else {
         long refund = 0L;
-        if (!originalValue.isZero()) {
-          if (currentValue.isZero()) {
+        if (!localOriginalValue.isZero()) {
+          if (localCurrentValue.isZero()) {
             refund = NEGATIVE_SSTORE_CLEARS_SCHEDULE;
           } else if (newValue.isZero()) {
             refund = SSTORE_CLEARS_SCHEDULE;
           }
         }
 
-        if (originalValue.equals(newValue)) {
+        if (localOriginalValue.equals(newValue)) {
           refund =
               refund
-                  + (originalValue.isZero()
+                  + (localOriginalValue.isZero()
                       ? SSTORE_SET_GAS_LESS_SLOAD_GAS
                       : SSTORE_RESET_GAS_LESS_SLOAD_GAS);
         }

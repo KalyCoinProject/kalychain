@@ -17,6 +17,7 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -24,14 +25,17 @@ import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.Tracer;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.TransactionTrace;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.TransactionTracer;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.DebugTraceTransactionResult;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.OpCodeLoggerTracerResult;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.StructLog;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.api.query.TransactionWithMetadata;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.MutableWorldState;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.debug.TraceFrame;
 import org.hyperledger.besu.ethereum.processing.TransactionProcessingResult;
@@ -43,24 +47,45 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.function.Function;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Answers;
 
 public class DebugTraceTransactionTest {
 
-  private final BlockchainQueries blockchain = mock(BlockchainQueries.class);
+  private final BlockchainQueries blockchainQueries =
+      mock(BlockchainQueries.class, Answers.RETURNS_DEEP_STUBS);
+  private final BlockHeader blockHeader = mock(BlockHeader.class, Answers.RETURNS_DEEP_STUBS);
+  private final MutableWorldState mutableWorldState = mock(MutableWorldState.class);
   private final TransactionTracer transactionTracer = mock(TransactionTracer.class);
   private final DebugTraceTransaction debugTraceTransaction =
-      new DebugTraceTransaction(blockchain, transactionTracer);
+      new DebugTraceTransaction(blockchainQueries, transactionTracer);
   private final Transaction transaction = mock(Transaction.class);
 
-  private final BlockHeader blockHeader = mock(BlockHeader.class);
   private final Hash blockHash =
       Hash.fromHexString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   private final Hash transactionHash =
       Hash.fromHexString("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+  @BeforeEach
+  public void setup() {
+    doAnswer(__ -> Optional.of(blockHeader))
+        .when(blockchainQueries)
+        .getBlockHeaderByHash(any(Hash.class));
+
+    doAnswer(
+            invocation ->
+                invocation
+                    .<Function<MutableWorldState, Optional<? extends JsonRpcResponse>>>getArgument(
+                        1)
+                    .apply(mutableWorldState))
+        .when(blockchainQueries)
+        .getAndMapWorldState(any(), any());
+  }
 
   @Test
   public void nameShouldBeDebugTraceTransaction() {
@@ -91,6 +116,7 @@ public class DebugTraceTransactionTest {
         new TraceFrame(
             12,
             Optional.of("NONE"),
+            Integer.MAX_VALUE,
             45L,
             OptionalLong.of(56L),
             0L,
@@ -115,20 +141,23 @@ public class DebugTraceTransactionTest {
     final List<TraceFrame> traceFrames = Collections.singletonList(traceFrame);
     final TransactionTrace transactionTrace =
         new TransactionTrace(transaction, result, traceFrames);
+    when(transaction.getHash()).thenReturn(transactionHash);
     when(transaction.getGasLimit()).thenReturn(100L);
     when(result.getGasRemaining()).thenReturn(27L);
     when(result.getOutput()).thenReturn(Bytes.fromHexString("1234"));
-    when(blockHeader.getNumber()).thenReturn(12L);
-    when(blockchain.headBlockNumber()).thenReturn(12L);
-    when(blockchain.transactionByHash(transactionHash))
+    when(blockchainQueries.headBlockNumber()).thenReturn(12L);
+    when(blockchainQueries.transactionByHash(transactionHash))
         .thenReturn(Optional.of(transactionWithMetadata));
     when(transactionTracer.traceTransaction(
-            eq(blockHash), eq(transactionHash), any(DebugOperationTracer.class)))
+            any(Tracer.TraceableState.class),
+            eq(blockHash),
+            eq(transactionHash),
+            any(DebugOperationTracer.class)))
         .thenReturn(Optional.of(transactionTrace));
     final JsonRpcSuccessResponse response =
         (JsonRpcSuccessResponse) debugTraceTransaction.response(request);
-    final DebugTraceTransactionResult transactionResult =
-        (DebugTraceTransactionResult) response.getResult();
+    final OpCodeLoggerTracerResult transactionResult =
+        (OpCodeLoggerTracerResult) response.getResult();
 
     assertThat(transactionResult.getGas()).isEqualTo(73);
     assertThat(transactionResult.getReturnValue()).isEqualTo("1234");
@@ -137,10 +166,10 @@ public class DebugTraceTransactionTest {
     assertThat(transactionResult.getStructLogs().size()).isEqualTo(1);
     assertThat(transactionResult.getStructLogs().get(0).stack().length).isEqualTo(1);
     assertThat(transactionResult.getStructLogs().get(0).stack()[0])
-        .isEqualTo(stackBytes[0].toUnprefixedHexString());
+        .isEqualTo(StructLog.toCompactHex(stackBytes[0], true));
     assertThat(transactionResult.getStructLogs().get(0).memory().length).isEqualTo(1);
     assertThat(transactionResult.getStructLogs().get(0).memory()[0])
-        .isEqualTo(memoryBytes[0].toUnprefixedHexString());
+        .isEqualTo(StructLog.toCompactHex(memoryBytes[0], true));
   }
 
   @Test
@@ -156,6 +185,7 @@ public class DebugTraceTransactionTest {
         new TraceFrame(
             12,
             Optional.of("NONE"),
+            Integer.MAX_VALUE,
             45L,
             OptionalLong.of(56L),
             0L,
@@ -183,11 +213,13 @@ public class DebugTraceTransactionTest {
     when(transaction.getGasLimit()).thenReturn(100L);
     when(result.getGasRemaining()).thenReturn(27L);
     when(result.getOutput()).thenReturn(Bytes.fromHexString("1234"));
-    when(blockHeader.getNumber()).thenReturn(12L);
-    when(blockchain.headBlockNumber()).thenReturn(12L);
-    when(blockchain.transactionByHash(transactionHash)).thenReturn(Optional.empty());
+    when(blockchainQueries.headBlockNumber()).thenReturn(12L);
+    when(blockchainQueries.transactionByHash(transactionHash)).thenReturn(Optional.empty());
     when(transactionTracer.traceTransaction(
-            eq(blockHash), eq(transactionHash), any(DebugOperationTracer.class)))
+            any(Tracer.TraceableState.class),
+            eq(blockHash),
+            eq(transactionHash),
+            any(DebugOperationTracer.class)))
         .thenReturn(Optional.of(transactionTrace));
     final JsonRpcSuccessResponse response =
         (JsonRpcSuccessResponse) debugTraceTransaction.response(request);

@@ -17,42 +17,53 @@ package org.hyperledger.besu.ethereum.api.graphql.internal.pojoadapter;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
 
-import java.util.Optional;
-
 import graphql.schema.DataFetchingEnvironment;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 
+/**
+ * Represents an empty account in the Ethereum blockchain. This class is used when an account does
+ * not exist at a specific address. It provides default values for the account's properties. It
+ * extends the {@link org.hyperledger.besu.ethereum.api.graphql.internal.pojoadapter.AccountAdapter}
+ * class.
+ *
+ * @see org.hyperledger.besu.ethereum.api.graphql.internal.pojoadapter.AccountAdapter
+ */
 public class EmptyAccountAdapter extends AccountAdapter {
   private final Address address;
 
+  /**
+   * Constructs a new EmptyAccountAdapter.
+   *
+   * @param address the address of the account
+   */
   public EmptyAccountAdapter(final Address address) {
     super(null);
     this.address = address;
   }
 
   @Override
-  public Optional<Address> getAddress() {
-    return Optional.of(address);
+  public Address getAddress() {
+    return address;
   }
 
   @Override
-  public Optional<Wei> getBalance() {
-    return Optional.of(Wei.ZERO);
+  public Wei getBalance() {
+    return Wei.ZERO;
   }
 
   @Override
-  public Optional<Long> getTransactionCount() {
-    return Optional.of(0L);
+  public Long getTransactionCount() {
+    return 0L;
   }
 
   @Override
-  public Optional<Bytes> getCode() {
-    return Optional.of(Bytes.EMPTY);
+  public Bytes getCode(final DataFetchingEnvironment environment) {
+    return Bytes.EMPTY;
   }
 
   @Override
-  public Optional<Bytes32> getStorage(final DataFetchingEnvironment environment) {
-    return Optional.of(Bytes32.ZERO);
+  public Bytes32 getStorage(final DataFetchingEnvironment environment) {
+    return Bytes32.ZERO;
   }
 }

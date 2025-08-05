@@ -21,7 +21,7 @@ import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
-import org.hyperledger.besu.ethereum.eth.sync.SyncTargetManager;
+import org.hyperledger.besu.ethereum.eth.sync.AbstractSyncTargetManager;
 import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncTarget;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
@@ -34,9 +34,10 @@ import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-class FullSyncTargetManager extends SyncTargetManager {
+class FullSyncTargetManager extends AbstractSyncTargetManager {
 
   private static final Logger LOG = LoggerFactory.getLogger(FullSyncTargetManager.class);
+  private final SynchronizerConfiguration config;
   private final ProtocolContext protocolContext;
   private final EthContext ethContext;
   private final SyncTerminationCondition terminationCondition;
@@ -49,6 +50,7 @@ class FullSyncTargetManager extends SyncTargetManager {
       final MetricsSystem metricsSystem,
       final SyncTerminationCondition terminationCondition) {
     super(config, protocolSchedule, protocolContext, ethContext, metricsSystem);
+    this.config = config;
     this.protocolContext = protocolContext;
     this.ethContext = ethContext;
     this.terminationCondition = terminationCondition;
@@ -67,7 +69,7 @@ class FullSyncTargetManager extends SyncTargetManager {
           syncTarget.peer(),
           commonAncestor.getNumber(),
           commonAncestor.getHash());
-      syncTarget.peer().disconnect(DisconnectReason.USELESS_PEER);
+      syncTarget.peer().disconnect(DisconnectReason.USELESS_PEER_WORLD_STATE_NOT_AVAILABLE);
       return Optional.empty();
     }
   }
@@ -77,7 +79,8 @@ class FullSyncTargetManager extends SyncTargetManager {
     final Optional<EthPeer> maybeBestPeer = ethContext.getEthPeers().bestPeerWithHeightEstimate();
     if (!maybeBestPeer.isPresent()) {
       LOG.info(
-          "No sync target, waiting for peers. Current peers: {}",
+          "Unable to find sync target. Waiting for {} peers minimum. Currently checking {} peers for usefulness",
+          config.getSyncMinimumPeerCount(),
           ethContext.getEthPeers().peerCount());
       return completedFuture(Optional.empty());
     } else {

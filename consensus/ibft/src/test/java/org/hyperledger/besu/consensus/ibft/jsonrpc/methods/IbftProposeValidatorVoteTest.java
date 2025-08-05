@@ -31,8 +31,8 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSucces
 
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class IbftProposeValidatorVoteTest {
   private final ValidatorProvider validatorProvider = mock(ValidatorProvider.class);
@@ -41,7 +41,7 @@ public class IbftProposeValidatorVoteTest {
   private final String JSON_RPC_VERSION = "2.0";
   private IbftProposeValidatorVote method;
 
-  @Before
+  @BeforeEach
   public void setup() {
     method = new IbftProposeValidatorVote(validatorProvider);
     when(validatorProvider.getVoteProviderAtHead()).thenReturn(Optional.of(voteProvider));
@@ -56,28 +56,28 @@ public class IbftProposeValidatorVoteTest {
   public void exceptionWhenNoParamsSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams()))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 0");
+        .hasMessage("Invalid address parameter (index 0)");
   }
 
   @Test
   public void exceptionWhenNoAuthSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams(Address.fromHexString("1"))))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 1");
+        .hasMessage("Invalid vote type parameter (index 1)");
   }
 
   @Test
   public void exceptionWhenNoAddressSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams("true")))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 0");
+        .hasMessageContaining("Invalid address parameter (index 0)");
   }
 
   @Test
   public void exceptionWhenInvalidBoolParameterSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams(Address.fromHexString("1"), "c")))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 1");
+        .hasMessageContaining("Invalid vote type parameter (index 1)");
   }
 
   @Test

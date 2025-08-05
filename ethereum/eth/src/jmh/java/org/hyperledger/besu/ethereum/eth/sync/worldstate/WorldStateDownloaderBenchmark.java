@@ -17,8 +17,8 @@ package org.hyperledger.besu.ethereum.eth.sync.worldstate;
 import static org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider.createInMemoryWorldStateArchive;
 import static org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBCLIOptions.DEFAULT_BACKGROUND_THREAD_COUNT;
 import static org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBCLIOptions.DEFAULT_CACHE_CAPACITY;
+import static org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBCLIOptions.DEFAULT_ENABLE_READ_CACHE_FOR_SNAPSHOTS;
 import static org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBCLIOptions.DEFAULT_IS_HIGH_SPEC;
-import static org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBCLIOptions.DEFAULT_MAX_BACKGROUND_COMPACTIONS;
 import static org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBCLIOptions.DEFAULT_MAX_OPEN_FILES;
 
 import org.hyperledger.besu.datatypes.Hash;
@@ -28,6 +28,7 @@ import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
 import org.hyperledger.besu.ethereum.core.MutableWorldState;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManager;
+import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestBuilder;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestUtil;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.manager.RespondingEthPeer;
@@ -39,10 +40,12 @@ import org.hyperledger.besu.ethereum.eth.sync.fastsync.worldstate.NodeDataReques
 import org.hyperledger.besu.ethereum.storage.StorageProvider;
 import org.hyperledger.besu.ethereum.storage.keyvalue.KeyValueSegmentIdentifier;
 import org.hyperledger.besu.ethereum.storage.keyvalue.KeyValueStorageProviderBuilder;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
+import org.hyperledger.besu.ethereum.trie.forest.storage.ForestWorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.worldstate.DataStorageConfiguration;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 import org.hyperledger.besu.metrics.ObservableMetricsSystem;
+import org.hyperledger.besu.metrics.SyncDurationMetrics;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDBKeyValueStorageFactory;
 import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDBMetricsFactory;
@@ -77,7 +80,7 @@ public class WorldStateDownloaderBenchmark {
   private BlockHeader blockHeader;
   private final ObservableMetricsSystem metricsSystem = new NoOpMetricsSystem();
   private WorldStateDownloader worldStateDownloader;
-  private WorldStateStorage worldStateStorage;
+  private WorldStateStorageCoordinator worldStateStorageCoordinator;
   private RespondingEthPeer peer;
   private Responder responder;
   private InMemoryTasksPriorityQueues<NodeDataRequest> pendingRequests;
@@ -93,12 +96,14 @@ public class WorldStateDownloaderBenchmark {
 
     tempDir = Files.createTempDir().toPath();
     ethProtocolManager =
-        EthProtocolManagerTestUtil.create(
-            new EthScheduler(
-                syncConfig.getDownloaderParallelism(),
-                syncConfig.getTransactionsParallelism(),
-                syncConfig.getComputationParallelism(),
-                metricsSystem));
+        EthProtocolManagerTestBuilder.builder()
+            .setEthScheduler(
+                new EthScheduler(
+                    syncConfig.getDownloaderParallelism(),
+                    syncConfig.getTransactionsParallelism(),
+                    syncConfig.getComputationParallelism(),
+                    metricsSystem))
+            .build();
 
     peer = EthProtocolManagerTestUtil.createPeer(ethProtocolManager, blockHeader.getNumber());
 
@@ -106,26 +111,28 @@ public class WorldStateDownloaderBenchmark {
 
     final StorageProvider storageProvider =
         createKeyValueStorageProvider(tempDir, tempDir.resolve("database"));
-    worldStateStorage = storageProvider.createWorldStateStorage(DataStorageFormat.FOREST);
+    worldStateStorageCoordinator =
+        storageProvider.createWorldStateStorageCoordinator(DataStorageConfiguration.DEFAULT_CONFIG);
 
     pendingRequests = new InMemoryTasksPriorityQueues<>();
     worldStateDownloader =
         new FastWorldStateDownloader(
             ethContext,
-            worldStateStorage,
+            worldStateStorageCoordinator,
             pendingRequests,
             syncConfig.getWorldStateHashCountPerRequest(),
             syncConfig.getWorldStateRequestParallelism(),
             syncConfig.getWorldStateMaxRequestsWithoutProgress(),
             syncConfig.getWorldStateMinMillisBeforeStalling(),
             Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
-            metricsSystem);
+            metricsSystem,
+            SyncDurationMetrics.NO_OP_SYNC_DURATION_METRICS);
   }
 
   private Hash createExistingWorldState() {
     // Setup existing state
     final WorldStateArchive worldStateArchive = createInMemoryWorldStateArchive();
-    final MutableWorldState worldState = worldStateArchive.getMutable();
+    final MutableWorldState worldState = worldStateArchive.getWorldState();
 
     dataGen.createRandomAccounts(worldState, 10000);
 
@@ -152,7 +159,9 @@ public class WorldStateDownloaderBenchmark {
     peer.respondWhileOtherThreadsWork(responder, () -> !result.isDone());
     result.getNow(null);
     final Optional<Bytes> rootData =
-        worldStateStorage.getNodeData(Bytes.EMPTY, blockHeader.getStateRoot());
+        worldStateStorageCoordinator
+            .getStrategy(ForestWorldStateKeyValueStorage.class)
+            .getNodeData(blockHeader.getStateRoot());
     if (rootData.isEmpty()) {
       throw new IllegalStateException("World state download did not complete.");
     }
@@ -160,19 +169,24 @@ public class WorldStateDownloaderBenchmark {
   }
 
   private StorageProvider createKeyValueStorageProvider(final Path dataDir, final Path dbDir) {
+    final var besuConfiguration = new BesuConfigurationImpl();
+    besuConfiguration.init(dataDir, dbDir, DataStorageConfiguration.DEFAULT_CONFIG);
     return new KeyValueStorageProviderBuilder()
         .withStorageFactory(
             new RocksDBKeyValueStorageFactory(
                 () ->
                     new RocksDBFactoryConfiguration(
                         DEFAULT_MAX_OPEN_FILES,
-                        DEFAULT_MAX_BACKGROUND_COMPACTIONS,
                         DEFAULT_BACKGROUND_THREAD_COUNT,
                         DEFAULT_CACHE_CAPACITY,
-                        DEFAULT_IS_HIGH_SPEC),
+                        DEFAULT_IS_HIGH_SPEC,
+                        DEFAULT_ENABLE_READ_CACHE_FOR_SNAPSHOTS,
+                        false,
+                        Optional.empty(),
+                        Optional.empty()),
                 Arrays.asList(KeyValueSegmentIdentifier.values()),
                 RocksDBMetricsFactory.PUBLIC_ROCKS_DB_METRICS))
-        .withCommonConfiguration(new BesuConfigurationImpl(dataDir, dbDir))
+        .withCommonConfiguration(besuConfiguration)
         .withMetricsSystem(new NoOpMetricsSystem())
         .build();
   }

@@ -11,20 +11,37 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evmtool;
 
-import org.hyperledger.besu.BesuInfo;
+import org.hyperledger.besu.util.BesuVersionUtils;
 
 import picocli.CommandLine;
 
+/**
+ * The VersionProvider class is responsible for providing the version of the Besu EVM tool. It
+ * implements the IVersionProvider interface from the picocli library.
+ *
+ * <p>The getVersion method returns a string array containing the version of the Besu EVM tool.
+ */
 public class VersionProvider implements CommandLine.IVersionProvider {
 
+  /**
+   * Default constructor for the VersionProvider class. This constructor does not perform any
+   * operations.
+   */
   public VersionProvider() {}
 
+  /**
+   * This method returns the version of the Besu EVM tool.
+   *
+   * @return A string array containing the version of the Besu EVM tool.
+   */
   @Override
   public String[] getVersion() {
-    return new String[] {"Hyperledger Besu EvmTool", BesuInfo.version()};
+    // This version string is used in the execution spec tests to identify the client.
+    // If modified, update the `detect_binary_pattern` variable in the following repository:
+    // https://github.com/ethereum/execution-spec-tests/blob/main/src/ethereum_clis/clis/besu.py
+    return new String[] {"Besu evm " + BesuVersionUtils.shortVersion()};
   }
 }

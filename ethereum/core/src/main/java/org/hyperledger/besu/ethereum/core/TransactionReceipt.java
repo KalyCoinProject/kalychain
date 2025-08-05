@@ -15,16 +15,10 @@
 package org.hyperledger.besu.ethereum.core;
 
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.TransactionType;
 import org.hyperledger.besu.ethereum.mainnet.TransactionReceiptType;
-import org.hyperledger.besu.ethereum.rlp.BytesValueRLPInput;
-import org.hyperledger.besu.ethereum.rlp.RLP;
-import org.hyperledger.besu.ethereum.rlp.RLPException;
-import org.hyperledger.besu.ethereum.rlp.RLPInput;
-import org.hyperledger.besu.ethereum.rlp.RLPOutput;
 import org.hyperledger.besu.evm.log.Log;
 import org.hyperledger.besu.evm.log.LogsBloomFilter;
-import org.hyperledger.besu.plugin.data.Address;
-import org.hyperledger.besu.plugin.data.TransactionType;
 
 import java.util.List;
 import java.util.Objects;
@@ -33,7 +27,6 @@ import java.util.stream.Collectors;
 
 import com.google.common.base.MoreObjects;
 import org.apache.tuweni.bytes.Bytes;
-import org.apache.tuweni.bytes.Bytes32;
 
 /**
  * A transaction receipt, containing information pertaining a transaction execution.
@@ -82,7 +75,7 @@ public class TransactionReceipt implements org.hyperledger.besu.plugin.data.Tran
         revertReason);
   }
 
-  private TransactionReceipt(
+  public TransactionReceipt(
       final TransactionType transactionType,
       final Hash stateRoot,
       final long cumulativeGasUsed,
@@ -167,108 +160,12 @@ public class TransactionReceipt implements org.hyperledger.besu.plugin.data.Tran
   }
 
   /**
-   * Write an RLP representation.
+   * Returns the transaction type
    *
-   * @param out The RLP output to write to
+   * @return the transaction type
    */
-  public void writeTo(final RLPOutput out) {
-    writeTo(out, false);
-  }
-
-  public void writeToWithRevertReason(final RLPOutput out) {
-    writeTo(out, true);
-  }
-
-  private void writeTo(final RLPOutput rlpOutput, final boolean withRevertReason) {
-    if (transactionType.equals(TransactionType.FRONTIER)) {
-      writeToForReceiptTrie(rlpOutput, withRevertReason);
-    } else {
-      rlpOutput.writeBytes(RLP.encode(out -> writeToForReceiptTrie(out, withRevertReason)));
-    }
-  }
-
-  public void writeToForReceiptTrie(final RLPOutput rlpOutput, final boolean withRevertReason) {
-    if (!transactionType.equals(TransactionType.FRONTIER)) {
-      rlpOutput.writeIntScalar(transactionType.getSerializedType());
-    }
-
-    rlpOutput.startList();
-
-    // Determine whether it's a state root-encoded transaction receipt
-    // or is a status code-encoded transaction receipt.
-    if (stateRoot != null) {
-      rlpOutput.writeBytes(stateRoot);
-    } else {
-      rlpOutput.writeLongScalar(status);
-    }
-    rlpOutput.writeLongScalar(cumulativeGasUsed);
-    rlpOutput.writeBytes(bloomFilter);
-    rlpOutput.writeList(logs, Log::writeTo);
-    if (withRevertReason && revertReason.isPresent()) {
-      rlpOutput.writeBytes(revertReason.get());
-    }
-    rlpOutput.endList();
-  }
-
-  /**
-   * Creates a transaction receipt for the given RLP
-   *
-   * @param input the RLP-encoded transaction receipt
-   * @return the transaction receipt
-   */
-  public static TransactionReceipt readFrom(final RLPInput input) {
-    return readFrom(input, true);
-  }
-
-  /**
-   * Creates a transaction receipt for the given RLP
-   *
-   * @param rlpInput the RLP-encoded transaction receipt
-   * @param revertReasonAllowed whether the rlp input is allowed to have a revert reason
-   * @return the transaction receipt
-   */
-  public static TransactionReceipt readFrom(
-      final RLPInput rlpInput, final boolean revertReasonAllowed) {
-    RLPInput input = rlpInput;
-    TransactionType transactionType = TransactionType.FRONTIER;
-    if (!rlpInput.nextIsList()) {
-      final Bytes typedTransactionReceiptBytes = input.readBytes();
-      transactionType = TransactionType.of(typedTransactionReceiptBytes.get(0));
-      input = new BytesValueRLPInput(typedTransactionReceiptBytes.slice(1), false);
-    }
-
-    input.enterList();
-    // Get the first element to check later to determine the
-    // correct transaction receipt encoding to use.
-    final RLPInput firstElement = input.readAsRlp();
-    final long cumulativeGas = input.readLongScalar();
-    // The logs below will populate the bloom filter upon construction.
-    // TODO consider validating that the logs and bloom filter match.
-    final LogsBloomFilter bloomFilter = LogsBloomFilter.readFrom(input);
-    final List<Log> logs = input.readList(Log::readFrom);
-    final Optional<Bytes> revertReason;
-    if (input.isEndOfCurrentList()) {
-      revertReason = Optional.empty();
-    } else {
-      if (!revertReasonAllowed) {
-        throw new RLPException("Unexpected value at end of TransactionReceipt");
-      }
-      revertReason = Optional.of(input.readBytes());
-    }
-
-    // Status code-encoded transaction receipts have a single
-    // byte for success (0x01) or failure (0x80).
-    if (firstElement.raw().size() == 1) {
-      final int status = firstElement.readIntScalar();
-      input.leaveList();
-      return new TransactionReceipt(
-          transactionType, status, cumulativeGas, logs, bloomFilter, revertReason);
-    } else {
-      final Hash stateRoot = Hash.wrap(firstElement.readBytes32());
-      input.leaveList();
-      return new TransactionReceipt(
-          transactionType, stateRoot, cumulativeGas, logs, bloomFilter, revertReason);
-    }
+  public TransactionType getTransactionType() {
+    return transactionType;
   }
 
   /**
@@ -368,29 +265,5 @@ public class TransactionReceipt implements org.hyperledger.besu.plugin.data.Tran
         .add("status", status)
         .add("transactionReceiptType", transactionReceiptType)
         .toString();
-  }
-}
-
-class LogsWrapper implements org.hyperledger.besu.plugin.data.Log {
-
-  final Log delegate;
-
-  LogsWrapper(final Log delegate) {
-    this.delegate = delegate;
-  }
-
-  @Override
-  public Address getLogger() {
-    return delegate.getLogger();
-  }
-
-  @Override
-  public List<? extends Bytes32> getTopics() {
-    return delegate.getTopics();
-  }
-
-  @Override
-  public Bytes getData() {
-    return delegate.getData();
   }
 }

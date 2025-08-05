@@ -31,11 +31,23 @@ import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Message;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MessageData;
 
+/** The Ibft controller. */
 public class IbftController extends BaseBftController {
 
   private BaseIbftBlockHeightManager currentHeightManager;
   private final IbftBlockHeightManagerFactory ibftBlockHeightManagerFactory;
 
+  /**
+   * Instantiates a new Ibft controller.
+   *
+   * @param blockchain the blockchain
+   * @param bftFinalState the bft final state
+   * @param ibftBlockHeightManagerFactory the ibft block height manager factory
+   * @param gossiper the gossiper
+   * @param duplicateMessageTracker the duplicate message tracker
+   * @param futureMessageBuffer the future message buffer
+   * @param synchronizerUpdater the synchronizer updater
+   */
   public IbftController(
       final Blockchain blockchain,
       final BftFinalState bftFinalState,
@@ -43,7 +55,7 @@ public class IbftController extends BaseBftController {
       final Gossiper gossiper,
       final MessageTracker duplicateMessageTracker,
       final FutureMessageBuffer futureMessageBuffer,
-      final SynchronizerUpdater sychronizerUpdater) {
+      final SynchronizerUpdater synchronizerUpdater) {
 
     super(
         blockchain,
@@ -51,7 +63,7 @@ public class IbftController extends BaseBftController {
         gossiper,
         duplicateMessageTracker,
         futureMessageBuffer,
-        sychronizerUpdater);
+        synchronizerUpdater);
     this.ibftBlockHeightManagerFactory = ibftBlockHeightManagerFactory;
   }
 
@@ -104,5 +116,10 @@ public class IbftController extends BaseBftController {
   @Override
   protected BaseBlockHeightManager getCurrentHeightManager() {
     return currentHeightManager;
+  }
+
+  @Override
+  protected void stopCurrentHeightManager(final BlockHeader parentHeader) {
+    currentHeightManager = ibftBlockHeightManagerFactory.createNoOpBlockHeightManager(parentHeader);
   }
 }

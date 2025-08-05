@@ -12,7 +12,6 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.nat.core.domain;
 
 /**
@@ -24,6 +23,8 @@ package org.hyperledger.besu.nat.core.domain;
  * </ul>
  */
 public enum NetworkProtocol {
+  /** Tcp network protocol. */
   TCP,
+  /** Udp network protocol. */
   UDP
 }

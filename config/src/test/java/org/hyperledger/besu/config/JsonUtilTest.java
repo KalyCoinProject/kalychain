@@ -17,6 +17,9 @@ package org.hyperledger.besu.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -30,7 +33,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 public class JsonUtilTest {
   private final ObjectMapper mapper = new ObjectMapper();
@@ -139,6 +143,36 @@ public class JsonUtilTest {
         mapper.createObjectNode().set("array", mapper.createArrayNode().add("StrIng"));
 
     final ObjectNode normalizedObj = JsonUtil.normalizeKeys(originalObj);
+
+    assertThat(normalizedObj).isEqualTo(expectedObj);
+  }
+
+  @Test
+  public void normalizeKeys_predicate() {
+    final ObjectNode originalObj =
+        mapper
+            .createObjectNode()
+            .put("Ant", "Tiny")
+            .put("Ape", "Smart")
+            .put("Armadillo", "Armored")
+            .put("Cat", "Meow")
+            .put("Bat", "Flying")
+            .put("Cow", "Moo")
+            .put("Crocodile", "Snap")
+            .put("Bear", "Strong")
+            .put("Cheetah", "Fast")
+            .put("Beaver", "Builder");
+
+    final ObjectNode expectedObj =
+        mapper
+            .createObjectNode()
+            .put("cat", "Meow")
+            .put("cow", "Moo")
+            .put("cheetah", "Fast")
+            .put("crocodile", "Snap");
+
+    final ObjectNode normalizedObj =
+        JsonUtil.normalizeKeys(originalObj, s -> s.getKey().startsWith("C"));
 
     assertThat(normalizedObj).isEqualTo(expectedObj);
   }
@@ -652,6 +686,41 @@ public class JsonUtilTest {
     final ObjectNode result = JsonUtil.objectNodeFromString(jsonStr, true);
     assertThat(result.get("a").asInt()).isEqualTo(1);
     assertThat(result.get("b").asInt()).isEqualTo(2);
+  }
+
+  @Test
+  public void objectNodeFromString_excludingField() {
+    final String jsonStr =
+        """
+      {
+        "a":1,
+        "b":2,
+        "c":3
+      }
+      """;
+
+    final ObjectNode result = JsonUtil.objectNodeFromString(jsonStr, false, "b");
+    assertThat(result.get("a").asInt()).isEqualTo(1);
+    assertThat(result.has("b")).isFalse();
+    assertThat(result.get("c").asInt()).isEqualTo(3);
+  }
+
+  @Test
+  public void objectNodeFromURL_excludingField(@TempDir final Path folder) throws IOException {
+    final String jsonStr =
+        """
+      {
+        "a":1,
+        "b":2,
+        "c":3
+      }
+      """;
+    final var genesisFile = Files.writeString(folder.resolve("genesis.json"), jsonStr);
+
+    final ObjectNode result = JsonUtil.objectNodeFromURL(genesisFile.toUri().toURL(), false, "b");
+    assertThat(result.get("a").asInt()).isEqualTo(1);
+    assertThat(result.has("b")).isFalse();
+    assertThat(result.get("c").asInt()).isEqualTo(3);
   }
 
   @Test

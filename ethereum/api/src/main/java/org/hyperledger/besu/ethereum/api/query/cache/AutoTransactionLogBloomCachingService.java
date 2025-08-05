@@ -67,7 +67,7 @@ public class AutoTransactionLogBloomCachingService {
               blockchain.observeBlockAdded(
                   event -> {
                     if (event.isNewCanonicalHead()) {
-                      final BlockHeader eventBlockHeader = event.getBlock().getHeader();
+                      final BlockHeader eventBlockHeader = event.getHeader();
                       final Optional<BlockHeader> commonAncestorBlockHeader =
                           blockchain.getBlockHeader(event.getCommonAncestorHash());
                       transactionLogBloomCacher.cacheLogsBloomForBlockHeader(
@@ -77,7 +77,17 @@ public class AutoTransactionLogBloomCachingService {
 
       transactionLogBloomCacher
           .getScheduler()
-          .scheduleFutureTask(transactionLogBloomCacher::cacheAll, Duration.ofMinutes(1));
+          .scheduleFutureTask(
+              () ->
+                  // run long tasks in the computation executor
+                  transactionLogBloomCacher
+                      .getScheduler()
+                      .scheduleComputationTask(
+                          () -> {
+                            transactionLogBloomCacher.cacheAll();
+                            return null;
+                          }),
+              Duration.ofMinutes(1));
     } catch (final IOException e) {
       LOG.error("Unhandled caching exception.", e);
     }

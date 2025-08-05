@@ -24,12 +24,14 @@ import org.hyperledger.besu.ethereum.core.ProtocolScheduleFixture;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.RawMessage;
 import org.hyperledger.besu.ethereum.rlp.BytesValueRLPOutput;
+import org.hyperledger.besu.util.number.ByteUnits;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class NewBlockMessageTest {
-  private static final ProtocolSchedule protocolSchedule = ProtocolScheduleFixture.MAINNET;
+  private static final ProtocolSchedule protocolSchedule = ProtocolScheduleFixture.TESTING_NETWORK;
+  private static final int maxMessageSize = 10 * ByteUnits.MEGABYTE;
 
   @Test
   public void roundTripNewBlockMessage() {
@@ -37,8 +39,9 @@ public class NewBlockMessageTest {
     final BlockDataGenerator blockGenerator = new BlockDataGenerator();
     final Block blockForInsertion = blockGenerator.block();
 
-    final NewBlockMessage msg = NewBlockMessage.create(blockForInsertion, totalDifficulty);
-    assertThat(msg.getCode()).isEqualTo(EthPV62.NEW_BLOCK);
+    final NewBlockMessage msg =
+        NewBlockMessage.create(blockForInsertion, totalDifficulty, maxMessageSize);
+    assertThat(msg.getCode()).isEqualTo(EthProtocolMessages.NEW_BLOCK);
     assertThat(msg.totalDifficulty(protocolSchedule)).isEqualTo(totalDifficulty);
     final Block extractedBlock = msg.block(protocolSchedule);
     assertThat(extractedBlock).isEqualTo(blockForInsertion);
@@ -56,11 +59,11 @@ public class NewBlockMessageTest {
     tmp.writeUInt256Scalar(totalDifficulty);
     tmp.endList();
 
-    final RawMessage rawMsg = new RawMessage(EthPV62.NEW_BLOCK, tmp.encoded());
+    final RawMessage rawMsg = new RawMessage(EthProtocolMessages.NEW_BLOCK, tmp.encoded());
 
     final NewBlockMessage newBlockMsg = NewBlockMessage.readFrom(rawMsg);
 
-    assertThat(newBlockMsg.getCode()).isEqualTo(EthPV62.NEW_BLOCK);
+    assertThat(newBlockMsg.getCode()).isEqualTo(EthProtocolMessages.NEW_BLOCK);
     assertThat(newBlockMsg.totalDifficulty(protocolSchedule)).isEqualTo(totalDifficulty);
     final Block extractedBlock = newBlockMsg.block(protocolSchedule);
     assertThat(extractedBlock).isEqualTo(blockForInsertion);
@@ -68,9 +71,19 @@ public class NewBlockMessageTest {
 
   @Test
   public void readFromMessageWithWrongCodeThrows() {
-    final RawMessage rawMsg = new RawMessage(EthPV62.BLOCK_HEADERS, Bytes.of(0));
+    final RawMessage rawMsg = new RawMessage(EthProtocolMessages.BLOCK_HEADERS, Bytes.of(0));
 
     assertThatExceptionOfType(IllegalArgumentException.class)
         .isThrownBy(() -> NewBlockMessage.readFrom(rawMsg));
+  }
+
+  @Test
+  public void createBlockMessageLargerThanLimitThrows() {
+    final Difficulty totalDifficulty = Difficulty.of(98765);
+    final BlockDataGenerator blockGenerator = new BlockDataGenerator();
+    final Block newBlock = blockGenerator.block();
+
+    assertThatExceptionOfType(IllegalArgumentException.class)
+        .isThrownBy(() -> NewBlockMessage.create(newBlock, totalDifficulty, 1));
   }
 }

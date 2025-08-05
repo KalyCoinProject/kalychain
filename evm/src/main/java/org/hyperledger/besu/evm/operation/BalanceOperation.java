@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -20,18 +20,30 @@ import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
-import org.hyperledger.besu.evm.internal.FixedStack.OverflowException;
-import org.hyperledger.besu.evm.internal.FixedStack.UnderflowException;
+import org.hyperledger.besu.evm.internal.OverflowException;
+import org.hyperledger.besu.evm.internal.UnderflowException;
 import org.hyperledger.besu.evm.internal.Words;
 
-import org.apache.tuweni.units.bigints.UInt256;
+import org.apache.tuweni.bytes.Bytes;
 
+/** The Balance operation. */
 public class BalanceOperation extends AbstractOperation {
 
+  /**
+   * Instantiates a new Balance operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public BalanceOperation(final GasCalculator gasCalculator) {
-    super(0x31, "BALANCE", 1, 1, 1, gasCalculator);
+    super(0x31, "BALANCE", 1, 1, gasCalculator);
   }
 
+  /**
+   * Gets Balance operation Gas Cost plus warm storage read cost or cold account access cost.
+   *
+   * @param accountIsWarm true to add warm storage read cost, false to add cold account access cost
+   * @return the long
+   */
   protected long cost(final boolean accountIsWarm) {
     return gasCalculator().getBalanceOperationGasCost()
         + (accountIsWarm
@@ -50,7 +62,7 @@ public class BalanceOperation extends AbstractOperation {
         return new OperationResult(cost, ExceptionalHaltReason.INSUFFICIENT_GAS);
       } else {
         final Account account = frame.getWorldUpdater().get(address);
-        frame.pushStackItem(account == null ? UInt256.ZERO : account.getBalance());
+        frame.pushStackItem(account == null ? Bytes.EMPTY : account.getBalance());
         return new OperationResult(cost, null);
       }
     } catch (final UnderflowException ufe) {

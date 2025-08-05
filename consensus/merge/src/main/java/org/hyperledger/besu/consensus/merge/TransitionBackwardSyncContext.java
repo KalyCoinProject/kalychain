@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,6 +18,7 @@ import org.hyperledger.besu.ethereum.BlockValidator;
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
+import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.eth.sync.backwardsync.BackwardChain;
 import org.hyperledger.besu.ethereum.eth.sync.backwardsync.BackwardSyncContext;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncState;
@@ -25,13 +26,25 @@ import org.hyperledger.besu.ethereum.mainnet.ScheduleBasedBlockHeaderFunctions;
 import org.hyperledger.besu.ethereum.storage.StorageProvider;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 
+/** The Transition backward sync context. */
 public class TransitionBackwardSyncContext extends BackwardSyncContext {
 
   private final TransitionProtocolSchedule transitionProtocolSchedule;
 
+  /**
+   * Instantiates a new Transition backward sync context.
+   *
+   * @param protocolContext the protocol context
+   * @param transitionProtocolSchedule the transition protocol schedule
+   * @param metricsSystem the metrics system
+   * @param ethContext the eth context
+   * @param syncState the sync state
+   * @param storageProvider the storage provider
+   */
   public TransitionBackwardSyncContext(
       final ProtocolContext protocolContext,
       final TransitionProtocolSchedule transitionProtocolSchedule,
+      final SynchronizerConfiguration synchronizerConfiguration,
       final MetricsSystem metricsSystem,
       final EthContext ethContext,
       final SyncState syncState,
@@ -39,6 +52,7 @@ public class TransitionBackwardSyncContext extends BackwardSyncContext {
     super(
         protocolContext,
         transitionProtocolSchedule,
+        synchronizerConfiguration,
         metricsSystem,
         ethContext,
         syncState,
@@ -54,7 +68,7 @@ public class TransitionBackwardSyncContext extends BackwardSyncContext {
   @Override
   public BlockValidator getBlockValidatorForBlock(final Block block) {
     return transitionProtocolSchedule
-        .getByBlockHeader(protocolContext, block.getHeader())
+        .getByBlockHeaderWithTransitionReorgHandling(block.getHeader())
         .getBlockValidator();
   }
 }

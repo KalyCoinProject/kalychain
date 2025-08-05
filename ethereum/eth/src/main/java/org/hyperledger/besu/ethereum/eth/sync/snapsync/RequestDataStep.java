@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -27,43 +27,57 @@ import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.AccountRangeDataR
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.BytecodeRequest;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.SnapDataRequest;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.StorageRangeDataRequest;
-import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.TrieNodeDataRequest;
-import org.hyperledger.besu.ethereum.eth.sync.worldstate.WorldDownloadState;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.AccountFlatDatabaseHealingRangeRequest;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.StorageFlatDatabaseHealingRangeRequest;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.TrieNodeHealingRequest;
 import org.hyperledger.besu.ethereum.proof.WorldStateProofProvider;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.trie.RangeManager;
+import org.hyperledger.besu.ethereum.worldstate.FlatDbMode;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.services.tasks.Task;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import com.google.common.collect.Lists;
 import kotlin.collections.ArrayDeque;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class RequestDataStep {
-
-  private final SnapSyncState fastSyncState;
-  private final WorldDownloadState<SnapDataRequest> downloadState;
+  private static final Logger LOG = LoggerFactory.getLogger(RequestDataStep.class);
+  private final WorldStateStorageCoordinator worldStateStorageCoordinator;
+  private final SnapSyncProcessState fastSyncState;
+  private final SnapWorldDownloadState downloadState;
+  private final SnapSyncConfiguration snapSyncConfiguration;
   private final MetricsSystem metricsSystem;
   private final EthContext ethContext;
   private final WorldStateProofProvider worldStateProofProvider;
 
   public RequestDataStep(
       final EthContext ethContext,
-      final WorldStateStorage worldStateStorage,
-      final SnapSyncState fastSyncState,
-      final WorldDownloadState<SnapDataRequest> downloadState,
+      final WorldStateStorageCoordinator worldStateStorageCoordinator,
+      final SnapSyncProcessState fastSyncState,
+      final SnapWorldDownloadState downloadState,
+      final SnapSyncConfiguration snapSyncConfiguration,
       final MetricsSystem metricsSystem) {
+    this.worldStateStorageCoordinator = worldStateStorageCoordinator;
     this.fastSyncState = fastSyncState;
     this.downloadState = downloadState;
+    this.snapSyncConfiguration = snapSyncConfiguration;
     this.metricsSystem = metricsSystem;
     this.ethContext = ethContext;
-    this.worldStateProofProvider = new WorldStateProofProvider(worldStateStorage);
+    this.worldStateProofProvider = new WorldStateProofProvider(worldStateStorageCoordinator);
   }
 
   public CompletableFuture<Task<SnapDataRequest>> requestAccount(
@@ -82,13 +96,22 @@ public class RequestDataStep {
     downloadState.addOutstandingTask(getAccountTask);
     return getAccountTask
         .run()
+        .orTimeout(10, TimeUnit.SECONDS)
         .handle(
             (response, error) -> {
+              downloadState.removeOutstandingTask(getAccountTask);
               if (response != null) {
-                downloadState.removeOutstandingTask(getAccountTask);
                 accountDataRequest.setRootHash(blockHeader.getStateRoot());
                 accountDataRequest.addResponse(
                     worldStateProofProvider, response.accounts(), response.proofs());
+              }
+              if (error != null) {
+                LOG.atDebug()
+                    .setMessage("Error handling account download accounts ({} - {}) task: {}")
+                    .addArgument(accountDataRequest.getStartKeyHash())
+                    .addArgument(accountDataRequest.getEndKeyHash())
+                    .addArgument(error)
+                    .log();
               }
               return requestTask;
             });
@@ -117,20 +140,46 @@ public class RequestDataStep {
     downloadState.addOutstandingTask(getStorageRangeTask);
     return getStorageRangeTask
         .run()
+        .orTimeout(10, TimeUnit.SECONDS)
         .handle(
             (response, error) -> {
+              downloadState.removeOutstandingTask(getStorageRangeTask);
               if (response != null) {
-                downloadState.removeOutstandingTask(getStorageRangeTask);
-                for (int i = 0; i < response.slots().size(); i++) {
-                  final StorageRangeDataRequest request =
-                      (StorageRangeDataRequest) requestTasks.get(i).getData();
-                  request.setRootHash(blockHeader.getStateRoot());
-                  request.addResponse(
-                      downloadState,
-                      worldStateProofProvider,
-                      response.slots().get(i),
-                      i < response.slots().size() - 1 ? new ArrayDeque<>() : response.proofs());
+                final ArrayDeque<NavigableMap<Bytes32, Bytes>> slots = new ArrayDeque<>();
+                /*
+                 * Checks if the response represents an "empty range".
+                 *
+                 * An "empty range" is defined as a response where at least one proof exists
+                 * and either no slots are present, or the first slot is empty
+                 */
+                try {
+                  final boolean isEmptyRange =
+                      (response.slots().isEmpty() || response.slots().get(0).isEmpty())
+                          && !response.proofs().isEmpty();
+                  if (isEmptyRange) { // empty range detected
+                    slots.add(new TreeMap<>());
+                  } else {
+                    slots.addAll(response.slots());
+                  }
+                  for (int i = 0; i < slots.size(); i++) {
+                    final StorageRangeDataRequest request =
+                        (StorageRangeDataRequest) requestTasks.get(i).getData();
+                    request.setRootHash(blockHeader.getStateRoot());
+                    request.addResponse(
+                        downloadState,
+                        worldStateProofProvider,
+                        slots.get(i),
+                        i < slots.size() - 1 ? new ArrayDeque<>() : response.proofs());
+                  }
+                } catch (final Exception e) {
+                  LOG.error("Error while processing storage range response", e);
                 }
+              }
+              if (error != null) {
+                LOG.atDebug()
+                    .setMessage("Error handling storage range request task: {}")
+                    .addArgument(error)
+                    .log();
               }
               return requestTasks;
             });
@@ -152,10 +201,11 @@ public class RequestDataStep {
     downloadState.addOutstandingTask(getByteCodeTask);
     return getByteCodeTask
         .run()
+        .orTimeout(10, TimeUnit.SECONDS)
         .handle(
             (response, error) -> {
+              downloadState.removeOutstandingTask(getByteCodeTask);
               if (response != null) {
-                downloadState.removeOutstandingTask(getByteCodeTask);
                 for (Task<SnapDataRequest> requestTask : requestTasks) {
                   final BytecodeRequest request = (BytecodeRequest) requestTask.getData();
                   request.setRootHash(blockHeader.getStateRoot());
@@ -163,6 +213,12 @@ public class RequestDataStep {
                     request.setCode(response.get(request.getCodeHash()));
                   }
                 }
+              }
+              if (error != null) {
+                LOG.atDebug()
+                    .setMessage("Error handling code request task: {}")
+                    .addArgument(error)
+                    .log();
               }
               return requestTasks;
             });
@@ -175,8 +231,8 @@ public class RequestDataStep {
     final Map<Bytes, List<Bytes>> message = new HashMap<>();
     requestTasks.stream()
         .map(Task::getData)
-        .map(TrieNodeDataRequest.class::cast)
-        .map(TrieNodeDataRequest::getTrieNodePath)
+        .map(TrieNodeHealingRequest.class::cast)
+        .map(TrieNodeHealingRequest::getTrieNodePath)
         .forEach(
             path -> {
               final List<Bytes> bytes =
@@ -191,19 +247,118 @@ public class RequestDataStep {
     downloadState.addOutstandingTask(getTrieNodeFromPeerTask);
     return getTrieNodeFromPeerTask
         .run()
+        .orTimeout(10, TimeUnit.SECONDS)
         .handle(
             (response, error) -> {
+              downloadState.removeOutstandingTask(getTrieNodeFromPeerTask);
               if (response != null) {
-                downloadState.removeOutstandingTask(getTrieNodeFromPeerTask);
                 for (final Task<SnapDataRequest> task : requestTasks) {
-                  final TrieNodeDataRequest request = (TrieNodeDataRequest) task.getData();
+                  final TrieNodeHealingRequest request = (TrieNodeHealingRequest) task.getData();
                   final Bytes matchingData = response.get(request.getPathId());
                   if (matchingData != null) {
                     request.setData(matchingData);
                   }
                 }
               }
+              if (error != null) {
+                LOG.atDebug()
+                    .setMessage("Error handling trie node request task: {}")
+                    .addArgument(error)
+                    .log();
+              }
               return requestTasks;
             });
+  }
+
+  /**
+   * Retrieves local accounts from the flat database and generates the necessary proof, updates the
+   * data request with the retrieved information, and returns the modified data request task.
+   *
+   * @param requestTask request data to fill
+   * @return data request with local accounts
+   */
+  public CompletableFuture<Task<SnapDataRequest>> requestLocalFlatAccounts(
+      final Task<SnapDataRequest> requestTask) {
+
+    final AccountFlatDatabaseHealingRangeRequest accountDataRequest =
+        (AccountFlatDatabaseHealingRangeRequest) requestTask.getData();
+    final BlockHeader blockHeader = fastSyncState.getPivotBlockHeader().get();
+
+    // retrieve accounts from flat database
+    final TreeMap<Bytes32, Bytes> accounts = new TreeMap<>();
+
+    worldStateStorageCoordinator.applyOnMatchingFlatMode(
+        FlatDbMode.FULL,
+        onBonsai -> {
+          accounts.putAll(
+              onBonsai.streamFlatAccounts(
+                  accountDataRequest.getStartKeyHash(),
+                  accountDataRequest.getEndKeyHash(),
+                  snapSyncConfiguration.getLocalFlatAccountCountToHealPerRequest()));
+        });
+
+    final List<Bytes> proofs = new ArrayList<>();
+    if (!accounts.isEmpty()) {
+      // generate range proof if accounts are present
+      proofs.addAll(
+          worldStateProofProvider.getAccountProofRelatedNodes(
+              blockHeader.getStateRoot(), accounts.firstKey()));
+      proofs.addAll(
+          worldStateProofProvider.getAccountProofRelatedNodes(
+              blockHeader.getStateRoot(), accounts.lastKey()));
+    }
+
+    accountDataRequest.setRootHash(blockHeader.getStateRoot());
+    accountDataRequest.addLocalData(worldStateProofProvider, accounts, new ArrayDeque<>(proofs));
+
+    return CompletableFuture.completedFuture(requestTask);
+  }
+
+  /**
+   * Retrieves local storage slots from the flat database and generates the necessary proof, updates
+   * the data request with the retrieved information, and returns the modified data request task.
+   *
+   * @param requestTask request data to fill
+   * @return data request with local slots
+   */
+  public CompletableFuture<Task<SnapDataRequest>> requestLocalFlatStorages(
+      final Task<SnapDataRequest> requestTask) {
+
+    final StorageFlatDatabaseHealingRangeRequest storageDataRequest =
+        (StorageFlatDatabaseHealingRangeRequest) requestTask.getData();
+    final BlockHeader blockHeader = fastSyncState.getPivotBlockHeader().get();
+
+    storageDataRequest.setRootHash(blockHeader.getStateRoot());
+
+    // retrieve slots from flat database
+    final TreeMap<Bytes32, Bytes> slots = new TreeMap<>();
+    worldStateStorageCoordinator.applyOnMatchingFlatMode(
+        FlatDbMode.FULL,
+        onBonsai -> {
+          slots.putAll(
+              onBonsai.streamFlatStorages(
+                  storageDataRequest.getAccountHash(),
+                  storageDataRequest.getStartKeyHash(),
+                  storageDataRequest.getEndKeyHash(),
+                  snapSyncConfiguration.getLocalFlatStorageCountToHealPerRequest()));
+        });
+
+    final List<Bytes> proofs = new ArrayList<>();
+    if (!slots.isEmpty()) {
+      // generate range proof if slots are present
+      proofs.addAll(
+          worldStateProofProvider.getStorageProofRelatedNodes(
+              storageDataRequest.getStorageRoot(),
+              storageDataRequest.getAccountHash(),
+              slots.firstKey()));
+      proofs.addAll(
+          worldStateProofProvider.getStorageProofRelatedNodes(
+              storageDataRequest.getStorageRoot(),
+              storageDataRequest.getAccountHash(),
+              slots.lastKey()));
+    }
+    storageDataRequest.addLocalData(worldStateProofProvider, slots, new ArrayDeque<>(proofs));
+
+    return CompletableFuture.completedFuture(requestTask);
   }
 }

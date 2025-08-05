@@ -14,6 +14,7 @@
  */
 package org.hyperledger.besu.ethereum.api.handlers;
 
+import org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.authentication.AuthenticationService;
 import org.hyperledger.besu.ethereum.api.jsonrpc.execution.JsonRpcExecutor;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
@@ -21,6 +22,7 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.opentelemetry.api.trace.Tracer;
@@ -34,7 +36,8 @@ public class HandlerFactory {
     assert methods != null && globalOptions != null;
     return TimeoutHandler.handler(
         Optional.of(globalOptions),
-        methods.keySet().stream().collect(Collectors.toMap(String::new, ignored -> globalOptions)));
+        methods.keySet().stream()
+            .collect(Collectors.toMap(Function.identity(), ignored -> globalOptions)));
   }
 
   public static Handler<RoutingContext> authentication(
@@ -47,7 +50,9 @@ public class HandlerFactory {
   }
 
   public static Handler<RoutingContext> jsonRpcExecutor(
-      final JsonRpcExecutor jsonRpcExecutor, final Tracer tracer) {
-    return JsonRpcExecutorHandler.handler(jsonRpcExecutor, tracer);
+      final JsonRpcExecutor jsonRpcExecutor,
+      final Tracer tracer,
+      final JsonRpcConfiguration jsonRpcConfiguration) {
+    return JsonRpcExecutorHandler.handler(jsonRpcExecutor, tracer, jsonRpcConfiguration);
   }
 }

@@ -27,9 +27,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import javax.annotation.Nonnull;
 
+import jakarta.validation.constraints.NotNull;
 import org.apache.tuweni.bytes.Bytes;
+import org.owasp.encoder.Encode;
 
 /**
  * Encapsulates information about a peer, including their protocol version, client ID, capabilities
@@ -40,9 +41,11 @@ import org.apache.tuweni.bytes.Bytes;
 public class PeerInfo implements Comparable<PeerInfo> {
   private final int version;
   private final String clientId;
+  private final PeerClientName clientName;
   private final List<Capability> capabilities;
   private final int port;
   private final Bytes nodeId;
+  private Address address = null;
 
   public PeerInfo(
       final int version,
@@ -55,6 +58,7 @@ public class PeerInfo implements Comparable<PeerInfo> {
     this.capabilities = capabilities;
     this.port = port;
     this.nodeId = nodeId;
+    this.clientName = detectClientName(clientId);
   }
 
   public static PeerInfo readFrom(final RLPInput in) {
@@ -97,9 +101,16 @@ public class PeerInfo implements Comparable<PeerInfo> {
   }
 
   public Address getAddress() {
-    final SECPPublicKey remotePublicKey =
-        SignatureAlgorithmFactory.getInstance().createPublicKey(nodeId);
-    return Util.publicKeyToAddress(remotePublicKey);
+    if (address == null) {
+      final SECPPublicKey remotePublicKey =
+          SignatureAlgorithmFactory.getInstance().createPublicKey(nodeId);
+      address = Util.publicKeyToAddress(remotePublicKey);
+    }
+    return address;
+  }
+
+  public PeerClientName getClientName() {
+    return clientName;
   }
 
   public void writeTo(final RLPOutput out) {
@@ -113,10 +124,11 @@ public class PeerInfo implements Comparable<PeerInfo> {
   }
 
   @Override
+  // Returned string is sanitized since it contains user input
   public String toString() {
     final StringBuilder sb = new StringBuilder("PeerInfo{");
     sb.append("version=").append(version);
-    sb.append(", clientId='").append(clientId).append('\'');
+    sb.append(", clientId='").append(Encode.forJava(clientId)).append('\'');
     sb.append(", capabilities=").append(capabilities);
     sb.append(", port=").append(port);
     sb.append(", nodeId=").append(nodeId);
@@ -146,7 +158,13 @@ public class PeerInfo implements Comparable<PeerInfo> {
   }
 
   @Override
-  public int compareTo(final @Nonnull PeerInfo peerInfo) {
+  public int compareTo(final @NotNull PeerInfo peerInfo) {
     return this.nodeId.compareTo(peerInfo.nodeId);
+  }
+
+  private static PeerClientName detectClientName(final String clientId) {
+    final var idxSeparator = clientId.indexOf('/');
+    final var agentName = idxSeparator == -1 ? clientId : clientId.substring(0, idxSeparator);
+    return PeerClientName.fromAgentName(agentName);
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -12,7 +12,6 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.consensus.merge.headervalidationrules;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,20 +27,20 @@ import org.hyperledger.besu.ethereum.core.Difficulty;
 
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class IncrementalTimestampValidationTest {
 
   @Mock private ProtocolContext protocolContext;
   @Mock private MutableBlockchain blockchain;
   @Mock private MergeContext mergeContext;
 
-  @Before
+  @BeforeEach
   public void setUp() {
     when(blockchain.getTotalDifficultyByHash(any())).thenReturn(Optional.of(Difficulty.ONE));
     when(protocolContext.getBlockchain()).thenReturn(blockchain);

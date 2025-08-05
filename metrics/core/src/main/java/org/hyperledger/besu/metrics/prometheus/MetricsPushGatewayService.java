@@ -17,7 +17,6 @@ package org.hyperledger.besu.metrics.prometheus;
 import static com.google.common.base.Preconditions.checkArgument;
 
 import org.hyperledger.besu.metrics.MetricsService;
-import org.hyperledger.besu.plugin.services.MetricsSystem;
 
 import java.io.IOException;
 import java.util.Optional;
@@ -26,20 +25,27 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import io.prometheus.client.exporter.PushGateway;
+import io.prometheus.metrics.exporter.pushgateway.PushGateway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Metrics push gateway service. */
 public class MetricsPushGatewayService implements MetricsService {
   private static final Logger LOG = LoggerFactory.getLogger(MetricsPushGatewayService.class);
 
   private PushGateway pushGateway;
   private ScheduledExecutorService scheduledExecutorService;
   private final MetricsConfiguration config;
-  private final MetricsSystem metricsSystem;
+  private final PrometheusMetricsSystem metricsSystem;
 
+  /**
+   * Instantiates a new Metrics push gateway service.
+   *
+   * @param configuration the configuration
+   * @param metricsSystem the metrics system
+   */
   public MetricsPushGatewayService(
-      final MetricsConfiguration configuration, final MetricsSystem metricsSystem) {
+      final MetricsConfiguration configuration, final PrometheusMetricsSystem metricsSystem) {
     this.metricsSystem = metricsSystem;
     validateConfig(configuration);
     config = configuration;
@@ -52,9 +58,6 @@ public class MetricsPushGatewayService implements MetricsService {
     checkArgument(
         !(config.isEnabled() && config.isPushEnabled()),
         "Metrics Push Gateway Service cannot run concurrent with the normal metrics.");
-    checkArgument(
-        metricsSystem instanceof PrometheusMetricsSystem,
-        "Push Gateway requires a Prometheus Metrics System.");
   }
 
   @Override
@@ -64,7 +67,12 @@ public class MetricsPushGatewayService implements MetricsService {
         config.getPushHost(),
         config.getPushPort());
 
-    pushGateway = new PushGateway(config.getPushHost() + ":" + config.getPushPort());
+    pushGateway =
+        PushGateway.builder()
+            .registry(metricsSystem.getRegistry())
+            .address(config.getPushHost() + ":" + config.getPushPort())
+            .job(config.getPrometheusJob())
+            .build();
 
     // Create the executor
     scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
@@ -78,13 +86,14 @@ public class MetricsPushGatewayService implements MetricsService {
 
   @Override
   public CompletableFuture<?> stop() {
+    metricsSystem.shutdown();
     final CompletableFuture<?> resultFuture = new CompletableFuture<>();
     try {
       // Calling shutdown now cancels the pending push, which is desirable.
       scheduledExecutorService.shutdownNow();
       scheduledExecutorService.awaitTermination(30, TimeUnit.SECONDS);
       try {
-        pushGateway.delete(config.getPrometheusJob());
+        pushGateway.delete();
       } catch (final Exception e) {
         LOG.error("Could not clean up results on the Prometheus Push Gateway.", e);
         // Do not complete exceptionally, the gateway may be down and failures
@@ -105,8 +114,7 @@ public class MetricsPushGatewayService implements MetricsService {
 
   private void pushMetrics() {
     try {
-      pushGateway.pushAdd(
-          ((PrometheusMetricsSystem) metricsSystem).getRegistry(), config.getPrometheusJob());
+      pushGateway.pushAdd();
     } catch (final IOException e) {
       LOG.warn("Could not push metrics", e);
     }

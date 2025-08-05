@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -25,11 +25,13 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 
+/** The Transition best peer comparator. */
 public class TransitionBestPeerComparator implements Comparator<EthPeer>, MergeStateHandler {
 
   private static final AtomicReference<Difficulty> terminalTotalDifficulty =
       new AtomicReference<>();
 
+  /** The Distance from ttd. */
   static final BiFunction<EthPeer, Difficulty, BigInteger> distanceFromTTD =
       (a, ttd) ->
           a.chainState()
@@ -39,6 +41,7 @@ public class TransitionBestPeerComparator implements Comparator<EthPeer>, MergeS
               .abs()
               .negate();
 
+  /** The constant EXACT_DIFFICULTY. */
   public static final Comparator<EthPeer> EXACT_DIFFICULTY =
       (a, b) -> {
         var ttd = terminalTotalDifficulty.get();
@@ -47,9 +50,15 @@ public class TransitionBestPeerComparator implements Comparator<EthPeer>, MergeS
         return aDelta.compareTo(bDelta);
       };
 
+  /** The constant BEST_MERGE_CHAIN. */
   public static final Comparator<EthPeer> BEST_MERGE_CHAIN =
       EXACT_DIFFICULTY.thenComparing(CHAIN_HEIGHT);
 
+  /**
+   * Instantiates a new Transition best peer comparator.
+   *
+   * @param configuredTerminalTotalDifficulty the configured terminal total difficulty
+   */
   public TransitionBestPeerComparator(final Difficulty configuredTerminalTotalDifficulty) {
     terminalTotalDifficulty.set(configuredTerminalTotalDifficulty);
   }

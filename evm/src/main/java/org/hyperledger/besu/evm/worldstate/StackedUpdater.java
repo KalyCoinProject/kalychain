@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,15 +16,29 @@ package org.hyperledger.besu.evm.worldstate;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.evm.account.Account;
+import org.hyperledger.besu.evm.internal.EvmConfiguration;
 
 import java.util.ArrayList;
 import java.util.Collection;
 
+/**
+ * The Stacked updater.
+ *
+ * @param <W> the WorldView type parameter
+ * @param <A> the Account type parameter
+ */
 public class StackedUpdater<W extends WorldView, A extends Account>
     extends AbstractWorldUpdater<AbstractWorldUpdater<W, A>, UpdateTrackingAccount<A>> {
 
-  public StackedUpdater(final AbstractWorldUpdater<W, A> world) {
-    super(world);
+  /**
+   * Instantiates a new Stacked updater.
+   *
+   * @param world the world
+   * @param evmConfiguration the EVM Configuration parameters
+   */
+  public StackedUpdater(
+      final AbstractWorldUpdater<W, A> world, final EvmConfiguration evmConfiguration) {
+    super(world, evmConfiguration);
   }
 
   @Override
@@ -97,6 +111,8 @@ public class StackedUpdater<W extends WorldView, A extends Account>
     }
   }
 
+  /** Mark transaction boundary. */
+  @Override
   public void markTransactionBoundary() {
     getUpdatedAccounts().forEach(UpdateTrackingAccount::markTransactionBoundary);
   }

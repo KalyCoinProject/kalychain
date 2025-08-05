@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,9 +14,13 @@
  */
 package org.hyperledger.besu.evm.gascalculator;
 
+/** The Homestead gas calculator. */
 public class HomesteadGasCalculator extends FrontierGasCalculator {
 
   private static final long TX_CREATE_EXTRA = 32_000L;
+
+  /** Default constructor. */
+  public HomesteadGasCalculator() {}
 
   @Override
   protected long txCreateExtraGasCost() {

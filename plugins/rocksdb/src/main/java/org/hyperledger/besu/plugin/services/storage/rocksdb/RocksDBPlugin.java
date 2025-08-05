@@ -14,8 +14,8 @@
  */
 package org.hyperledger.besu.plugin.services.storage.rocksdb;
 
-import org.hyperledger.besu.plugin.BesuContext;
 import org.hyperledger.besu.plugin.BesuPlugin;
+import org.hyperledger.besu.plugin.ServiceManager;
 import org.hyperledger.besu.plugin.services.PicoCLIOptions;
 import org.hyperledger.besu.plugin.services.StorageService;
 import org.hyperledger.besu.plugin.services.storage.SegmentIdentifier;
@@ -23,6 +23,7 @@ import org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksD
 import org.hyperledger.besu.plugin.services.storage.rocksdb.configuration.RocksDBFactoryConfiguration;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -31,22 +32,33 @@ import com.google.common.base.Suppliers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The RocksDb plugin. */
 public class RocksDBPlugin implements BesuPlugin {
 
   private static final Logger LOG = LoggerFactory.getLogger(RocksDBPlugin.class);
   private static final String NAME = "rocksdb";
 
   private final RocksDBCLIOptions options;
-  private BesuContext context;
+  private final List<SegmentIdentifier> ignorableSegments = new ArrayList<>();
+  private ServiceManager context;
   private RocksDBKeyValueStorageFactory factory;
-  private RocksDBKeyValuePrivacyStorageFactory privacyFactory;
 
+  /** Instantiates a newRocksDb plugin. */
   public RocksDBPlugin() {
     this.options = RocksDBCLIOptions.create();
   }
 
+  /**
+   * Add ignorable segment identifier.
+   *
+   * @param ignorable the ignorable
+   */
+  public void addIgnorableSegmentIdentifier(final SegmentIdentifier ignorable) {
+    ignorableSegments.add(ignorable);
+  }
+
   @Override
-  public void register(final BesuContext context) {
+  public void register(final ServiceManager context) {
     LOG.debug("Registering plugin");
     this.context = context;
 
@@ -54,7 +66,7 @@ public class RocksDBPlugin implements BesuPlugin {
 
     if (cmdlineOptions.isEmpty()) {
       throw new IllegalStateException(
-          "Expecting a PicoCLIO options to register CLI options with, but none found.");
+          "Expecting a PicoCLI options to register CLI options with, but none found.");
     }
 
     cmdlineOptions.get().addPicoCLIOptions(NAME, options);
@@ -84,19 +96,24 @@ public class RocksDBPlugin implements BesuPlugin {
     } catch (final IOException e) {
       LOG.error("Failed to stop plugin: {}", e.getMessage(), e);
     }
-
-    try {
-      if (privacyFactory != null) {
-        privacyFactory.close();
-        privacyFactory = null;
-      }
-    } catch (final IOException e) {
-      LOG.error("Failed to stop plugin: {}", e.getMessage(), e);
-    }
   }
 
+  /**
+   * Is high spec enabled.
+   *
+   * @return the boolean
+   */
   public boolean isHighSpecEnabled() {
     return options.isHighSpec();
+  }
+
+  /**
+   * Gets blob db settings.
+   *
+   * @return the blob db settings
+   */
+  public RocksDBCLIOptions.BlobDBSettings getBlobDBSettings() {
+    return options.getBlobDBSettings();
   }
 
   private void createAndRegister(final StorageService service) {
@@ -106,11 +123,12 @@ public class RocksDBPlugin implements BesuPlugin {
         Suppliers.memoize(options::toDomainObject);
     factory =
         new RocksDBKeyValueStorageFactory(
-            configuration, segments, RocksDBMetricsFactory.PUBLIC_ROCKS_DB_METRICS);
-    privacyFactory = new RocksDBKeyValuePrivacyStorageFactory(factory);
+            configuration,
+            segments,
+            ignorableSegments,
+            RocksDBMetricsFactory.PUBLIC_ROCKS_DB_METRICS);
 
     service.registerKeyValueStorage(factory);
-    service.registerKeyValueStorage(privacyFactory);
   }
 
   private void createFactoriesAndRegisterWithStorageService() {

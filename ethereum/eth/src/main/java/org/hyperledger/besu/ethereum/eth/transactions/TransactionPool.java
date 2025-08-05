@@ -14,48 +14,80 @@
  */
 package org.hyperledger.besu.ethereum.eth.transactions;
 
-import static java.util.Collections.singletonList;
-import static java.util.Optional.ofNullable;
-import static org.hyperledger.besu.ethereum.eth.transactions.TransactionAddedStatus.ADDED;
-import static org.hyperledger.besu.ethereum.eth.transactions.TransactionAddedStatus.ALREADY_KNOWN;
+import static org.hyperledger.besu.ethereum.eth.transactions.PendingTransaction.MAX_SCORE;
 import static org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason.CHAIN_HEAD_NOT_AVAILABLE;
 import static org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason.CHAIN_HEAD_WORLD_STATE_NOT_AVAILABLE;
 import static org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason.INTERNAL_ERROR;
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.traceLambda;
+import static org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason.TRANSACTION_ALREADY_KNOWN;
+import static org.hyperledger.besu.ethereum.trie.pathbased.common.provider.WorldStateQueryParams.withBlockHeaderAndNoUpdateNodeHead;
 
+import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.TransactionType;
+import org.hyperledger.besu.datatypes.VersionedHash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.chain.BlockAddedEvent;
 import org.hyperledger.besu.ethereum.chain.BlockAddedObserver;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
-import org.hyperledger.besu.ethereum.core.MiningParameters;
 import org.hyperledger.besu.ethereum.core.Transaction;
+import org.hyperledger.besu.ethereum.core.encoding.EncodingContext;
+import org.hyperledger.besu.ethereum.core.kzg.BlobProofBundle;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
-import org.hyperledger.besu.ethereum.eth.transactions.sorter.AbstractPendingTransactionsSorter;
-import org.hyperledger.besu.ethereum.mainnet.MainnetTransactionValidator;
+import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.TransactionValidationParams;
+import org.hyperledger.besu.ethereum.mainnet.TransactionValidator;
 import org.hyperledger.besu.ethereum.mainnet.ValidationResult;
 import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
+import org.hyperledger.besu.ethereum.mainnet.transactionpool.TransactionPoolPreProcessor;
+import org.hyperledger.besu.ethereum.rlp.BytesValueRLPOutput;
+import org.hyperledger.besu.ethereum.rlp.RLP;
 import org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason;
 import org.hyperledger.besu.ethereum.trie.MerkleTrieException;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.worldview.BonsaiWorldState;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.fluent.SimpleAccount;
-import org.hyperledger.besu.metrics.BesuMetricCategory;
-import org.hyperledger.besu.plugin.data.TransactionType;
-import org.hyperledger.besu.plugin.services.MetricsSystem;
-import org.hyperledger.besu.plugin.services.metrics.Counter;
-import org.hyperledger.besu.plugin.services.metrics.LabelledMetric;
+import org.hyperledger.besu.util.Subscribers;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ListMultimap;
+import com.google.common.collect.Multimaps;
+import org.apache.tuweni.bytes.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,74 +99,212 @@ import org.slf4j.LoggerFactory;
  * <p>This class is safe for use across multiple threads.
  */
 public class TransactionPool implements BlockAddedObserver {
-
   private static final Logger LOG = LoggerFactory.getLogger(TransactionPool.class);
-
-  private static final String REMOTE = "remote";
-  private static final String LOCAL = "local";
-  private final AbstractPendingTransactionsSorter pendingTransactions;
+  private static final Logger LOG_FOR_REPLAY = LoggerFactory.getLogger("LOG_FOR_REPLAY");
+  private final Supplier<PendingTransactions> pendingTransactionsSupplier;
+  private final BlobCache cacheForBlobsOfTransactionsAddedToABlock;
+  private volatile PendingTransactions pendingTransactions = new DisabledPendingTransactions();
   private final ProtocolSchedule protocolSchedule;
   private final ProtocolContext protocolContext;
+  private final EthContext ethContext;
   private final TransactionBroadcaster transactionBroadcaster;
-  private final MiningParameters miningParameters;
-  private final LabelledMetric<Counter> duplicateTransactionCounter;
+  private final TransactionPoolMetrics metrics;
   private final TransactionPoolConfiguration configuration;
+  private final AtomicBoolean isPoolEnabled = new AtomicBoolean(false);
+  private final PendingTransactionsListenersProxy pendingTransactionsListenersProxy =
+      new PendingTransactionsListenersProxy();
+  private volatile OptionalLong subscribeConnectId = OptionalLong.empty();
+  private final SaveRestoreManager saveRestoreManager = new SaveRestoreManager();
+  private final Set<Address> localSenders = ConcurrentHashMap.newKeySet();
+  private final EthScheduler.OrderedProcessor<BlockAddedEvent> blockAddedEventOrderedProcessor;
+  private final ListMultimap<VersionedHash, BlobProofBundle> mapOfBlobsInTransactionPool =
+      Multimaps.synchronizedListMultimap(
+          Multimaps.newListMultimap(new HashMap<>(), () -> new ArrayList<>(1)));
 
   public TransactionPool(
-      final AbstractPendingTransactionsSorter pendingTransactions,
+      final Supplier<PendingTransactions> pendingTransactionsSupplier,
       final ProtocolSchedule protocolSchedule,
       final ProtocolContext protocolContext,
       final TransactionBroadcaster transactionBroadcaster,
       final EthContext ethContext,
-      final MiningParameters miningParameters,
-      final MetricsSystem metricsSystem,
-      final TransactionPoolConfiguration configuration) {
-    this.pendingTransactions = pendingTransactions;
+      final TransactionPoolMetrics metrics,
+      final TransactionPoolConfiguration configuration,
+      final BlobCache blobCache) {
+    this.pendingTransactionsSupplier = pendingTransactionsSupplier;
     this.protocolSchedule = protocolSchedule;
     this.protocolContext = protocolContext;
+    this.ethContext = ethContext;
     this.transactionBroadcaster = transactionBroadcaster;
-    this.miningParameters = miningParameters;
+    this.metrics = metrics;
     this.configuration = configuration;
-
-    duplicateTransactionCounter =
-        metricsSystem.createLabelledCounter(
-            BesuMetricCategory.TRANSACTION_POOL,
-            "transactions_duplicates_total",
-            "Total number of duplicate transactions received",
-            "source");
-
-    ethContext.getEthPeers().subscribeConnect(this::handleConnect);
+    this.blockAddedEventOrderedProcessor =
+        ethContext.getScheduler().createOrderedProcessor(this::processBlockAddedEvent);
+    this.cacheForBlobsOfTransactionsAddedToABlock = blobCache;
+    initializeBlobMetrics();
+    initLogForReplay();
+    subscribePendingTransactions(this::mapBlobsOnTransactionAdded);
+    subscribeDroppedTransactions(
+        (transaction, reason) -> unmapBlobsOnTransactionDropped(transaction));
+    subscribeDroppedTransactions(transactionBroadcaster);
   }
 
+  private void initLogForReplay() {
+    // log the initial block header data
+    LOG_FOR_REPLAY
+        .atTrace()
+        .setMessage("{},{},{},{}")
+        .addArgument(() -> getChainHeadBlockHeader().map(BlockHeader::getNumber).orElse(0L))
+        .addArgument(
+            () ->
+                getChainHeadBlockHeader()
+                    .flatMap(BlockHeader::getBaseFee)
+                    .map(Wei::getAsBigInteger)
+                    .orElse(BigInteger.ZERO))
+        .addArgument(() -> getChainHeadBlockHeader().map(BlockHeader::getGasUsed).orElse(0L))
+        .addArgument(() -> getChainHeadBlockHeader().map(BlockHeader::getGasLimit).orElse(0L))
+        .log();
+    // log the priority senders
+    LOG_FOR_REPLAY
+        .atTrace()
+        .setMessage("{}")
+        .addArgument(
+            () ->
+                configuration.getPrioritySenders().stream()
+                    .map(Address::toHexString)
+                    .collect(Collectors.joining(",")))
+        .log();
+    // log the max prioritized txs by type
+    LOG_FOR_REPLAY
+        .atTrace()
+        .setMessage("{}")
+        .addArgument(
+            () ->
+                configuration.getMaxPrioritizedTransactionsByType().entrySet().stream()
+                    .map(e -> e.getKey().name() + "=" + e.getValue())
+                    .collect(Collectors.joining(",")))
+        .log();
+  }
+
+  @VisibleForTesting
   void handleConnect(final EthPeer peer) {
-    transactionBroadcaster.relayTransactionPoolTo(peer);
+    transactionBroadcaster.relayTransactionPoolTo(
+        peer, pendingTransactions.getPendingTransactions());
   }
 
-  public ValidationResult<TransactionInvalidReason> addLocalTransaction(
+  public ValidationResult<TransactionInvalidReason> addTransactionViaApi(
       final Transaction transaction) {
-    final ValidationResultAndAccount validationResult = validateLocalTransaction(transaction);
+
+    final var result = addTransaction(transaction, true, MAX_SCORE);
+    if (result.isValid()) {
+      localSenders.add(transaction.getSender());
+      transactionBroadcaster.onTransactionsAdded(List.of(transaction));
+    }
+    return result;
+  }
+
+  public Map<Hash, ValidationResult<TransactionInvalidReason>> addRemoteTransactions(
+      final Collection<Transaction> transactions) {
+    final long started = System.currentTimeMillis();
+    final int initialCount = transactions.size();
+    final List<Transaction> addedTransactions = new ArrayList<>(initialCount);
+    LOG.trace("Adding {} remote transactions", initialCount);
+
+    final var validationResults =
+        sortedBySenderAndNonce(transactions)
+            .collect(
+                Collectors.toMap(
+                    Transaction::getHash,
+                    transaction -> {
+                      final var result = addTransaction(transaction, false, MAX_SCORE);
+                      if (result.isValid()) {
+                        addedTransactions.add(transaction);
+                      }
+                      return result;
+                    },
+                    (transaction1, transaction2) -> transaction1));
+
+    LOG_FOR_REPLAY
+        .atTrace()
+        .setMessage("S,{}")
+        .addArgument(() -> pendingTransactions.logStats())
+        .log();
+
+    LOG.atTrace()
+        .setMessage(
+            "Added {} transactions to the pool in {}ms, {} not added, current pool stats {}")
+        .addArgument(addedTransactions::size)
+        .addArgument(() -> System.currentTimeMillis() - started)
+        .addArgument(() -> initialCount - addedTransactions.size())
+        .addArgument(pendingTransactions::logStats)
+        .log();
+
+    if (!addedTransactions.isEmpty()) {
+      transactionBroadcaster.onTransactionsAdded(addedTransactions);
+    }
+    return validationResults;
+  }
+
+  private ValidationResult<TransactionInvalidReason> addTransaction(
+      final Transaction baseTransaction, final boolean isLocal, final byte score) {
+
+    final boolean hasPriority = isPriorityTransaction(baseTransaction, isLocal);
+
+    if (pendingTransactions.containsTransaction(baseTransaction)) {
+      LOG.atTrace()
+          .setMessage("Discard already present transaction {}")
+          .addArgument(baseTransaction::toTraceLog)
+          .log();
+      // We already have this transaction, don't even validate it.
+      metrics.incrementRejected(isLocal, hasPriority, TRANSACTION_ALREADY_KNOWN, "txpool");
+      return ValidationResult.invalid(TRANSACTION_ALREADY_KNOWN);
+    }
+
+    // Apply any necessary fork related pre-processing before submitting the transaction to the pool
+    Transaction transaction =
+        getTransactionPoolPreProcessor()
+            .map(preProcessor -> preProcessor.prepareTransaction(baseTransaction, isLocal))
+            .orElse(baseTransaction);
+
+    final ValidationResultAndAccount validationResult =
+        validateTransaction(transaction, isLocal, hasPriority);
 
     if (validationResult.result.isValid()) {
-
-      final TransactionAddedStatus transactionAddedStatus =
-          pendingTransactions.addLocalTransaction(transaction, validationResult.maybeAccount);
-
-      if (!transactionAddedStatus.equals(ADDED)) {
-        if (transactionAddedStatus.equals(ALREADY_KNOWN)) {
-          duplicateTransactionCounter.labels(LOCAL).inc();
-        }
-        return ValidationResult.invalid(
-            transactionAddedStatus
-                .getInvalidReason()
+      final TransactionAddedResult status =
+          pendingTransactions.addTransaction(
+              PendingTransaction.newPendingTransaction(transaction, isLocal, hasPriority, score),
+              validationResult.maybeAccount);
+      if (status.isSuccess()) {
+        LOG.atTrace()
+            .setMessage("Added {} transaction {}")
+            .addArgument(() -> isLocal ? "local" : "remote")
+            .addArgument(transaction::toTraceLog)
+            .log();
+      } else {
+        final var rejectReason =
+            status
+                .maybeInvalidReason()
                 .orElseGet(
                     () -> {
-                      LOG.warn("Missing invalid reason for status {}", transactionAddedStatus);
+                      LOG.warn("Missing invalid reason for status {}", status);
                       return INTERNAL_ERROR;
-                    }));
+                    });
+        LOG.atTrace()
+            .setMessage("Transaction {} rejected reason {}")
+            .addArgument(transaction::toTraceLog)
+            .addArgument(rejectReason)
+            .log();
+        metrics.incrementRejected(isLocal, hasPriority, rejectReason, "txpool");
+        return ValidationResult.invalid(rejectReason);
       }
-
-      final Collection<Transaction> txs = singletonList(transaction);
-      transactionBroadcaster.onTransactionsAdded(txs);
+    } else {
+      LOG.atTrace()
+          .setMessage("Discard invalid transaction {}, reason {}, because {}")
+          .addArgument(transaction::toTraceLog)
+          .addArgument(validationResult.result::getInvalidReason)
+          .addArgument(validationResult.result::getErrorMessage)
+          .log();
+      metrics.incrementRejected(
+          isLocal, hasPriority, validationResult.result.getInvalidReason(), "txpool");
     }
 
     return validationResult.result;
@@ -146,142 +316,128 @@ public class TransactionPool implements BlockAddedObserver {
 
   private boolean isMaxGasPriceBelowConfiguredMinGasPrice(final Transaction transaction) {
     return getMaxGasPrice(transaction)
-        .map(g -> g.lessThan(miningParameters.getMinTransactionGasPrice()))
+        .map(g -> g.lessThan(configuration.getMinGasPrice()))
         .orElse(true);
   }
 
-  public void addRemoteTransactions(final Collection<Transaction> transactions) {
-    final List<Transaction> addedTransactions = new ArrayList<>(transactions.size());
-    LOG.trace("Adding {} remote transactions", transactions.size());
-
-    for (final Transaction transaction : transactions) {
-
-      if (pendingTransactions.containsTransaction(transaction.getHash())) {
-        traceLambda(LOG, "Discard already present transaction {}", transaction::toTraceLog);
-        // We already have this transaction, don't even validate it.
-        duplicateTransactionCounter.labels(REMOTE).inc();
-        continue;
-      }
-
-      final ValidationResultAndAccount validationResult = validateRemoteTransaction(transaction);
-
-      if (validationResult.result.isValid()) {
-        final TransactionAddedStatus status =
-            pendingTransactions.addRemoteTransaction(transaction, validationResult.maybeAccount);
-        switch (status) {
-          case ADDED:
-            traceLambda(LOG, "Added remote transaction {}", transaction::toTraceLog);
-            addedTransactions.add(transaction);
-            break;
-          case ALREADY_KNOWN:
-            traceLambda(LOG, "Duplicate remote transaction {}", transaction::toTraceLog);
-            duplicateTransactionCounter.labels(REMOTE).inc();
-            break;
-          default:
-            traceLambda(LOG, "Transaction added status {}", status::name);
-        }
-      } else {
-        traceLambda(
-            LOG,
-            "Discard invalid transaction {}, reason {}",
-            transaction::toTraceLog,
-            validationResult.result::getInvalidReason);
-        pendingTransactions
-            .signalInvalidAndGetDependentTransactions(transaction)
-            .forEach(pendingTransactions::removeTransaction);
-      }
-    }
-
-    if (!addedTransactions.isEmpty()) {
-      transactionBroadcaster.onTransactionsAdded(addedTransactions);
-      traceLambda(
-          LOG,
-          "Added {} transactions to the pool, current pool size {}, content {}",
-          addedTransactions::size,
-          pendingTransactions::size,
-          () -> pendingTransactions.toTraceLog(true, true));
-    }
+  private Stream<Transaction> sortedBySenderAndNonce(final Collection<Transaction> transactions) {
+    return transactions.stream()
+        .sorted(Comparator.comparing(Transaction::getSender).thenComparing(Transaction::getNonce));
   }
 
-  public long subscribePendingTransactions(final PendingTransactionListener listener) {
-    return pendingTransactions.subscribePendingTransactions(listener);
+  private boolean isPriorityTransaction(final Transaction transaction, final boolean isLocal) {
+    if (isLocal && !configuration.getNoLocalPriority()) {
+      // unless no-local-priority option is specified, senders of local sent txs are prioritized
+      return true;
+    }
+    // otherwise check if the sender belongs to the priority list
+    return configuration.getPrioritySenders().contains(transaction.getSender());
+  }
+
+  public long subscribePendingTransactions(final PendingTransactionAddedListener listener) {
+    return pendingTransactionsListenersProxy.onAddedListeners.subscribe(listener);
   }
 
   public void unsubscribePendingTransactions(final long id) {
-    pendingTransactions.unsubscribePendingTransactions(id);
+    pendingTransactionsListenersProxy.onAddedListeners.unsubscribe(id);
   }
 
   public long subscribeDroppedTransactions(final PendingTransactionDroppedListener listener) {
-    return pendingTransactions.subscribeDroppedTransactions(listener);
+    return pendingTransactionsListenersProxy.onDroppedListeners.subscribe(listener);
   }
 
   public void unsubscribeDroppedTransactions(final long id) {
-    pendingTransactions.unsubscribeDroppedTransactions(id);
+    pendingTransactionsListenersProxy.onDroppedListeners.unsubscribe(id);
   }
 
   @Override
   public void onBlockAdded(final BlockAddedEvent event) {
-    LOG.trace("Block added event {}", event);
-    event.getAddedTransactions().forEach(pendingTransactions::transactionAddedToBlock);
-    pendingTransactions.manageBlockAdded(event.getBlock());
-    reAddTransactions(event.getRemovedTransactions());
+    if (isPoolEnabled.get()) {
+      if (event.getEventType().equals(BlockAddedEvent.EventType.HEAD_ADVANCED)
+          || event.getEventType().equals(BlockAddedEvent.EventType.CHAIN_REORG)) {
+
+        blockAddedEventOrderedProcessor.submit(event);
+      }
+    }
+  }
+
+  private void processBlockAddedEvent(final BlockAddedEvent e) {
+    final long started = System.currentTimeMillis();
+    pendingTransactions.manageBlockAdded(
+        e.getHeader(),
+        e.getAddedTransactions(),
+        e.getRemovedTransactions(),
+        protocolSchedule.getByBlockHeader(e.getHeader()).getFeeMarket());
+    reAddTransactions(e.getRemovedTransactions());
+    LOG.atTrace()
+        .setMessage("Block added event {} processed in {}ms")
+        .addArgument(e)
+        .addArgument(() -> System.currentTimeMillis() - started)
+        .log();
   }
 
   private void reAddTransactions(final List<Transaction> reAddTransactions) {
     if (!reAddTransactions.isEmpty()) {
+      // if adding a blob tx, and it is missing its blob, is a re-org and we should restore the blob
+      // from cache.
       var txsByOrigin =
           reAddTransactions.stream()
-              .collect(
-                  Collectors.partitioningBy(
-                      tx -> pendingTransactions.isLocalSender(tx.getSender())));
+              .map(t -> pendingTransactions.restoreBlob(t).orElse(t))
+              .collect(Collectors.partitioningBy(tx -> isLocalSender(tx.getSender())));
       var reAddLocalTxs = txsByOrigin.get(true);
       var reAddRemoteTxs = txsByOrigin.get(false);
       if (!reAddLocalTxs.isEmpty()) {
-        LOG.trace("Re-adding {} local transactions from a block event", reAddLocalTxs.size());
-        reAddLocalTxs.forEach(this::addLocalTransaction);
+        logReAddedTransactions(reAddLocalTxs, "local");
+        sortedBySenderAndNonce(reAddLocalTxs).forEach(this::addTransactionViaApi);
       }
       if (!reAddRemoteTxs.isEmpty()) {
-        LOG.trace("Re-adding {} remote transactions from a block event", reAddRemoteTxs.size());
+        logReAddedTransactions(reAddRemoteTxs, "remote");
         addRemoteTransactions(reAddRemoteTxs);
       }
     }
   }
 
-  private MainnetTransactionValidator getTransactionValidator() {
+  private static void logReAddedTransactions(
+      final List<Transaction> reAddedTxs, final String source) {
+    LOG.atTrace()
+        .setMessage("Re-adding {} {} transactions from a block event: {}")
+        .addArgument(reAddedTxs::size)
+        .addArgument(source)
+        .addArgument(
+            () ->
+                reAddedTxs.stream().map(Transaction::toTraceLog).collect(Collectors.joining("; ")))
+        .log();
+  }
+
+  private TransactionValidator getTransactionValidator() {
     return protocolSchedule
-        .getByBlockNumber(protocolContext.getBlockchain().getChainHeadBlockNumber())
-        .getTransactionValidator();
+        .getByBlockHeader(protocolContext.getBlockchain().getChainHeadHeader())
+        .getTransactionValidatorFactory()
+        .get();
   }
 
-  public AbstractPendingTransactionsSorter getPendingTransactions() {
-    return pendingTransactions;
-  }
-
-  private ValidationResultAndAccount validateLocalTransaction(final Transaction transaction) {
-    return validateTransaction(transaction, true);
-  }
-
-  private ValidationResultAndAccount validateRemoteTransaction(final Transaction transaction) {
-    return validateTransaction(transaction, false);
+  private Optional<TransactionPoolPreProcessor> getTransactionPoolPreProcessor() {
+    return protocolSchedule
+        .getByBlockHeader(protocolContext.getBlockchain().getChainHeadHeader())
+        .getTransactionPoolPreProcessor();
   }
 
   private ValidationResultAndAccount validateTransaction(
-      final Transaction transaction, final boolean isLocal) {
+      final Transaction transaction, final boolean isLocal, final boolean hasPriority) {
 
     final BlockHeader chainHeadBlockHeader = getChainHeadBlockHeader().orElse(null);
     if (chainHeadBlockHeader == null) {
-      traceLambda(
-          LOG,
-          "rejecting transaction {} due to chain head not available yet",
-          transaction::getHash);
+      LOG.atWarn()
+          .setMessage("rejecting transaction {} due to chain head not available yet")
+          .addArgument(transaction::getHash)
+          .log();
       return ValidationResultAndAccount.invalid(CHAIN_HEAD_NOT_AVAILABLE);
     }
 
     final FeeMarket feeMarket =
-        protocolSchedule.getByBlockNumber(chainHeadBlockHeader.getNumber()).getFeeMarket();
-
+        protocolSchedule.getByBlockHeader(chainHeadBlockHeader).getFeeMarket();
     final TransactionInvalidReason priceInvalidReason =
-        validatePrice(transaction, isLocal, feeMarket);
+        validatePrice(transaction, isLocal, hasPriority, feeMarket);
     if (priceInvalidReason != null) {
       return ValidationResultAndAccount.invalid(priceInvalidReason);
     }
@@ -291,13 +447,16 @@ public class TransactionPool implements BlockAddedObserver {
             .validate(
                 transaction,
                 chainHeadBlockHeader.getBaseFee(),
+                Optional.of(
+                    Wei.ZERO), // TransactionValidationParams.transactionPool() allows underpriced
+                // txs
                 TransactionValidationParams.transactionPool());
     if (!basicValidationResult.isValid()) {
       return new ValidationResultAndAccount(basicValidationResult);
     }
 
-    if (isLocal
-        && strictReplayProtectionShouldBeEnforceLocally(chainHeadBlockHeader)
+    if (hasPriority
+        && strictReplayProtectionShouldBeEnforcedLocally(chainHeadBlockHeader)
         && transaction.getChainId().isEmpty()) {
       // Strict replay protection is enabled but the tx is not replay-protected
       return ValidationResultAndAccount.invalid(
@@ -314,13 +473,31 @@ public class TransactionPool implements BlockAddedObserver {
       return ValidationResultAndAccount.invalid(
           TransactionInvalidReason.INVALID_TRANSACTION_FORMAT,
           "EIP-1559 transaction are not allowed yet");
+    } else if (transaction.getType().equals(TransactionType.BLOB)
+        && transaction.getBlobsWithCommitments().isEmpty()) {
+      return ValidationResultAndAccount.invalid(
+          TransactionInvalidReason.INVALID_BLOBS, "Blob transaction must have at least one blob");
     }
 
-    try (var worldState =
+    // Call the transaction validator plugin
+    final Optional<String> maybePluginInvalid =
+        configuration
+            .getTransactionPoolValidatorService()
+            .createTransactionValidator()
+            .validateTransaction(transaction, isLocal, hasPriority);
+    if (maybePluginInvalid.isPresent()) {
+      return ValidationResultAndAccount.invalid(
+          TransactionInvalidReason.PLUGIN_TX_POOL_VALIDATOR, maybePluginInvalid.get());
+    }
+
+    try (final var worldState =
         protocolContext
             .getWorldStateArchive()
-            .getMutable(chainHeadBlockHeader.getStateRoot(), chainHeadBlockHeader.getHash(), false)
+            .getWorldState(withBlockHeaderAndNoUpdateNodeHead(chainHeadBlockHeader))
             .orElseThrow()) {
+      if (worldState instanceof BonsaiWorldState bonsaiWorldState) {
+        bonsaiWorldState.disableCacheMerkleTrieLoader();
+      }
       final Account senderAccount = worldState.get(transaction.getSender());
       return new ValidationResultAndAccount(
           senderAccount,
@@ -338,51 +515,45 @@ public class TransactionPool implements BlockAddedObserver {
   }
 
   private TransactionInvalidReason validatePrice(
-      final Transaction transaction, final boolean isLocal, final FeeMarket feeMarket) {
-
-    // Check whether it's a GoQuorum transaction
-    boolean goQuorumCompatibilityMode = getTransactionValidator().getGoQuorumCompatibilityMode();
-    if (transaction.isGoQuorumPrivateTransaction(goQuorumCompatibilityMode)) {
-      final Optional<Wei> weiValue = ofNullable(transaction.getValue());
-      if (weiValue.isPresent() && !weiValue.get().isZero()) {
-        return TransactionInvalidReason.ETHER_VALUE_NOT_SUPPORTED;
-      }
-    }
+      final Transaction transaction,
+      final boolean isLocal,
+      final boolean hasPriority,
+      final FeeMarket feeMarket) {
 
     if (isLocal) {
       if (!configuration.getTxFeeCap().isZero()
           && getMaxGasPrice(transaction).get().greaterThan(configuration.getTxFeeCap())) {
         return TransactionInvalidReason.TX_FEECAP_EXCEEDED;
       }
-      // allow local transactions to be below minGas as long as we are mining
-      // or at least gas price is above the configured floor
-      if ((!miningParameters.isMiningEnabled()
-              && isMaxGasPriceBelowConfiguredMinGasPrice(transaction))
-          || !feeMarket.satisfiesFloorTxFee(transaction)) {
+    }
+    if (hasPriority) {
+      // allow priority transactions to be below minGas as long as the gas price is above the
+      // configured floor
+      if (!feeMarket.satisfiesFloorTxFee(transaction)) {
         return TransactionInvalidReason.GAS_PRICE_TOO_LOW;
       }
     } else {
       if (isMaxGasPriceBelowConfiguredMinGasPrice(transaction)) {
-        traceLambda(
-            LOG,
-            "Discard transaction {} below min gas price {}",
-            transaction::toTraceLog,
-            miningParameters::getMinTransactionGasPrice);
+        LOG.atTrace()
+            .setMessage("Discard transaction {} below min gas price {}")
+            .addArgument(transaction::toTraceLog)
+            .addArgument(configuration::getMinGasPrice)
+            .log();
         return TransactionInvalidReason.GAS_PRICE_TOO_LOW;
       }
     }
     return null;
   }
 
-  private boolean strictReplayProtectionShouldBeEnforceLocally(
+  private boolean strictReplayProtectionShouldBeEnforcedLocally(
       final BlockHeader chainHeadBlockHeader) {
     return configuration.getStrictTransactionReplayProtectionEnabled()
         && protocolSchedule.getChainId().isPresent()
         && transactionReplaySupportedAtBlock(chainHeadBlockHeader);
   }
 
-  private boolean transactionReplaySupportedAtBlock(final BlockHeader block) {
-    return protocolSchedule.getByBlockNumber(block.getNumber()).isReplayProtectionSupported();
+  private boolean transactionReplaySupportedAtBlock(final BlockHeader blockHeader) {
+    return protocolSchedule.getByBlockHeader(blockHeader).isReplayProtectionSupported();
   }
 
   public Optional<Transaction> getTransactionByHash(final Hash hash) {
@@ -391,12 +562,57 @@ public class TransactionPool implements BlockAddedObserver {
 
   private Optional<BlockHeader> getChainHeadBlockHeader() {
     final MutableBlockchain blockchain = protocolContext.getBlockchain();
-    return blockchain.getBlockHeader(blockchain.getChainHeadHash());
+
+    // Optimistically get the block header for the chain head without taking a lock,
+    // but revert to the safe implementation if it returns an empty optional. (It's
+    // possible the chain head has been updated but the block is still being persisted
+    // to storage/cache under the lock).
+    return blockchain
+        .getBlockHeader(blockchain.getChainHeadHash())
+        .or(() -> blockchain.getBlockHeaderSafe(blockchain.getChainHeadHash()));
+  }
+
+  private boolean isLocalSender(final Address sender) {
+    return localSenders.contains(sender);
+  }
+
+  public int count() {
+    return pendingTransactions.size();
+  }
+
+  public Collection<PendingTransaction> getPendingTransactions() {
+    return pendingTransactions.getPendingTransactions();
+  }
+
+  public OptionalLong getNextNonceForSender(final Address address) {
+    return pendingTransactions.getNextNonceForSender(address);
+  }
+
+  public long maxSize() {
+    return pendingTransactions.maxSize();
+  }
+
+  public void evictOldTransactions() {
+    pendingTransactions.evictOldTransactions();
+  }
+
+  public void selectTransactions(
+      final PendingTransactions.TransactionSelector transactionSelector) {
+    pendingTransactions.selectTransactions(transactionSelector);
+  }
+
+  public String logStats() {
+    return pendingTransactions.logStats();
+  }
+
+  @VisibleForTesting
+  Class<? extends PendingTransactions> pendingTransactionsImplementation() {
+    return pendingTransactions.getClass();
   }
 
   public interface TransactionBatchAddedListener {
 
-    void onTransactionsAdded(Iterable<Transaction> transactions);
+    void onTransactionsAdded(Collection<Transaction> transactions);
   }
 
   private static class ValidationResultAndAccount {
@@ -424,6 +640,334 @@ public class TransactionPool implements BlockAddedObserver {
 
     static ValidationResultAndAccount invalid(final TransactionInvalidReason reason) {
       return new ValidationResultAndAccount(ValidationResult.invalid(reason));
+    }
+  }
+
+  public CompletableFuture<Void> setEnabled() {
+    if (!isEnabled()) {
+      pendingTransactions = pendingTransactionsSupplier.get();
+      pendingTransactionsListenersProxy.subscribe();
+      isPoolEnabled.set(true);
+      subscribeConnectId =
+          OptionalLong.of(ethContext.getEthPeers().subscribeConnect(this::handleConnect));
+      return saveRestoreManager
+          .loadFromDisk()
+          .exceptionally(
+              t -> {
+                LOG.error("Error while restoring transaction pool from disk", t);
+                return null;
+              });
+    }
+    return CompletableFuture.completedFuture(null);
+  }
+
+  public CompletableFuture<Void> setDisabled() {
+    if (isEnabled()) {
+      isPoolEnabled.set(false);
+      subscribeConnectId.ifPresent(ethContext.getEthPeers()::unsubscribeConnect);
+      pendingTransactionsListenersProxy.unsubscribe();
+      final CompletableFuture<Void> saveOperation =
+          saveRestoreManager
+              .saveToDisk(pendingTransactions)
+              .exceptionally(
+                  t -> {
+                    LOG.error("Error while saving transaction pool to disk", t);
+                    return null;
+                  });
+      pendingTransactions = new DisabledPendingTransactions();
+      return saveOperation;
+    }
+    return CompletableFuture.completedFuture(null);
+  }
+
+  private void mapBlobsOnTransactionAdded(final Transaction transaction) {
+    final var maybeBlobsWithCommitments = transaction.getBlobsWithCommitments();
+    if (maybeBlobsWithCommitments.isEmpty()) {
+      return;
+    }
+    final List<BlobProofBundle> blobProofBundles =
+        maybeBlobsWithCommitments.get().getBlobProofBundles();
+
+    blobProofBundles.forEach(bq -> mapOfBlobsInTransactionPool.put(bq.getVersionedHash(), bq));
+  }
+
+  private void unmapBlobsOnTransactionDropped(final Transaction transaction) {
+    final var maybeBlobsWithCommitments = transaction.getBlobsWithCommitments();
+    if (maybeBlobsWithCommitments.isEmpty()) {
+      return;
+    }
+    final List<BlobProofBundle> blobProofBundles =
+        maybeBlobsWithCommitments.get().getBlobProofBundles();
+
+    blobProofBundles.forEach(bq -> mapOfBlobsInTransactionPool.remove(bq.getVersionedHash(), bq));
+  }
+
+  public BlobProofBundle getBlobProofBundle(final VersionedHash vh) {
+    try {
+      // returns an empty list if the key is not present, so getFirst() will throw
+      return mapOfBlobsInTransactionPool.get(vh).getFirst();
+    } catch (NoSuchElementException e) {
+      // do nothing
+    }
+    return cacheForBlobsOfTransactionsAddedToABlock.get(vh);
+  }
+
+  public boolean isEnabled() {
+    return isPoolEnabled.get();
+  }
+
+  public int getBlobCacheSize() {
+    return (int) cacheForBlobsOfTransactionsAddedToABlock.size();
+  }
+
+  public int getBlobMapSize() {
+    return mapOfBlobsInTransactionPool.size();
+  }
+
+  private void initializeBlobMetrics() {
+    metrics.createBlobCacheSizeMetric(this::getBlobCacheSize);
+    metrics.createBlobMapSizeMetric(this::getBlobMapSize);
+  }
+
+  class PendingTransactionsListenersProxy {
+    private final Subscribers<PendingTransactionAddedListener> onAddedListeners =
+        Subscribers.create();
+    private final Subscribers<PendingTransactionDroppedListener> onDroppedListeners =
+        Subscribers.create();
+
+    private volatile long onAddedListenerId;
+    private volatile long onDroppedListenerId;
+
+    void subscribe() {
+      onAddedListenerId = pendingTransactions.subscribePendingTransactions(this::onAdded);
+      onDroppedListenerId =
+          pendingTransactions.subscribeDroppedTransactions(
+              (transaction, reason) -> onDropped(transaction, reason));
+    }
+
+    void unsubscribe() {
+      pendingTransactions.unsubscribePendingTransactions(onAddedListenerId);
+      pendingTransactions.unsubscribeDroppedTransactions(onDroppedListenerId);
+    }
+
+    private void onDropped(final Transaction transaction, final RemovalReason reason) {
+      onDroppedListeners.forEach(listener -> listener.onTransactionDropped(transaction, reason));
+    }
+
+    private void onAdded(final Transaction transaction) {
+      onAddedListeners.forEach(listener -> listener.onTransactionAdded(transaction));
+    }
+  }
+
+  class SaveRestoreManager {
+    private final Semaphore diskAccessLock = new Semaphore(1, true);
+    private final AtomicReference<CompletableFuture<Void>> writeInProgress =
+        new AtomicReference<>(CompletableFuture.completedFuture(null));
+    private final AtomicReference<CompletableFuture<Void>> readInProgress =
+        new AtomicReference<>(CompletableFuture.completedFuture(null));
+    private final AtomicBoolean isCancelled = new AtomicBoolean(false);
+
+    CompletableFuture<Void> saveToDisk(final PendingTransactions pendingTransactionsToSave) {
+      cancelInProgressReadOperation();
+      return serializeAndDedupOperation(
+          () -> executeSaveToDisk(pendingTransactionsToSave), writeInProgress);
+    }
+
+    CompletableFuture<Void> loadFromDisk() {
+      return serializeAndDedupOperation(this::executeLoadFromDisk, readInProgress);
+    }
+
+    private void cancelInProgressReadOperation() {
+      if (!readInProgress.get().isDone()) {
+        LOG.debug("Cancelling in progress read operation");
+        isCancelled.set(true);
+        try {
+          waitUntilReadOperationIsCancelled();
+          LOG.debug("In progress read operation cancelled");
+        } catch (InterruptedException | ExecutionException e) {
+          LOG.warn("Error while cancelling in progress read operation", e);
+          throw new RuntimeException(e);
+        }
+      }
+    }
+
+    private void waitUntilReadOperationIsCancelled()
+        throws InterruptedException, ExecutionException {
+      readInProgress.get().get();
+    }
+
+    private CompletableFuture<Void> serializeAndDedupOperation(
+        final Runnable operation,
+        final AtomicReference<CompletableFuture<Void>> operationInProgress) {
+      if (configuration.getEnableSaveRestore()) {
+        try {
+          if (diskAccessLock.tryAcquire(1, TimeUnit.MINUTES)) {
+
+            isCancelled.set(false);
+            operationInProgress.set(
+                CompletableFuture.runAsync(operation)
+                    .whenComplete((res, err) -> diskAccessLock.release()));
+            return operationInProgress.get();
+          } else {
+            CompletableFuture.failedFuture(
+                new TimeoutException("Timeout waiting for disk access lock"));
+          }
+        } catch (InterruptedException ie) {
+          return CompletableFuture.failedFuture(ie);
+        }
+      }
+      return CompletableFuture.completedFuture(null);
+    }
+
+    private void executeSaveToDisk(final PendingTransactions pendingTransactionsToSave) {
+      final File saveFile = configuration.getSaveFile();
+      final boolean appending = saveFile.exists();
+      try (final BufferedWriter bw =
+          new BufferedWriter(new FileWriter(saveFile, StandardCharsets.US_ASCII, appending))) {
+        final var allTxs = pendingTransactionsToSave.getPendingTransactions();
+        LOG.info(
+            "{} {} transactions to file {}",
+            appending ? "Appending" : "Saving",
+            allTxs.size(),
+            saveFile);
+
+        final long processedTxCount =
+            allTxs.parallelStream()
+                .takeWhile(unused -> !isCancelled.get())
+                .map(
+                    ptx -> {
+                      final BytesValueRLPOutput rlp = new BytesValueRLPOutput();
+                      ptx.getTransaction().writeTo(rlp, EncodingContext.POOLED_TRANSACTION);
+                      return ptx.getScore()
+                          + (ptx.isReceivedFromLocalSource() ? "l" : "r")
+                          + rlp.encoded().toBase64String();
+                    })
+                .mapToInt(
+                    line -> {
+                      synchronized (bw) {
+                        try {
+                          bw.write(line);
+                          bw.newLine();
+                        } catch (IOException e) {
+                          throw new RuntimeException(e);
+                        }
+                      }
+                      return 1;
+                    })
+                .sum();
+
+        if (isCancelled.get()) {
+          LOG.info(
+              "{} {} transactions to file {}, before operation was cancelled",
+              appending ? "Appended" : "Saved",
+              processedTxCount,
+              saveFile);
+        } else {
+          LOG.info(
+              "{} {} transactions to file {}",
+              appending ? "Appended" : "Saved",
+              processedTxCount,
+              saveFile);
+        }
+      } catch (IOException e) {
+        LOG.error("Error while saving txpool content to disk", e);
+      }
+    }
+
+    private void executeLoadFromDisk() {
+      if (configuration.getEnableSaveRestore()) {
+        final File saveFile = configuration.getSaveFile();
+        if (saveFile.exists()) {
+          LOG.info("Loading transaction pool content from file {}", saveFile);
+          try (final BufferedReader br =
+              new BufferedReader(new FileReader(saveFile, StandardCharsets.US_ASCII))) {
+            final Map<String, Long> stats =
+                br.lines()
+                    .takeWhile(unused -> !isCancelled.get())
+                    .map(
+                        line -> {
+                          final var scoreStr = parseScore(line);
+                          final byte score =
+                              scoreStr.isEmpty() ? MAX_SCORE : Byte.parseByte(scoreStr);
+                          final boolean isLocal = line.charAt(scoreStr.length()) == 'l';
+                          final Transaction tx =
+                              Transaction.readFrom(
+                                  RLP.input(
+                                      Bytes.fromBase64String(
+                                          line.substring(scoreStr.length() + 1))),
+                                  EncodingContext.POOLED_TRANSACTION);
+
+                          final ValidationResult<TransactionInvalidReason> result =
+                              addTransaction(tx, isLocal, score);
+                          return result.isValid() ? "OK" : result.getInvalidReason().name();
+                        })
+                    .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+
+            br.close();
+
+            final var added = stats.getOrDefault("OK", 0L);
+            final var processedLines = stats.values().stream().mapToLong(Long::longValue).sum();
+
+            LOG.debug("Restored transactions stats {}", stats);
+
+            if (isCancelled.get()) {
+              LOG.info(
+                  "Added {} transactions of {} loaded from file {}, before operation was cancelled",
+                  added,
+                  processedLines,
+                  saveFile);
+              removeProcessedLines(saveFile, processedLines);
+            } else {
+              LOG.info(
+                  "Added {} transactions of {} loaded from file {}, deleting file",
+                  added,
+                  processedLines,
+                  saveFile);
+              saveFile.delete();
+            }
+          } catch (IOException e) {
+            LOG.error("Error while loading txpool content from disk", e);
+          }
+        }
+      }
+    }
+
+    private String parseScore(final String line) {
+      int i = 0;
+      final var sbScore = new StringBuilder();
+      while ("1234567890-".indexOf(line.charAt(i)) >= 0) {
+        sbScore.append(line.charAt(i++));
+      }
+      return sbScore.toString();
+    }
+
+    private void removeProcessedLines(final File saveFile, final long processedLines)
+        throws IOException {
+
+      LOG.debug("Removing processed lines from save file");
+
+      final var tmp = File.createTempFile(saveFile.getName(), ".tmp");
+
+      try (final BufferedReader reader =
+              Files.newBufferedReader(saveFile.toPath(), StandardCharsets.US_ASCII);
+          final BufferedWriter writer =
+              Files.newBufferedWriter(tmp.toPath(), StandardCharsets.US_ASCII)) {
+        reader
+            .lines()
+            .skip(processedLines)
+            .forEach(
+                line -> {
+                  try {
+                    writer.write(line);
+                    writer.newLine();
+                  } catch (IOException e) {
+                    throw new RuntimeException(e);
+                  }
+                });
+      }
+
+      saveFile.delete();
+      Files.move(tmp.toPath(), saveFile.toPath());
     }
   }
 }

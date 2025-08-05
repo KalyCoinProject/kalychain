@@ -20,15 +20,31 @@ import static com.google.common.base.Preconditions.checkState;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.ethereum.forkid.ForkId;
-import org.hyperledger.besu.ethereum.forkid.ForkIdManager;
+import org.hyperledger.besu.cryptoservices.NodeKey;
 import org.hyperledger.besu.ethereum.p2p.discovery.DiscoveryPeer;
 import org.hyperledger.besu.ethereum.p2p.discovery.PeerDiscoveryStatus;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.DaggerPacketPackage;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.Packet;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.PacketData;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.PacketFactory;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.PacketPackage;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.enrrequest.EnrRequestPacketData;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.enrrequest.EnrRequestPacketDataFactory;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.enrresponse.EnrResponsePacketData;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.enrresponse.EnrResponsePacketDataFactory;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.findneighbors.FindNeighborsPacketData;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.findneighbors.FindNeighborsPacketDataFactory;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.neighbors.NeighborsPacketData;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.neighbors.NeighborsPacketDataFactory;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.ping.PingPacketData;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.ping.PingPacketDataFactory;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.pong.PongPacketData;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.pong.PongPacketDataFactory;
 import org.hyperledger.besu.ethereum.p2p.peers.Peer;
 import org.hyperledger.besu.ethereum.p2p.peers.PeerId;
 import org.hyperledger.besu.ethereum.p2p.permissions.PeerPermissions;
 import org.hyperledger.besu.ethereum.p2p.rlpx.RlpxAgent;
+import org.hyperledger.besu.ethereum.p2p.rlpx.connections.PeerConnection;
 import org.hyperledger.besu.metrics.BesuMetricCategory;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.plugin.services.metrics.Counter;
@@ -45,6 +61,7 @@ import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -129,7 +146,6 @@ public class PeerDiscoveryController {
   private final DiscoveryProtocolLogger discoveryProtocolLogger;
   private final LabelledMetric<Counter> interactionCounter;
   private final LabelledMetric<Counter> interactionRetryCounter;
-  private final ForkIdManager forkIdManager;
   private final boolean filterOnEnrForkId;
   private final RlpxAgent rlpxAgent;
 
@@ -146,8 +162,17 @@ public class PeerDiscoveryController {
   private final AtomicBoolean peerTableIsDirty = new AtomicBoolean(false);
   private OptionalLong cleanTableTimerId = OptionalLong.empty();
   private RecursivePeerRefreshState recursivePeerRefreshState;
+  private final boolean includeBootnodesOnPeerRefresh;
 
-  private PeerDiscoveryController(
+  private final PacketFactory packetFactory;
+  private final PingPacketDataFactory pingPacketDataFactory;
+  private final PongPacketDataFactory pongPacketDataFactory;
+  private final FindNeighborsPacketDataFactory findNeighborsPacketDataFactory;
+  private final NeighborsPacketDataFactory neighborsPacketDataFactory;
+  private final EnrRequestPacketDataFactory enrRequestPacketDataFactory;
+  private final EnrResponsePacketDataFactory enrResponsePacketDataFactory;
+
+  PeerDiscoveryController(
       final NodeKey nodeKey,
       final DiscoveryPeer localPeer,
       final PeerTable peerTable,
@@ -161,9 +186,16 @@ public class PeerDiscoveryController {
       final PeerPermissions peerPermissions,
       final MetricsSystem metricsSystem,
       final Optional<Cache<Bytes, Packet>> maybeCacheForEnrRequests,
-      final ForkIdManager forkIdManager,
       final boolean filterOnEnrForkId,
-      final RlpxAgent rlpxAgent) {
+      final RlpxAgent rlpxAgent,
+      final boolean includeBootnodesOnPeerRefresh,
+      final PacketFactory packetFactory,
+      final PingPacketDataFactory pingPacketDataFactory,
+      final PongPacketDataFactory pongPacketDataFactory,
+      final FindNeighborsPacketDataFactory findNeighborsPacketDataFactory,
+      final NeighborsPacketDataFactory neighborsPacketDataFactory,
+      final EnrRequestPacketDataFactory enrRequestPacketDataFactory,
+      final EnrResponsePacketDataFactory enrResponsePacketDataFactory) {
     this.timerUtil = timerUtil;
     this.nodeKey = nodeKey;
     this.localPeer = localPeer;
@@ -177,6 +209,15 @@ public class PeerDiscoveryController {
     this.discoveryProtocolLogger = new DiscoveryProtocolLogger(metricsSystem);
     this.peerPermissions = new PeerDiscoveryPermissions(localPeer, peerPermissions);
     this.rlpxAgent = rlpxAgent;
+    this.includeBootnodesOnPeerRefresh = includeBootnodesOnPeerRefresh;
+
+    this.packetFactory = packetFactory;
+    this.pingPacketDataFactory = pingPacketDataFactory;
+    this.pongPacketDataFactory = pongPacketDataFactory;
+    this.findNeighborsPacketDataFactory = findNeighborsPacketDataFactory;
+    this.neighborsPacketDataFactory = neighborsPacketDataFactory;
+    this.enrRequestPacketDataFactory = enrRequestPacketDataFactory;
+    this.enrResponsePacketDataFactory = enrResponsePacketDataFactory;
 
     metricsSystem.createIntegerGauge(
         BesuMetricCategory.NETWORK,
@@ -197,11 +238,11 @@ public class PeerDiscoveryController {
             "discovery_interaction_retry_count",
             "Total number of interaction retries performed",
             "type");
+
     this.cachedEnrRequests =
         maybeCacheForEnrRequests.orElse(
             CacheBuilder.newBuilder().maximumSize(50).expireAfterWrite(10, SECONDS).build());
 
-    this.forkIdManager = forkIdManager;
     this.filterOnEnrForkId = filterOnEnrForkId;
   }
 
@@ -264,6 +305,7 @@ public class PeerDiscoveryController {
               l.clear();
             });
     inflightInteractions.clear();
+    recursivePeerRefreshState.cancel();
     return CompletableFuture.completedFuture(null);
   }
 
@@ -314,10 +356,13 @@ public class PeerDiscoveryController {
     }
 
     final DiscoveryPeer peer = resolvePeer(sender);
+    if (peer == null) {
+      return;
+    }
+    final Bytes peerId = peer.getId();
     switch (packet.getType()) {
       case PING:
         if (peerPermissions.allowInboundBonding(peer)) {
-          peer.setLastSeen(System.currentTimeMillis());
           final PingPacketData ping = packet.getPacketData(PingPacketData.class).get();
           if (!PeerDiscoveryStatus.BONDED.equals(peer.getStatus())
               && (bondingPeers.getIfPresent(sender.getId()) == null)) {
@@ -333,10 +378,10 @@ public class PeerDiscoveryController {
                   if (filterOnEnrForkId) {
                     requestENR(peer);
                   }
-                  bondingPeers.invalidate(peer.getId());
-                  addToPeerTable(peer);
+                  bondingPeers.invalidate(peerId);
+                  checkBeforeAddingToPeerTable(peer);
                   recursivePeerRefreshState.onBondingComplete(peer);
-                  Optional.ofNullable(cachedEnrRequests.getIfPresent(peer.getId()))
+                  Optional.ofNullable(cachedEnrRequests.getIfPresent(peerId))
                       .ifPresent(cachedEnrRequest -> processEnrRequest(peer, cachedEnrRequest));
                 });
         break;
@@ -360,42 +405,22 @@ public class PeerDiscoveryController {
         if (PeerDiscoveryStatus.BONDED.equals(peer.getStatus())) {
           processEnrRequest(peer, packet);
         } else if (PeerDiscoveryStatus.BONDING.equals(peer.getStatus())) {
-          LOG.trace("ENR_REQUEST cached for bonding peer Id: {}", peer.getId());
+          LOG.trace("ENR_REQUEST cached for bonding peer Id: {}", peerId);
           // Due to UDP, it may happen that we receive the ENR_REQUEST just before the PONG.
           // Because peers want to send the ENR_REQUEST directly after the pong.
           // If this happens we don't want to ignore the request but process when bonded.
           // this cache allows to keep the request and to respond after having processed the PONG
-          cachedEnrRequests.put(peer.getId(), packet);
+          cachedEnrRequests.put(peerId, packet);
         }
         break;
       case ENR_RESPONSE:
         matchInteraction(packet)
             .ifPresent(
                 interaction -> {
-                  final Optional<ENRResponsePacketData> packetData =
-                      packet.getPacketData(ENRResponsePacketData.class);
+                  final Optional<EnrResponsePacketData> packetData =
+                      packet.getPacketData(EnrResponsePacketData.class);
                   final NodeRecord enr = packetData.get().getEnr();
                   peer.setNodeRecord(enr);
-
-                  final Optional<ForkId> maybeForkId = peer.getForkId();
-                  if (maybeForkId.isPresent()) {
-                    if (forkIdManager.peerCheck(maybeForkId.get())) {
-                      connectOnRlpxLayer(peer);
-                      LOG.debug(
-                          "Peer {} PASSED fork id check. ForkId received: {}",
-                          sender.getId(),
-                          maybeForkId.get());
-                    } else {
-                      LOG.debug(
-                          "Peer {} FAILED fork id check. ForkId received: {}",
-                          sender.getId(),
-                          maybeForkId.get());
-                    }
-                  } else {
-                    // if the peer hasn't sent the ForkId try to connect to it anyways
-                    connectOnRlpxLayer(peer);
-                    LOG.debug("No fork id sent by peer: {}", peer.getId());
-                  }
                 });
         break;
     }
@@ -404,7 +429,7 @@ public class PeerDiscoveryController {
   private void processEnrRequest(final DiscoveryPeer peer, final Packet packet) {
     LOG.trace("ENR_REQUEST received from bonded peer Id: {}", peer.getId());
     packet
-        .getPacketData(ENRRequestPacketData.class)
+        .getPacketData(EnrRequestPacketData.class)
         .ifPresent(p -> respondToENRRequest(p, packet.getHash(), peer));
   }
 
@@ -421,21 +446,31 @@ public class PeerDiscoveryController {
         .collect(Collectors.toList());
   }
 
-  private boolean addToPeerTable(final DiscoveryPeer peer) {
-    // Reset the last seen timestamp.
-    final long now = System.currentTimeMillis();
-    if (peer.getFirstDiscovered() == 0) {
-      peer.setFirstDiscovered(now);
+  private void checkBeforeAddingToPeerTable(final DiscoveryPeer peer) {
+    if (peerTable.isIpAddressInvalid(peer.getEndpoint())) {
+      return;
     }
-    peer.setLastSeen(now);
 
-    if (peer.getStatus() != PeerDiscoveryStatus.BONDED) {
+    if (peer.getFirstDiscovered() == 0L) {
+      connectOnRlpxLayer(peer)
+          .whenComplete(
+              (pc, th) -> {
+                if (th == null || !(th.getCause() instanceof TimeoutException)) {
+                  peer.setStatus(PeerDiscoveryStatus.BONDED);
+                  peer.setFirstDiscovered(System.currentTimeMillis());
+                  addToPeerTable(peer);
+                } else {
+                  LOG.debug("Handshake timed out with peer {}", peer.getLoggableId(), th);
+                  peerTable.invalidateIP(peer.getEndpoint());
+                }
+              });
+    } else {
       peer.setStatus(PeerDiscoveryStatus.BONDED);
-      if (!filterOnEnrForkId) {
-        connectOnRlpxLayer(peer);
-      }
+      addToPeerTable(peer);
     }
+  }
 
+  public void addToPeerTable(final DiscoveryPeer peer) {
     final PeerTable.AddResult result = peerTable.tryAdd(peer);
 
     if (result.getOutcome() == PeerTable.AddResult.AddOutcome.ALREADY_EXISTED) {
@@ -446,12 +481,10 @@ public class PeerDiscoveryController {
       peerTable.tryEvict(result.getEvictionCandidate());
       peerTable.tryAdd(peer);
     }
-
-    return true;
   }
 
-  void connectOnRlpxLayer(final DiscoveryPeer peer) {
-    rlpxAgent.connect(peer);
+  CompletableFuture<PeerConnection> connectOnRlpxLayer(final DiscoveryPeer peer) {
+    return rlpxAgent.connect(peer);
   }
 
   private Optional<PeerInteractionState> matchInteraction(final Packet packet) {
@@ -501,7 +534,17 @@ public class PeerDiscoveryController {
    */
   private void refreshTable() {
     final Bytes target = Peer.randomId();
+
     final List<DiscoveryPeer> initialPeers = peerTable.nearestBondedPeers(Peer.randomId(), 16);
+    if (includeBootnodesOnPeerRefresh) {
+      bootstrapNodes.stream()
+          .filter(p -> p.getStatus() != PeerDiscoveryStatus.BONDED)
+          .forEach(p -> p.setStatus(PeerDiscoveryStatus.KNOWN));
+
+      // If configured to retry bootnodes during peer table refresh, include them
+      // in the initial peers list.
+      initialPeers.addAll(bootstrapNodes);
+    }
     recursivePeerRefreshState.start(initialPeers, target);
     lastRefreshTime = System.currentTimeMillis();
   }
@@ -517,14 +560,13 @@ public class PeerDiscoveryController {
       return;
     }
 
-    peer.setFirstDiscovered(System.currentTimeMillis());
     peer.setStatus(PeerDiscoveryStatus.BONDING);
     bondingPeers.put(peer.getId(), peer);
 
     final Consumer<PeerInteractionState> action =
         interaction -> {
           final PingPacketData data =
-              PingPacketData.create(
+              pingPacketDataFactory.create(
                   Optional.of(localPeer.getEndpoint()),
                   peer.getEndpoint(),
                   localPeer.getNodeRecord().map(NodeRecord::getSeq).orElse(null));
@@ -560,11 +602,9 @@ public class PeerDiscoveryController {
    */
   @VisibleForTesting
   void requestENR(final DiscoveryPeer peer) {
-    peer.setStatus(PeerDiscoveryStatus.ENR_REQUESTED);
-
     final Consumer<PeerInteractionState> action =
         interaction -> {
-          final ENRRequestPacketData data = ENRRequestPacketData.create();
+          final EnrRequestPacketData data = enrRequestPacketDataFactory.create();
           createPacket(
               PacketType.ENR_REQUEST,
               data,
@@ -575,7 +615,7 @@ public class PeerDiscoveryController {
                 final Predicate<Packet> newFilter =
                     packet ->
                         packet
-                            .getPacketData(ENRResponsePacketData.class)
+                            .getPacketData(EnrResponsePacketData.class)
                             .map(enr -> enr.getRequestHash().equals(enrHash))
                             .orElse(false);
                 interaction.updateFilter(newFilter);
@@ -610,7 +650,7 @@ public class PeerDiscoveryController {
     // Creating packets is quite expensive because they have to be cryptographically signed
     // So ensure the work is done on a worker thread to avoid blocking the vertx event thread.
     workerExecutor
-        .execute(() -> Packet.create(type, data, nodeKey))
+        .execute(() -> packetFactory.create(type, data, nodeKey))
         .thenAccept(handler)
         .exceptionally(
             error -> {
@@ -628,7 +668,7 @@ public class PeerDiscoveryController {
   private void findNodes(final DiscoveryPeer peer, final Bytes target) {
     final Consumer<PeerInteractionState> action =
         interaction -> {
-          final FindNeighborsPacketData data = FindNeighborsPacketData.create(target);
+          final FindNeighborsPacketData data = findNeighborsPacketDataFactory.create(target);
           sendPacket(peer, PacketType.FIND_NEIGHBORS, data);
         };
     final PeerInteractionState interaction =
@@ -665,7 +705,7 @@ public class PeerDiscoveryController {
     }
     // We don't care about the `from` field of the ping, we pong to the `sender`
     final PongPacketData data =
-        PongPacketData.create(
+        pongPacketDataFactory.create(
             sender.getEndpoint(),
             pingHash,
             localPeer.getNodeRecord().map(NodeRecord::getSeq).orElse(null));
@@ -684,17 +724,17 @@ public class PeerDiscoveryController {
     // 88 * 13 = 1144 bytes
     // To fit under 1280 bytes, we must return just 13 peers maximum.
     final List<DiscoveryPeer> peers = peerTable.nearestBondedPeers(packetData.getTarget(), 13);
-    final PacketData data = NeighborsPacketData.create(peers);
+    final PacketData data = neighborsPacketDataFactory.create(peers);
     sendPacket(sender, PacketType.NEIGHBORS, data);
   }
 
   private void respondToENRRequest(
-      final ENRRequestPacketData enrRequestPacketData,
+      final EnrRequestPacketData enrRequestPacketData,
       final Bytes requestHash,
       final DiscoveryPeer sender) {
     if (enrRequestPacketData.getExpiration() >= Instant.now().getEpochSecond()) {
-      final ENRResponsePacketData data =
-          ENRResponsePacketData.create(requestHash, localPeer.getNodeRecord().orElse(null));
+      final EnrResponsePacketData data =
+          enrResponsePacketDataFactory.create(requestHash, localPeer.getNodeRecord().orElse(null));
       sendPacket(sender, PacketType.ENR_RESPONSE, data);
     }
   }
@@ -715,7 +755,9 @@ public class PeerDiscoveryController {
 
   public void handleBondingRequest(final DiscoveryPeer peer) {
     final DiscoveryPeer peerToBond = resolvePeer(peer);
-
+    if (peerToBond == null) {
+      return;
+    }
     if (peerPermissions.allowOutboundBonding(peerToBond)
         && PeerDiscoveryStatus.KNOWN.equals(peerToBond.getStatus())) {
       bond(peerToBond);
@@ -724,6 +766,9 @@ public class PeerDiscoveryController {
 
   // Load the peer first from the table, then from bonding cache or use the instance that comes in.
   private DiscoveryPeer resolvePeer(final DiscoveryPeer peer) {
+    if (peerTable.isIpAddressInvalid(peer.getEndpoint())) {
+      return null;
+    }
     final Optional<DiscoveryPeer> maybeKnownPeer =
         peerTable.get(peer).filter(known -> known.discoveryEndpointMatches(peer));
     DiscoveryPeer resolvedPeer = maybeKnownPeer.orElse(peer);
@@ -741,6 +786,7 @@ public class PeerDiscoveryController {
   private class PeerInteractionState implements Predicate<Packet> {
 
     private static final int MAX_RETRIES = 5;
+
     /**
      * The action that led to the peer being in this state (e.g. sending a PING or NEIGHBORS
      * message), in case it needs to be retried.
@@ -748,12 +794,15 @@ public class PeerDiscoveryController {
     private final Consumer<PeerInteractionState> action;
 
     private final Bytes peerId;
+
     /** The expected type of the message that will transition the peer out of this state. */
     private final PacketType expectedType;
 
     private final Counter retryCounter;
+
     /** A custom filter to accept transitions out of this state. */
     private Predicate<Packet> filter;
+
     /** Timers associated with this entry. */
     private OptionalLong timerId = OptionalLong.empty();
 
@@ -797,12 +846,14 @@ public class PeerDiscoveryController {
                       execute();
                     }));
       } else {
-        final Map<PacketType, PeerInteractionState> peerInteractionStateMap =
-            inflightInteractions.get(peerId);
-        peerInteractionStateMap.remove(expectedType);
-        if (peerInteractionStateMap.isEmpty()) {
-          inflightInteractions.remove(peerId);
-        }
+        Optional.ofNullable(inflightInteractions.get(peerId))
+            .ifPresent(
+                peerInterationStateMap -> {
+                  peerInterationStateMap.remove(expectedType);
+                  if (peerInterationStateMap.isEmpty()) {
+                    inflightInteractions.remove(peerId);
+                  }
+                });
       }
     }
 
@@ -825,6 +876,7 @@ public class PeerDiscoveryController {
     private long cleanPeerTableIntervalMs = MILLISECONDS.convert(1, TimeUnit.MINUTES);
     private final List<DiscoveryPeer> bootstrapNodes = new ArrayList<>();
     private PeerTable peerTable;
+    private boolean includeBootnodesOnPeerRefresh = true;
 
     // Required dependencies
     private NodeKey nodeKey;
@@ -836,17 +888,26 @@ public class PeerDiscoveryController {
 
     private Cache<Bytes, Packet> cachedEnrRequests =
         CacheBuilder.newBuilder().maximumSize(50).expireAfterWrite(10, SECONDS).build();
-    private ForkIdManager forkIdManager;
     private RlpxAgent rlpxAgent;
+
+    // set defaults for all PacketPackage classes, allowing calling code to override if needed
+    private final PacketPackage packetPackage = DaggerPacketPackage.create();
+    private PacketFactory packetFactory = packetPackage.packetFactory();
+    private PingPacketDataFactory pingPacketDataFactory = packetPackage.pingPacketDataFactory();
+    private PongPacketDataFactory pongPacketDataFactory = packetPackage.pongPacketDataFactory();
+    private FindNeighborsPacketDataFactory findNeighborsPacketDataFactory =
+        packetPackage.findNeighborsPacketDataFactory();
+    private NeighborsPacketDataFactory neighborsPacketDataFactory =
+        packetPackage.neighborsPacketDataFactory();
+    private EnrRequestPacketDataFactory enrRequestPacketDataFactory =
+        packetPackage.enrRequestPacketDataFactory();
+    private EnrResponsePacketDataFactory enrResponsePacketDataFactory =
+        packetPackage.enrResponsePacketDataFactory();
 
     private Builder() {}
 
     public PeerDiscoveryController build() {
       validate();
-
-      if (peerTable == null) {
-        peerTable = new PeerTable(this.nodeKey.getPublicKey().getEncodedBytes(), 16);
-      }
 
       return new PeerDiscoveryController(
           nodeKey,
@@ -862,9 +923,16 @@ public class PeerDiscoveryController {
           peerPermissions,
           metricsSystem,
           Optional.of(cachedEnrRequests),
-          forkIdManager,
           filterOnEnrForkId,
-          rlpxAgent);
+          rlpxAgent,
+          includeBootnodesOnPeerRefresh,
+          packetFactory,
+          pingPacketDataFactory,
+          pongPacketDataFactory,
+          findNeighborsPacketDataFactory,
+          neighborsPacketDataFactory,
+          enrRequestPacketDataFactory,
+          enrResponsePacketDataFactory);
     }
 
     private void validate() {
@@ -873,8 +941,8 @@ public class PeerDiscoveryController {
       validateRequiredDependency(timerUtil, "TimerUtil");
       validateRequiredDependency(workerExecutor, "AsyncExecutor");
       validateRequiredDependency(metricsSystem, "MetricsSystem");
-      validateRequiredDependency(forkIdManager, "ForkIdManager");
       validateRequiredDependency(rlpxAgent, "RlpxAgent");
+      validateRequiredDependency(peerTable, "PeerTable");
     }
 
     private void validateRequiredDependency(final Object object, final String name) {
@@ -969,9 +1037,47 @@ public class PeerDiscoveryController {
       return this;
     }
 
-    public Builder forkIdManager(final ForkIdManager forkIdManager) {
-      checkNotNull(forkIdManager);
-      this.forkIdManager = forkIdManager;
+    public Builder includeBootnodesOnPeerRefresh(final boolean includeBootnodesOnPeerRefresh) {
+      this.includeBootnodesOnPeerRefresh = includeBootnodesOnPeerRefresh;
+      return this;
+    }
+
+    public Builder setPacketFactory(final PacketFactory packetFactory) {
+      this.packetFactory = packetFactory;
+      return this;
+    }
+
+    public Builder setPingPacketDataFactory(final PingPacketDataFactory pingPacketDataFactory) {
+      this.pingPacketDataFactory = pingPacketDataFactory;
+      return this;
+    }
+
+    public Builder setPongPacketDataFactory(final PongPacketDataFactory pongPacketDataFactory) {
+      this.pongPacketDataFactory = pongPacketDataFactory;
+      return this;
+    }
+
+    public Builder setFindNeighborsPacketDataFactory(
+        final FindNeighborsPacketDataFactory findNeighborsPacketDataFactory) {
+      this.findNeighborsPacketDataFactory = findNeighborsPacketDataFactory;
+      return this;
+    }
+
+    public Builder setNeighborsPacketDataFactory(
+        final NeighborsPacketDataFactory neighborsPacketDataFactory) {
+      this.neighborsPacketDataFactory = neighborsPacketDataFactory;
+      return this;
+    }
+
+    public Builder setEnrRequestPacketDataFactory(
+        final EnrRequestPacketDataFactory enrRequestPacketDataFactory) {
+      this.enrRequestPacketDataFactory = enrRequestPacketDataFactory;
+      return this;
+    }
+
+    public Builder setEnrResponsePacketDataFactory(
+        final EnrResponsePacketDataFactory enrResponsePacketDataFactory) {
+      this.enrResponsePacketDataFactory = enrResponsePacketDataFactory;
       return this;
     }
   }

@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -29,7 +29,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests ethTasks that request data from the network, and retry until all of the data is received.
@@ -136,6 +136,10 @@ public abstract class RetryingSwitchingPeerMessageTaskTest<T> extends RetryingMe
     assertThat(future.isDone()).isTrue();
     assertThat(future.isCompletedExceptionally()).isTrue();
     assertThatThrownBy(future::get).hasCauseInstanceOf(MaxRetriesReachedException.class);
+
+    // since we are below the max number of peers, no peer should be disconnected
+    assertThat(firstPeer.getEthPeer().isDisconnected()).isFalse();
+    assertThat(secondPeer.getEthPeer().isDisconnected()).isFalse();
   }
 
   @Test

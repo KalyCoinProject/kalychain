@@ -14,20 +14,15 @@
 apply plugin: 'java-library'
 
 jar {
-  archiveBaseName = 'besu-plugin-rocksdb'
+  archiveBaseName = calculateArtifactId(project)
   manifest {
     attributes(
       'Specification-Title': archiveBaseName,
       'Specification-Version': project.version,
       'Implementation-Title': archiveBaseName,
-      'Implementation-Version': calculateVersion()
+      'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash
       )
-  }
-}
-
-publishing {
-  publications {
-    mavenJava(MavenPublication) { artifactId 'plugins-rocksdb' }
   }
 }
 
@@ -41,19 +36,19 @@ dependencies {
   implementation project(':util')
 
   implementation 'com.fasterxml.jackson.core:jackson-databind'
+  implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jdk8'
   implementation 'com.google.guava:guava'
   implementation 'info.picocli:picocli'
   implementation 'io.opentelemetry:opentelemetry-api'
-  implementation 'io.prometheus:simpleclient'
-  implementation 'org.apache.tuweni:tuweni-bytes'
+  implementation 'io.consensys.tuweni:tuweni-bytes'
   implementation 'org.rocksdb:rocksdbjni'
+  implementation project(path: ':ethereum:core')
 
   testImplementation project(':testutil')
 
-  testImplementation 'junit:junit'
-  testImplementation 'org.assertj:assertj-core'
-  testImplementation 'org.junit.jupiter:junit-jupiter'
   testImplementation 'org.mockito:mockito-core'
-
-  testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
+  testImplementation 'org.mockito:mockito-junit-jupiter'
+  testImplementation 'org.junit.jupiter:junit-jupiter'
+  testImplementation 'org.assertj:assertj-core'
+  testImplementation 'org.mockito:mockito-junit-jupiter'
 }

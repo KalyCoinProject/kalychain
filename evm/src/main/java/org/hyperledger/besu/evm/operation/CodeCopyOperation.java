@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -22,10 +22,16 @@ import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
+/** The Code copy operation. */
 public class CodeCopyOperation extends AbstractOperation {
 
+  /**
+   * Instantiates a new Code copy operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public CodeCopyOperation(final GasCalculator gasCalculator) {
-    super(0x39, "CODECOPY", 3, 0, 1, gasCalculator);
+    super(0x39, "CODECOPY", 3, 0, gasCalculator);
   }
 
   @Override
@@ -41,7 +47,7 @@ public class CodeCopyOperation extends AbstractOperation {
 
     final Code code = frame.getCode();
 
-    frame.writeMemory(memOffset, sourceOffset, numBytes, code.getContainerBytes(), true);
+    frame.writeMemory(memOffset, sourceOffset, numBytes, code.getBytes(), true);
 
     return new OperationResult(cost, null);
   }

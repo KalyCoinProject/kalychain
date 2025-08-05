@@ -42,6 +42,7 @@ import org.hyperledger.besu.ethereum.eth.manager.ChainState;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeers;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManager;
+import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestBuilder;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestUtil;
 import org.hyperledger.besu.ethereum.eth.manager.RespondingEthPeer;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage.DisconnectReason;
@@ -51,14 +52,14 @@ import org.hyperledger.besu.plugin.services.BesuEvents.SyncStatusListener;
 import java.util.List;
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class SyncStateTest {
 
   private static final Difficulty standardDifficultyPerBlock = Difficulty.ONE;
@@ -88,12 +89,12 @@ public class SyncStateTest {
   private RespondingEthPeer otherPeer;
   private SyncState syncState;
 
-  @Before
+  @BeforeEach
   public void setUp() {
-    ethProtocolManager = EthProtocolManagerTestUtil.create(blockchain);
+    ethProtocolManager = EthProtocolManagerTestBuilder.builder().setBlockchain(blockchain).build();
     ethPeers = spy(ethProtocolManager.ethContext().getEthPeers());
-    syncTargetPeer = createPeer(TARGET_DIFFICULTY, TARGET_CHAIN_HEIGHT);
-    otherPeer = createPeer(Difficulty.ZERO, 0);
+    syncTargetPeer = createPeer(TARGET_CHAIN_HEIGHT);
+    otherPeer = createPeer(0);
 
     advanceLocalChain(OUR_CHAIN_HEAD_NUMBER);
 
@@ -559,8 +560,8 @@ public class SyncStateTest {
     assertThat(clearedEvent).isEmpty();
   }
 
-  private RespondingEthPeer createPeer(final Difficulty totalDifficulty, final long blockHeight) {
-    return EthProtocolManagerTestUtil.createPeer(ethProtocolManager, totalDifficulty, blockHeight);
+  private RespondingEthPeer createPeer(final long blockHeight) {
+    return EthProtocolManagerTestUtil.createPeer(ethProtocolManager, blockHeight);
   }
 
   private EthPeer mockWorseChain(final EthPeer peer) {

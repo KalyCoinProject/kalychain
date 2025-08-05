@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -22,9 +22,24 @@ public class SnapSyncConfiguration {
   // we use 126 and not the max value (128) to avoid sending requests that will be refused
   public static final int DEFAULT_PIVOT_BLOCK_WINDOW_VALIDITY = 126;
   public static final int DEFAULT_PIVOT_BLOCK_DISTANCE_BEFORE_CACHING = 60;
-  public static final int DEFAULT_STORAGE_COUNT_PER_REQUEST = 384;
-  public static final int DEFAULT_BYTECODE_COUNT_PER_REQUEST = 84;
-  public static final int DEFAULT_TRIENODE_COUNT_PER_REQUEST = 384;
+
+  public static final int DEFAULT_STORAGE_COUNT_PER_REQUEST =
+      384; // The default number of storage entries to download from peers per request.
+  public static final int DEFAULT_BYTECODE_COUNT_PER_REQUEST =
+      84; // The default number of code entries to download from peers per request.
+  public static final int DEFAULT_TRIENODE_COUNT_PER_REQUEST =
+      384; // The default number of trienode entries to download from peers per request.
+
+  public static final int DEFAULT_LOCAL_FLAT_ACCOUNT_COUNT_TO_HEAL_PER_REQUEST =
+      128; // The default number of flat accounts entries to verify and heal per request.
+
+  public static final int DEFAULT_LOCAL_FLAT_STORAGE_COUNT_TO_HEAL_PER_REQUEST =
+      1024; // The default number of flat slots entries to verify and heal per request.
+
+  public static final Boolean DEFAULT_SNAP_SERVER_ENABLED = Boolean.FALSE;
+
+  public static final Boolean DEFAULT_SNAP_SYNC_TRANSACTION_INDEXING_ENABLED = Boolean.FALSE;
+  public static final Boolean DEFAULT_SNAP_SYNC_SAVE_PRE_MERGE_HEADERS_ONLY_ENABLED = Boolean.TRUE;
 
   public static SnapSyncConfiguration getDefault() {
     return ImmutableSnapSyncConfiguration.builder().build();
@@ -53,5 +68,25 @@ public class SnapSyncConfiguration {
   @Value.Default
   public int getTrienodeCountPerRequest() {
     return DEFAULT_TRIENODE_COUNT_PER_REQUEST;
+  }
+
+  @Value.Default
+  public int getLocalFlatAccountCountToHealPerRequest() {
+    return DEFAULT_LOCAL_FLAT_ACCOUNT_COUNT_TO_HEAL_PER_REQUEST;
+  }
+
+  @Value.Default
+  public int getLocalFlatStorageCountToHealPerRequest() {
+    return DEFAULT_LOCAL_FLAT_STORAGE_COUNT_TO_HEAL_PER_REQUEST;
+  }
+
+  @Value.Default
+  public Boolean isSnapServerEnabled() {
+    return DEFAULT_SNAP_SERVER_ENABLED;
+  }
+
+  @Value.Default
+  public Boolean isSnapSyncTransactionIndexingEnabled() {
+    return DEFAULT_SNAP_SYNC_TRANSACTION_INDEXING_ENABLED;
   }
 }

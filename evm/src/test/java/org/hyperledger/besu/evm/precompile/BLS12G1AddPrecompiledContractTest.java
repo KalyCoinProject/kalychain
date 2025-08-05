@@ -11,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evm.precompile;
 
@@ -28,62 +27,64 @@ import java.util.stream.Collectors;
 
 import com.google.common.io.CharStreams;
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
-@RunWith(Parameterized.class)
-public class BLS12G1AddPrecompiledContractTest {
+class BLS12G1AddPrecompiledContractTest {
 
   final BLS12G1AddPrecompiledContract contract = new BLS12G1AddPrecompiledContract();
 
   private final MessageFrame messageFrame = mock(MessageFrame.class);
 
-  @Parameterized.Parameters
-  public static Iterable<String[]> parameters() throws IOException {
+  static Iterable<Arguments> parameters() throws IOException {
     return CharStreams.readLines(
             new InputStreamReader(
                 Objects.requireNonNull(
                     BLS12G1AddPrecompiledContractTest.class.getResourceAsStream("g1_add.csv")),
                 UTF_8))
         .stream()
-        .map(line -> line.split(",", 4))
+        .map(line -> Arguments.of((Object[]) line.split(",", 4)))
         .collect(Collectors.toList());
   }
 
-  @Parameterized.Parameter(0)
-  public String input;
+  @ParameterizedTest
+  @MethodSource("parameters")
+  void shouldCalculate(
+      final String inputString,
+      final String expectedResult,
+      final String expectedGasUsed,
+      final String notes) {
 
-  @Parameterized.Parameter(1)
-  public String expectedResult;
-
-  @Parameterized.Parameter(2)
-  public String expectedGasUsed;
-
-  @Parameterized.Parameter(3)
-  public String notes;
-
-  @Test
-  public void shouldCalculate() {
-    if ("input".equals(input)) {
+    if ("input".equals(inputString)) {
       // skip the header row
       return;
     }
-    final Bytes input = Bytes.fromHexString(this.input);
+    final Bytes input = Bytes.fromHexString(inputString);
     final Bytes expectedComputation =
         expectedResult == null ? null : Bytes.fromHexString(expectedResult);
-    final Bytes actualComputation = contract.compute(input, messageFrame);
+    final PrecompiledContract.PrecompileContractResult result =
+        contract.computePrecompile(input, messageFrame);
+    Bytes actualComputation = result.output();
     if (actualComputation == null) {
       final ArgumentCaptor<Bytes> revertReason = ArgumentCaptor.forClass(Bytes.class);
       Mockito.verify(messageFrame).setRevertReason(revertReason.capture());
-      assertThat(new String(revertReason.getValue().toArrayUnsafe(), UTF_8)).isEqualTo(notes);
+      assertThat(new String(revertReason.getValue().toArrayUnsafe(), UTF_8)).contains(notes);
 
       assertThat(expectedComputation.size()).isZero();
     } else {
       assertThat(actualComputation).isEqualTo(expectedComputation);
       assertThat(contract.gasRequirement(input)).isEqualTo(Long.parseLong(expectedGasUsed));
     }
+  }
+
+  @Test
+  void dryRunDetector() {
+    assertThat(true)
+        .withFailMessage("This test is here so gradle --dry-run executes this class")
+        .isTrue();
   }
 }

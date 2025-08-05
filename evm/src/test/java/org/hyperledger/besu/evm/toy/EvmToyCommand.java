@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -11,12 +11,10 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evm.toy;
 
 import org.hyperledger.besu.datatypes.Address;
-import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.evm.Code;
 import org.hyperledger.besu.evm.EVM;
@@ -33,8 +31,6 @@ import org.hyperledger.besu.evm.worldstate.WorldUpdater;
 
 import java.io.PrintStream;
 import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 
@@ -100,16 +96,34 @@ public class EvmToyCommand implements Runnable {
   private final Wei ethValue = Wei.ZERO;
 
   @CommandLine.Option(
-      names = {"--json"},
+      names = {"--json", "--trace"},
       description = "Trace each opcode as a json object.",
       scope = ScopeType.INHERIT)
   final Boolean showJsonResults = false;
 
   @CommandLine.Option(
-      names = {"--nomemory"},
-      description = "Disable showing the full memory output for each op.",
+      names = {"--showMemory", "--trace.memory"},
+      description = "When tracing, show the full memory when not empty.",
       scope = ScopeType.INHERIT)
-  final Boolean noMemory = false;
+  final Boolean showMemory = false;
+
+  @CommandLine.Option(
+      names = {"--trace.stack"},
+      description = "When tracing, show the operand stack.",
+      scope = ScopeType.INHERIT)
+  final Boolean showStack = false;
+
+  @CommandLine.Option(
+      names = {"--trace.returnData"},
+      description = "When tracing, show the return data when not empty.",
+      scope = ScopeType.INHERIT)
+  final Boolean showReturnData = false;
+
+  @CommandLine.Option(
+      names = {"--trace.storage"},
+      description = "When tracing, show the updated storage contents.",
+      scope = ScopeType.INHERIT)
+  final Boolean showStorage = false;
 
   @CommandLine.Option(
       names = {"--repeat"},
@@ -137,12 +151,12 @@ public class EvmToyCommand implements Runnable {
   @Override
   public void run() {
     final WorldUpdater worldUpdater = new ToyWorld();
-    worldUpdater.getOrCreate(sender).getMutable().setBalance(Wei.of(BigInteger.TWO.pow(20)));
-    worldUpdater.getOrCreate(receiver).getMutable().setCode(codeBytes);
+    worldUpdater.getOrCreate(sender).setBalance(Wei.of(BigInteger.TWO.pow(20)));
+    worldUpdater.getOrCreate(receiver).setCode(codeBytes);
 
     int repeat = this.repeat;
     final EVM evm = MainnetEVMs.berlin(EvmConfiguration.DEFAULT);
-    final Code code = evm.getCode(Hash.hash(codeBytes), codeBytes);
+    final Code code = evm.wrapCode(codeBytes);
     final PrecompileContractRegistry precompileContractRegistry = new PrecompileContractRegistry();
     MainnetPrecompiledContracts.populateForIstanbul(
         precompileContractRegistry, evm.getGasCalculator());
@@ -153,14 +167,13 @@ public class EvmToyCommand implements Runnable {
 
       final OperationTracer tracer = // You should have picked Mercy.
           lastLoop && showJsonResults
-              ? new StandardJsonTracer(System.out, !noMemory)
+              ? new StandardJsonTracer(
+                  System.out, showMemory, showStack, showReturnData, showStorage)
               : OperationTracer.NO_TRACING;
 
-      final Deque<MessageFrame> messageFrameStack = new ArrayDeque<>();
-      messageFrameStack.add(
+      MessageFrame initialMessageFrame =
           MessageFrame.builder()
               .type(MessageFrame.Type.MESSAGE_CALL)
-              .messageFrameStack(messageFrameStack)
               .worldUpdater(worldUpdater.updater())
               .initialGas(gas)
               .contract(Address.ZERO)
@@ -173,33 +186,27 @@ public class EvmToyCommand implements Runnable {
               .apparentValue(ethValue)
               .code(code)
               .blockValues(new ToyBlockValues())
-              .depth(0)
               .completer(c -> {})
               .miningBeneficiary(Address.ZERO)
-              .blockHashLookup(h -> null)
-              .build());
+              .blockHashLookup((__, ___) -> null)
+              .build();
 
       final MessageCallProcessor mcp = new MessageCallProcessor(evm, precompileContractRegistry);
-      final ContractCreationProcessor ccp =
-          new ContractCreationProcessor(evm.getGasCalculator(), evm, false, List.of(), 0);
+      final ContractCreationProcessor ccp = new ContractCreationProcessor(evm, false, List.of(), 0);
       stopwatch.start();
+      Deque<MessageFrame> messageFrameStack = initialMessageFrame.getMessageFrameStack();
       while (!messageFrameStack.isEmpty()) {
         final MessageFrame messageFrame = messageFrameStack.peek();
         switch (messageFrame.getType()) {
-          case CONTRACT_CREATION:
-            ccp.process(messageFrame, tracer);
-            break;
-          case MESSAGE_CALL:
-            mcp.process(messageFrame, tracer);
-            break;
+          case CONTRACT_CREATION -> ccp.process(messageFrame, tracer);
+          case MESSAGE_CALL -> mcp.process(messageFrame, tracer);
         }
         if (lastLoop) {
           if (messageFrame.getExceptionalHaltReason().isPresent()) {
             out.println(messageFrame.getExceptionalHaltReason().get());
           }
           if (messageFrame.getRevertReason().isPresent()) {
-            out.println(
-                new String(messageFrame.getRevertReason().get().toArray(), StandardCharsets.UTF_8));
+            out.println(messageFrame.getRevertReason().get().toHexString());
           }
         }
         if (messageFrameStack.isEmpty()) {

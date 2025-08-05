@@ -14,13 +14,14 @@
  */
 package org.hyperledger.besu.ethereum.mainnet;
 
-import org.hyperledger.besu.config.MergeConfigOptions;
+import org.hyperledger.besu.config.MergeConfiguration;
+import org.hyperledger.besu.ethereum.GasLimitCalculator;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.mainnet.feemarket.BaseFeeMarket;
 import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.AncestryValidationRule;
-import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.AttachedComposedFromDetachedRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.BaseFeeMarketBlockHeaderGasPriceValidationRule;
+import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.BlobGasValidationRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.CalculatedDifficultyValidationRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.ConstantFieldValidationRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.ConstantOmmersHashRule;
@@ -28,11 +29,13 @@ import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.ExtraDataMaxL
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.GasLimitRangeAndDeltaValidationRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.GasUsageValidationRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.IncrementalTimestampRule;
+import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.NoBlobRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.NoDifficultyRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.NoNonceRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.ProofOfWorkValidationRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.TimestampBoundedByFutureParameter;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.TimestampMoreRecentThanParent;
+import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
 import java.util.Optional;
 
@@ -129,7 +132,7 @@ public final class MainnetBlockHeaderValidator {
 
   public static BlockHeaderValidator.Builder createBaseFeeMarketValidator(
       final BaseFeeMarket baseFeeMarket) {
-    return createBaseFeeMarketValidator(baseFeeMarket, MergeConfigOptions.isMergeEnabled());
+    return createBaseFeeMarketValidator(baseFeeMarket, MergeConfiguration.isMergeEnabled());
   }
 
   @VisibleForTesting
@@ -148,17 +151,13 @@ public final class MainnetBlockHeaderValidator {
             .addRule(new ExtraDataMaxLengthValidationRule(BlockHeader.MAX_EXTRA_DATA_BYTES))
             .addRule((new BaseFeeMarketBlockHeaderGasPriceValidationRule(baseFeeMarket)));
 
-    // if merge is enabled, use the attached version of the proof of work validation rule
-    var powValidationRule =
-        new ProofOfWorkValidationRule(
-            new EpochCalculator.DefaultEpochCalculator(),
-            PoWHasher.ETHASH_LIGHT,
-            Optional.of(baseFeeMarket));
-
-    if (isMergeEnabled) {
-      builder.addRule(new AttachedComposedFromDetachedRule(powValidationRule));
-    } else {
-      builder.addRule(powValidationRule);
+    // if this is not a merged PoS network, add the proof of work validation rule:
+    if (!isMergeEnabled) {
+      builder.addRule(
+          new ProofOfWorkValidationRule(
+              new EpochCalculator.DefaultEpochCalculator(),
+              PoWHasher.ETHASH_LIGHT,
+              Optional.of(baseFeeMarket)));
     }
     return builder;
   }
@@ -182,7 +181,10 @@ public final class MainnetBlockHeaderValidator {
         .addRule((new BaseFeeMarketBlockHeaderGasPriceValidationRule(baseFeeMarket)));
   }
 
-  public static BlockHeaderValidator.Builder mergeBlockHeaderValidator(final FeeMarket feeMarket) {
+  public static BlockHeaderValidator.Builder mergeBlockHeaderValidator(
+      final FeeMarket feeMarket,
+      final GasCalculator gasCalculator,
+      final GasLimitCalculator gasLimitCalculator) {
 
     var baseFeeMarket = (BaseFeeMarket) feeMarket;
 
@@ -192,12 +194,27 @@ public final class MainnetBlockHeaderValidator {
         .addRule(
             new GasLimitRangeAndDeltaValidationRule(
                 MIN_GAS_LIMIT, Long.MAX_VALUE, Optional.of(baseFeeMarket)))
-        .addRule(new TimestampBoundedByFutureParameter(TIMESTAMP_TOLERANCE_S))
         .addRule(new ExtraDataMaxLengthValidationRule(BlockHeader.MAX_EXTRA_DATA_BYTES))
         .addRule((new BaseFeeMarketBlockHeaderGasPriceValidationRule(baseFeeMarket)))
         .addRule(new ConstantOmmersHashRule())
         .addRule(new NoNonceRule())
         .addRule(new NoDifficultyRule())
         .addRule(new IncrementalTimestampRule());
+  }
+
+  public static BlockHeaderValidator.Builder noBlobBlockHeaderValidator(
+      final FeeMarket feeMarket,
+      final GasCalculator gasCalculator,
+      final GasLimitCalculator gasLimitCalculator) {
+    return mergeBlockHeaderValidator(feeMarket, gasCalculator, gasLimitCalculator)
+        .addRule(new NoBlobRule());
+  }
+
+  public static BlockHeaderValidator.Builder blobAwareBlockHeaderValidator(
+      final FeeMarket feeMarket,
+      final GasCalculator gasCalculator,
+      final GasLimitCalculator gasLimitCalculator) {
+    return mergeBlockHeaderValidator(feeMarket, gasCalculator, gasLimitCalculator)
+        .addRule(new BlobGasValidationRule(gasCalculator, gasLimitCalculator));
   }
 }

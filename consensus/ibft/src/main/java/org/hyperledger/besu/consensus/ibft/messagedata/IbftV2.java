@@ -15,11 +15,19 @@
 package org.hyperledger.besu.consensus.ibft.messagedata;
 
 /** Message codes for iBFT v2 messages */
-public class IbftV2 {
-  public static final int PROPOSAL = 0;
-  public static final int PREPARE = 1;
-  public static final int COMMIT = 2;
-  public static final int ROUND_CHANGE = 3;
+public interface IbftV2 {
+  /** The constant PROPOSAL. */
+  int PROPOSAL = 0;
 
-  public static final int MESSAGE_SPACE = 4;
+  /** The constant PREPARE. */
+  int PREPARE = 1;
+
+  /** The constant COMMIT. */
+  int COMMIT = 2;
+
+  /** The constant ROUND_CHANGE. */
+  int ROUND_CHANGE = 3;
+
+  /** The constant MESSAGE_SPACE. */
+  int MESSAGE_SPACE = 4;
 }

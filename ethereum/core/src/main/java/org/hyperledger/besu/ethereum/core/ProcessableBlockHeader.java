@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -25,7 +25,8 @@ import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 
 /** A block header capable of being processed. */
-public class ProcessableBlockHeader implements BlockValues {
+public class ProcessableBlockHeader
+    implements BlockValues, org.hyperledger.besu.plugin.data.ProcessableBlockHeader {
 
   protected final Hash parentHash;
 
@@ -43,6 +44,8 @@ public class ProcessableBlockHeader implements BlockValues {
   protected final Wei baseFee;
   // prevRandao is included for post-merge blocks
   protected final Bytes32 mixHashOrPrevRandao;
+  // parentBeaconBlockRoot is included for Cancun
+  protected final Bytes32 parentBeaconBlockRoot;
 
   protected ProcessableBlockHeader(
       final Hash parentHash,
@@ -52,7 +55,8 @@ public class ProcessableBlockHeader implements BlockValues {
       final long gasLimit,
       final long timestamp,
       final Wei baseFee,
-      final Bytes32 mixHashOrPrevRandao) {
+      final Bytes32 mixHashOrPrevRandao,
+      final Bytes32 parentBeaconBlockRoot) {
     this.parentHash = parentHash;
     this.coinbase = coinbase;
     this.difficulty = difficulty;
@@ -61,6 +65,7 @@ public class ProcessableBlockHeader implements BlockValues {
     this.timestamp = timestamp;
     this.baseFee = baseFee;
     this.mixHashOrPrevRandao = mixHashOrPrevRandao;
+    this.parentBeaconBlockRoot = parentBeaconBlockRoot;
   }
 
   /**
@@ -68,6 +73,7 @@ public class ProcessableBlockHeader implements BlockValues {
    *
    * @return the block parent block hash
    */
+  @Override
   public Hash getParentHash() {
     return parentHash;
   }
@@ -77,6 +83,7 @@ public class ProcessableBlockHeader implements BlockValues {
    *
    * @return the block coinbase address
    */
+  @Override
   public Address getCoinbase() {
     return coinbase;
   }
@@ -86,6 +93,7 @@ public class ProcessableBlockHeader implements BlockValues {
    *
    * @return the block difficulty
    */
+  @Override
   public Difficulty getDifficulty() {
     return difficulty;
   }
@@ -155,7 +163,40 @@ public class ProcessableBlockHeader implements BlockValues {
    *
    * @return the raw bytes of the prevRandao field
    */
+  @Override
   public Optional<Bytes32> getPrevRandao() {
     return Optional.ofNullable(mixHashOrPrevRandao);
+  }
+
+  /**
+   * Returns the parent beacon block root.
+   *
+   * @return the parent beacon block root.
+   */
+  @Override
+  public Optional<Bytes32> getParentBeaconBlockRoot() {
+    return Optional.ofNullable(parentBeaconBlockRoot);
+  }
+
+  public String toLogString() {
+    return getNumber() + " (time: " + getTimestamp() + ")";
+  }
+
+  @Override
+  public String toString() {
+    final StringBuilder sb = new StringBuilder();
+    sb.append("ProcessableBlockHeader{");
+    sb.append("number=").append(number).append(", ");
+    sb.append("parentHash=").append(parentHash).append(", ");
+    sb.append("coinbase=").append(coinbase).append(", ");
+    sb.append("difficulty=").append(difficulty).append(", ");
+    sb.append("gasLimit=").append(gasLimit).append(", ");
+    sb.append("timestamp=").append(timestamp).append(", ");
+    sb.append("baseFee=").append(baseFee).append(", ");
+    sb.append("mixHashOrPrevRandao=").append(mixHashOrPrevRandao).append(", ");
+    if (parentBeaconBlockRoot != null) {
+      sb.append("parentBeaconBlockRoot=").append(parentBeaconBlockRoot).append(", ");
+    }
+    return sb.append("}").toString();
   }
 }

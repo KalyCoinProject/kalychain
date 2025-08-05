@@ -11,13 +11,15 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.ethereum.referencetests;
 
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.BlockHeaderBuilder;
+import org.hyperledger.besu.ethereum.core.BlockHeaderFunctions;
 import org.hyperledger.besu.ethereum.core.Transaction;
+import org.hyperledger.besu.ethereum.mainnet.MainnetBlockHeaderFunctions;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -37,6 +39,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public class GeneralStateTestCaseSpec {
 
   private final Map<String, List<GeneralStateTestCaseEipSpec>> finalStateSpecs;
+  private static final BlockHeaderFunctions MAINNET_FUNCTIONS = new MainnetBlockHeaderFunctions();
 
   @JsonCreator
   public GeneralStateTestCaseSpec(
@@ -49,24 +52,32 @@ public class GeneralStateTestCaseSpec {
   }
 
   private Map<String, List<GeneralStateTestCaseEipSpec>> generate(
-      final BlockHeader blockHeader,
+      final BlockHeader rawBlockHeader,
       final ReferenceTestWorldState initialWorldState,
       final Map<String, List<PostSection>> postSections,
       final StateTestVersionedTransaction versionedTransaction) {
-
+    if (initialWorldState == null) {
+      return Map.of();
+    }
     initialWorldState.persist(null);
     final Map<String, List<GeneralStateTestCaseEipSpec>> res =
-        new LinkedHashMap<>(postSections.size());
+        LinkedHashMap.newLinkedHashMap(postSections.size());
     for (final Map.Entry<String, List<PostSection>> entry : postSections.entrySet()) {
       final String eip = entry.getKey();
       final List<PostSection> post = entry.getValue();
       final List<GeneralStateTestCaseEipSpec> specs = new ArrayList<>(post.size());
       for (final PostSection p : post) {
-        final Supplier<Transaction> txSupplier = () -> versionedTransaction.get(p.indexes);
+        final BlockHeader blockHeader =
+            BlockHeaderBuilder.fromHeader(rawBlockHeader)
+                .stateRoot(p.rootHash)
+                .blockHeaderFunctions(MAINNET_FUNCTIONS)
+                .buildBlockHeader();
+        final List<Supplier<Transaction>> txSupplierList =
+            List.of(() -> versionedTransaction.get(p.indexes));
         specs.add(
             new GeneralStateTestCaseEipSpec(
                 eip,
-                txSupplier,
+                txSupplierList,
                 initialWorldState,
                 p.rootHash,
                 p.logsHash,

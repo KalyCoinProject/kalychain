@@ -15,8 +15,8 @@
 package org.hyperledger.besu.ethereum.api.handlers;
 
 import org.hyperledger.besu.ethereum.api.jsonrpc.context.ContextKey;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.Handler;
@@ -34,21 +34,21 @@ public class JsonRpcParserHandler {
     return ctx -> {
       final HttpServerResponse response = ctx.response();
       if (ctx.getBody() == null) {
-        errorResponse(response, JsonRpcError.PARSE_ERROR);
+        errorResponse(response, RpcErrorType.PARSE_ERROR);
       } else {
         try {
           ctx.put(ContextKey.REQUEST_BODY_AS_JSON_OBJECT.name(), ctx.getBodyAsJson());
-        } catch (DecodeException jsonObjectDecodeException) {
+        } catch (DecodeException | ClassCastException jsonObjectDecodeException) {
           try {
             final JsonArray batchRequest = ctx.getBodyAsJsonArray();
             if (batchRequest.isEmpty()) {
-              errorResponse(response, JsonRpcError.INVALID_REQUEST);
+              errorResponse(response, RpcErrorType.INVALID_REQUEST);
               return;
             } else {
               ctx.put(ContextKey.REQUEST_BODY_AS_JSON_ARRAY.name(), batchRequest);
             }
-          } catch (DecodeException jsonArrayDecodeException) {
-            errorResponse(response, JsonRpcError.PARSE_ERROR);
+          } catch (DecodeException | ClassCastException jsonArrayDecodeException) {
+            errorResponse(response, RpcErrorType.PARSE_ERROR);
             return;
           }
         }
@@ -58,7 +58,7 @@ public class JsonRpcParserHandler {
   }
 
   private static void errorResponse(
-      final HttpServerResponse response, final JsonRpcError rpcError) {
+      final HttpServerResponse response, final RpcErrorType rpcError) {
     if (!response.closed()) {
       response
           .setStatusCode(HttpResponseStatus.BAD_REQUEST.code())

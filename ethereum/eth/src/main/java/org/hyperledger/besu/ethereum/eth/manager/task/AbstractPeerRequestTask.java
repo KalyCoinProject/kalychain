@@ -39,12 +39,17 @@ public abstract class AbstractPeerRequestTask<R> extends AbstractPeerTask<R> {
   private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(5);
 
   private Duration timeout = DEFAULT_TIMEOUT;
+  private final String protocolName;
   private final int requestCode;
   private volatile PendingPeerRequest responseStream;
 
   protected AbstractPeerRequestTask(
-      final EthContext ethContext, final int requestCode, final MetricsSystem metricsSystem) {
+      final EthContext ethContext,
+      final String protocolName,
+      final int requestCode,
+      final MetricsSystem metricsSystem) {
     super(ethContext, metricsSystem);
+    this.protocolName = protocolName;
     this.requestCode = requestCode;
   }
 
@@ -75,7 +80,7 @@ public abstract class AbstractPeerRequestTask<R> extends AbstractPeerTask<R> {
           if (t != null) {
             t = ExceptionUtils.rootCause(t);
             if (t instanceof TimeoutException && responseStream.isPresent()) {
-              responseStream.get().getPeer().recordRequestTimeout(requestCode);
+              responseStream.get().getPeer().recordRequestTimeout(protocolName, requestCode);
             }
             result.completeExceptionally(t);
           } else if (r != null) {
@@ -83,10 +88,6 @@ public abstract class AbstractPeerRequestTask<R> extends AbstractPeerTask<R> {
             result.complete(new PeerTaskResult<>(responseStream.get().getPeer(), r));
           }
         });
-  }
-
-  public PendingPeerRequest sendRequestToPeer(final PeerRequest request) {
-    return sendRequestToPeer(request, 0L);
   }
 
   public PendingPeerRequest sendRequestToPeer(
@@ -112,8 +113,12 @@ public abstract class AbstractPeerRequestTask<R> extends AbstractPeerTask<R> {
           });
     } catch (final RLPException e) {
       // Peer sent us malformed data - disconnect
-      LOG.debug("Disconnecting with BREACH_OF_PROTOCOL due to malformed message: {}", peer, e);
-      peer.disconnect(DisconnectReason.BREACH_OF_PROTOCOL);
+      LOG.debug(
+          "Disconnecting with BREACH_OF_PROTOCOL due to malformed message: {}",
+          peer.getLoggableId(),
+          e);
+      LOG.trace("Peer {} Malformed message data: {}", peer, message.getData());
+      peer.disconnect(DisconnectReason.BREACH_OF_PROTOCOL_MALFORMED_MESSAGE_RECEIVED);
       promise.completeExceptionally(new PeerBreachedProtocolException());
     }
   }

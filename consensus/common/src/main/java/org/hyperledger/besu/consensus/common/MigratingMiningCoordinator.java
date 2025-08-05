@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -29,10 +29,10 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import com.google.common.annotations.VisibleForTesting;
-import org.apache.tuweni.bytes.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Migrating mining coordinator. */
 public class MigratingMiningCoordinator implements MiningCoordinator, BlockAddedObserver {
 
   private static final Logger LOG = LoggerFactory.getLogger(MigratingMiningCoordinator.class);
@@ -42,13 +42,19 @@ public class MigratingMiningCoordinator implements MiningCoordinator, BlockAdded
   private MiningCoordinator activeMiningCoordinator;
   private long blockAddedObserverId;
 
+  /**
+   * Instantiates a new Migrating mining coordinator.
+   *
+   * @param miningCoordinatorSchedule the mining coordinator schedule
+   * @param blockchain the blockchain
+   */
   public MigratingMiningCoordinator(
       final ForksSchedule<MiningCoordinator> miningCoordinatorSchedule,
       final Blockchain blockchain) {
     this.miningCoordinatorSchedule = miningCoordinatorSchedule;
     this.blockchain = blockchain;
     this.activeMiningCoordinator =
-        this.miningCoordinatorSchedule.getFork(blockchain.getChainHeadBlockNumber()).getValue();
+        this.miningCoordinatorSchedule.getFork(blockchain.getChainHeadBlockNumber() + 1).getValue();
   }
 
   @Override
@@ -58,6 +64,7 @@ public class MigratingMiningCoordinator implements MiningCoordinator, BlockAdded
   }
 
   private void startActiveMiningCoordinator() {
+    activeMiningCoordinator.enable();
     activeMiningCoordinator.start();
     if (activeMiningCoordinator instanceof BlockAddedObserver) {
       ((BlockAddedObserver) activeMiningCoordinator).removeObserver();
@@ -96,8 +103,8 @@ public class MigratingMiningCoordinator implements MiningCoordinator, BlockAdded
   }
 
   @Override
-  public void setExtraData(final Bytes extraData) {
-    activeMiningCoordinator.setExtraData(extraData);
+  public Wei getMinPriorityFeePerGas() {
+    return activeMiningCoordinator.getMinPriorityFeePerGas();
   }
 
   @Override
@@ -125,7 +132,7 @@ public class MigratingMiningCoordinator implements MiningCoordinator, BlockAdded
 
   @Override
   public void onBlockAdded(final BlockAddedEvent event) {
-    final long currentBlock = event.getBlock().getHeader().getNumber();
+    final long currentBlock = event.getHeader().getNumber();
     final MiningCoordinator nextMiningCoordinator =
         miningCoordinatorSchedule.getFork(currentBlock + 1).getValue();
 
@@ -153,6 +160,11 @@ public class MigratingMiningCoordinator implements MiningCoordinator, BlockAdded
     }
   }
 
+  /**
+   * Gets mining coordinator schedule.
+   *
+   * @return the mining coordinator schedule
+   */
   @VisibleForTesting
   public ForksSchedule<MiningCoordinator> getMiningCoordinatorSchedule() {
     return this.miningCoordinatorSchedule;

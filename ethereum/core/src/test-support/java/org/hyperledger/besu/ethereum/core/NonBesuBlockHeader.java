@@ -14,12 +14,15 @@
  */
 package org.hyperledger.besu.ethereum.core;
 
-import org.hyperledger.besu.plugin.data.Address;
+import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.Quantity;
 import org.hyperledger.besu.plugin.data.BlockHeader;
-import org.hyperledger.besu.plugin.data.Hash;
-import org.hyperledger.besu.plugin.data.Quantity;
+
+import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.bytes.Bytes32;
 
 public class NonBesuBlockHeader implements BlockHeader {
 
@@ -107,7 +110,32 @@ public class NonBesuBlockHeader implements BlockHeader {
   }
 
   @Override
+  public Optional<? extends Hash> getWithdrawalsRoot() {
+    return Optional.empty();
+  }
+
+  @Override
+  public Optional<? extends Hash> getRequestsHash() {
+    return Optional.empty();
+  }
+
+  @Override
   public Hash getBlockHash() {
     return blockHash;
+  }
+
+  @Override
+  public Optional<? extends Quantity> getExcessBlobGas() {
+    return Optional.empty();
+  }
+
+  @Override
+  public Optional<? extends Long> getBlobGasUsed() {
+    return Optional.empty();
+  }
+
+  @Override
+  public Optional<? extends Bytes32> getParentBeaconBlockRoot() {
+    return Optional.empty();
   }
 }

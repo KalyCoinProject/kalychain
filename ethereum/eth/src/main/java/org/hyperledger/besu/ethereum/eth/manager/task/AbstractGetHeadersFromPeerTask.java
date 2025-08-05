@@ -15,13 +15,13 @@
 package org.hyperledger.besu.ethereum.eth.manager.task;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.traceLambda;
 
 import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.eth.EthProtocol;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
 import org.hyperledger.besu.ethereum.eth.messages.BlockHeadersMessage;
-import org.hyperledger.besu.ethereum.eth.messages.EthPV62;
+import org.hyperledger.besu.ethereum.eth.messages.EthProtocolMessages;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MessageData;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage;
@@ -53,7 +53,7 @@ public abstract class AbstractGetHeadersFromPeerTask
       final int skip,
       final boolean reverse,
       final MetricsSystem metricsSystem) {
-    super(ethContext, EthPV62.GET_BLOCK_HEADERS, metricsSystem);
+    super(ethContext, EthProtocol.NAME, EthProtocolMessages.GET_BLOCK_HEADERS, metricsSystem);
     checkArgument(count > 0);
     this.protocolSchedule = protocolSchedule;
     this.count = count;
@@ -65,7 +65,7 @@ public abstract class AbstractGetHeadersFromPeerTask
   protected Optional<List<BlockHeader>> processResponse(
       final boolean streamClosed, final MessageData message, final EthPeer peer) {
     if (streamClosed) {
-      // All outstanding requests have been responded to and we still haven't found the response
+      // All outstanding requests have been responded to, and we still haven't found the response
       // we wanted. It must have been empty or contain data that didn't match.
       peer.recordUselessResponse("headers");
       return Optional.of(Collections.emptyList());
@@ -75,19 +75,19 @@ public abstract class AbstractGetHeadersFromPeerTask
     final List<BlockHeader> headers = headersMessage.getHeaders(protocolSchedule);
     if (headers.isEmpty()) {
       // Message contains no data - nothing to do
-      LOG.debug("headers.isEmpty. Peer: {}", peer);
+      LOG.debug("headers.isEmpty. Peer: {}", peer.getLoggableId());
       return Optional.empty();
     }
     if (headers.size() > count) {
       // Too many headers - this isn't our response
-      LOG.debug("headers.size()>count. Peer: {}", peer);
+      LOG.debug("headers.size()>count. Peer: {}", peer.getLoggableId());
       return Optional.empty();
     }
 
     final BlockHeader firstHeader = headers.get(0);
     if (!matchesFirstHeader(firstHeader)) {
       // This isn't our message - nothing to do
-      LOG.debug("!matchesFirstHeader. Peer: {}", peer);
+      LOG.debug("!matchesFirstHeader. Peer: {}", peer.getLoggableId());
       return Optional.empty();
     }
 
@@ -96,11 +96,12 @@ public abstract class AbstractGetHeadersFromPeerTask
     BlockHeader prevBlockHeader = firstHeader;
     updatePeerChainState(peer, firstHeader);
     final int expectedDelta = reverse ? -(skip + 1) : (skip + 1);
+    BlockHeader header = null;
     for (int i = 1; i < headers.size(); i++) {
-      final BlockHeader header = headers.get(i);
+      header = headers.get(i);
       if (header.getNumber() != prevBlockHeader.getNumber() + expectedDelta) {
         // Skip doesn't match, this isn't our data
-        LOG.debug("header not matching the expected number. Peer: {}", peer);
+        LOG.debug("header not matching the expected number. Peer: {}", peer.getLoggableId());
         return Optional.empty();
       }
       // if headers are supposed to be sequential check if a chain is formed
@@ -110,27 +111,38 @@ public abstract class AbstractGetHeadersFromPeerTask
         if (!parent.getHash().equals(child.getParentHash())) {
           LOG.debug(
               "Sequential headers must form a chain through hashes (BREACH_OF_PROTOCOL), disconnecting peer: {}",
-              peer);
-          peer.disconnect(DisconnectMessage.DisconnectReason.BREACH_OF_PROTOCOL);
+              peer.getLoggableId());
+          peer.disconnect(
+              DisconnectMessage.DisconnectReason.BREACH_OF_PROTOCOL_NON_SEQUENTIAL_HEADERS);
           return Optional.empty();
         }
       }
       prevBlockHeader = header;
       headersList.add(header);
+    }
+    // if we have received more than one header we have to update the chain state with the last
+    // header as well, as the header with the highest block number can be the first or the last
+    // header.
+    if (headers.size() > 1) {
       updatePeerChainState(peer, header);
     }
 
-    LOG.debug("Received {} of {} headers requested from peer {}", headersList.size(), count, peer);
+    LOG.atTrace()
+        .setMessage("Received {} of {} headers requested from peer {}")
+        .addArgument(headersList::size)
+        .addArgument(count)
+        .addArgument(peer::getLoggableId)
+        .log();
     return Optional.of(headersList);
   }
 
   private void updatePeerChainState(final EthPeer peer, final BlockHeader blockHeader) {
     if (blockHeader.getNumber() > peer.chainState().getEstimatedHeight()) {
-      traceLambda(
-          LOG,
-          "Updating chain state for peer {} to block header {}",
-          peer::getShortNodeId,
-          blockHeader::toLogString);
+      LOG.atTrace()
+          .setMessage("Updating chain state for peer {} to block header {}")
+          .addArgument(peer::getLoggableId)
+          .addArgument(blockHeader::toLogString)
+          .log();
       peer.chainState().update(blockHeader);
     }
     LOG.trace("Peer chain state {}", peer.chainState());

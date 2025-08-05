@@ -33,17 +33,16 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import io.vertx.core.json.Json;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class SubscriptionRequestMapperTest {
 
   private SubscriptionRequestMapper mapper;
   // These tests aren't passing through WebSocketRequestHandler, so connectionId is null.
   private final String CONNECTION_ID = null;
-  private static final String ENCLAVE_PUBLIC_KEY = "enclave_public_key";
 
-  @Before
+  @BeforeEach
   public void before() {
     mapper = new SubscriptionRequestMapper();
   }
@@ -83,7 +82,7 @@ public class SubscriptionRequestMapperTest {
         .isInstanceOf(InvalidSubscriptionRequestException.class)
         .getCause()
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 0");
+        .hasMessage("Invalid subscription type parameter (index 0)");
   }
 
   @Test
@@ -138,7 +137,7 @@ public class SubscriptionRequestMapperTest {
         .isInstanceOf(InvalidSubscriptionRequestException.class)
         .getCause()
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 1");
+        .hasMessageContaining("Invalid subscription parameter (index 1)");
   }
 
   @Test
@@ -290,7 +289,7 @@ public class SubscriptionRequestMapperTest {
         .isInstanceOf(InvalidSubscriptionRequestException.class)
         .getCause()
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 1");
+        .hasMessageContaining("Invalid filter parameters (index 1)");
   }
 
   @Test
@@ -303,7 +302,7 @@ public class SubscriptionRequestMapperTest {
         .isInstanceOf(InvalidSubscriptionRequestException.class)
         .getCause()
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 1");
+        .hasMessageContaining("Invalid filter parameters (index 1)");
   }
 
   @Test
@@ -372,67 +371,7 @@ public class SubscriptionRequestMapperTest {
         .isInstanceOf(InvalidSubscriptionRequestException.class)
         .getCause()
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 0");
-  }
-
-  @Test
-  public void mapRequestToPrivateLogsSubscription() {
-    final JsonRpcRequest jsonRpcRequest =
-        parseWebSocketRpcRequest(
-            "{\"id\": 1, \"method\": \"priv_subscribe\", \"params\": [\"B1aVtMxLCUHmBVHXoZzzBgPbW/wj5axDpW9X8l91SGo=\", \"logs\", {\"address\": \"0x8320fe7702b96808f7bbc0d4a888ed1468216cfd\"}]}");
-
-    final PrivateSubscribeRequest expectedSubscribeRequest =
-        new PrivateSubscribeRequest(
-            SubscriptionType.LOGS,
-            new FilterParameter(
-                BlockParameter.LATEST,
-                BlockParameter.LATEST,
-                null,
-                null,
-                singletonList(Address.fromHexString("0x8320fe7702b96808f7bbc0d4a888ed1468216cfd")),
-                emptyList(),
-                null,
-                null,
-                null),
-            null,
-            null,
-            "B1aVtMxLCUHmBVHXoZzzBgPbW/wj5axDpW9X8l91SGo=",
-            ENCLAVE_PUBLIC_KEY);
-
-    final PrivateSubscribeRequest subscribeRequest =
-        mapper.mapPrivateSubscribeRequest(
-            new JsonRpcRequestContext(jsonRpcRequest), ENCLAVE_PUBLIC_KEY);
-
-    assertThat(subscribeRequest).usingRecursiveComparison().isEqualTo(expectedSubscribeRequest);
-  }
-
-  @Test
-  public void mapRequestToPrivateSubscriptionWithInvalidType() {
-    final JsonRpcRequest jsonRpcRequest =
-        parseWebSocketRpcRequest(
-            "{\"id\": 1, \"method\": \"priv_subscribe\", \"params\": [\"B1aVtMxLCUHmBVHXoZzzBgPbW/wj5axDpW9X8l91SGo=\", \"syncing\", {\"includeTransactions\": true}]}");
-
-    assertThatThrownBy(
-            () ->
-                mapper.mapPrivateSubscribeRequest(
-                    new JsonRpcRequestContext(jsonRpcRequest), ENCLAVE_PUBLIC_KEY))
-        .isInstanceOf(InvalidSubscriptionRequestException.class)
-        .hasMessage("Invalid subscribe request. Invalid private subscription type.");
-  }
-
-  @Test
-  public void mapRequestToPrivateUnsubscribeRequest() {
-    final JsonRpcRequest jsonRpcRequest =
-        parseWebSocketRpcRequest(
-            "{\"id\": 1, \"method\": \"priv_unsubscribe\", \"params\": [\"B1aVtMxLCUHmBVHXoZzzBgPbW/wj5axDpW9X8l91SGo=\", \"0x1\"]}");
-    final PrivateUnsubscribeRequest expectedUnsubscribeRequest =
-        new PrivateUnsubscribeRequest(
-            1L, CONNECTION_ID, "B1aVtMxLCUHmBVHXoZzzBgPbW/wj5axDpW9X8l91SGo=");
-
-    final PrivateUnsubscribeRequest unsubscribeRequest =
-        mapper.mapPrivateUnsubscribeRequest(new JsonRpcRequestContext(jsonRpcRequest));
-
-    assertThat(unsubscribeRequest).isEqualTo(expectedUnsubscribeRequest);
+        .hasMessageContaining("Invalid subscription type parameter (index 0)");
   }
 
   private WebSocketRpcRequest parseWebSocketRpcRequest(final String json) {

@@ -14,33 +14,33 @@
  *
  */
 
+plugins {
+  id 'org.graalvm.buildtools.native' version '0.10.6'
+}
+
 apply plugin: 'java-library'
 apply plugin: 'application'
 apply plugin: 'idea'
 
 jar {
-  archiveBaseName = 'besu-evmtool'
+  archiveBaseName = calculateArtifactId(project)
   manifest {
     attributes(
       'Specification-Title': archiveBaseName,
       'Specification-Version': project.version,
       'Implementation-Title': archiveBaseName,
-      'Implementation-Version': calculateVersion()
+      'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash
       )
   }
 }
 
 dependencies {
-  api 'org.slf4j:slf4j-api'
 
-  implementation project(':besu')
+  implementation project(':app')
   implementation project(':config')
-  implementation project(':crypto')
+  implementation project(':crypto:algorithms')
   implementation project(':datatypes')
-  implementation project(':consensus:clique')
-  implementation project(':consensus:common')
-  implementation project(':consensus:ibft')
-  implementation project(':consensus:qbft')
   implementation project(':ethereum:api')
   implementation project(':ethereum:core')
   implementation project(':ethereum:referencetests')
@@ -56,30 +56,25 @@ dependencies {
   implementation 'com.google.guava:guava'
   implementation 'info.picocli:picocli'
   implementation 'io.vertx:vertx-core'
-  implementation 'org.apache.logging.log4j:log4j-core'
+  implementation 'tools.profiler:async-profiler:4.0'
+  implementation 'com.github.oshi:oshi-core:6.6.5'
 
   annotationProcessor 'com.google.dagger:dagger-compiler'
+  annotationProcessor 'info.picocli:picocli-codegen'
 
-  testImplementation 'junit:junit'
   testImplementation 'org.assertj:assertj-core'
   testImplementation 'org.junit.jupiter:junit-jupiter'
   testImplementation 'org.mockito:mockito-core'
+  testImplementation 'org.mockito:mockito-junit-jupiter'
 
-  testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
+  // No logging in graalvm EvmTool
+  nativeImageClasspath 'org.slf4j:slf4j-nop'
 }
 
-mainClassName = 'org.hyperledger.besu.evmtool.EvmTool'
-
-startScripts {
-  applicationName = 'evm'
-  defaultJvmOpts = [
-    "-Dsecp256k1.randomize=false"
-  ]
-  doLast {
-    unixScript.text = unixScript.text.replace('BESU_HOME', '\$APP_HOME')
-    windowsScript.text = windowsScript.text.replace('BESU_HOME', '%~dp0..')
-  }
+application {
+  mainClass = 'org.hyperledger.besu.evmtool.EvmTool'
 }
+
 
 // rename the top level dir from besu-<version> to besu and this makes it really
 // simple for use in docker
@@ -100,11 +95,11 @@ tasks.register("dockerDistUntar") {
   }
 }
 
-task distDocker(type: Exec) {
+tasks.register('distDocker', Exec) {
   dependsOn dockerDistUntar
   def dockerBuildVersion = project.hasProperty('release.releaseVersion') ? project.property('release.releaseVersion') : "${rootProject.version}"
   def dockerOrgName = project.hasProperty('dockerOrgName') ? project.getProperty("dockerOrgName") : "hyperledger"
-  def dockerArtifactName = project.hasProperty("dockerArtifactName") ? project.getProperty("dockerArtifactName") : "besu-evmtool"
+  def dockerArtifactName = project.hasProperty("dockerArtifactName") ? "${project.getProperty("dockerArtifactName")}-evmtool" : "besu-evmtool"
   def imageName = "${dockerOrgName}/${dockerArtifactName}"
 
   def image = "${imageName}:${dockerBuildVersion}"
@@ -118,15 +113,16 @@ task distDocker(type: Exec) {
     }
   }
 
+  def gitDetails = getGitCommitDetails(10)
   executable "sh"
-  args "-c", "docker build --build-arg BUILD_DATE=${buildTime()} --build-arg VERSION=${dockerBuildVersion} --build-arg VCS_REF=${getCheckedOutGitCommitHash()} -t ${image} ."
+  args "-c", "docker build --build-arg BUILD_DATE=${buildTime()} --build-arg VERSION=${dockerBuildVersion} --build-arg VCS_REF=${gitDetails.hash} -t ${image} ."
 }
 
-task dockerUpload(type: Exec) {
+tasks.register('dockerUpload', Exec) {
   dependsOn distDocker
-  def dockerBuildVersion = project.hasProperty('release.releaseVersion') ? project.property('release.releaseVersion') : "${rootProject.version}"
+  String dockerBuildVersion = project.hasProperty('release.releaseVersion') ? project.property('release.releaseVersion') : "${rootProject.version}"
   def dockerOrgName = project.hasProperty('dockerOrgName') ? project.getProperty("dockerOrgName") : "hyperledger"
-  def dockerArtifactName = project.hasProperty("dockerArtifactName") ? project.getProperty("dockerArtifactName") : "besu-evmtool"
+  def dockerArtifactName = project.hasProperty("dockerArtifactName") ? "${project.getProperty("dockerArtifactName")}-evmtool" : "besu-evmtool"
   def imageName = "${dockerOrgName}/${dockerArtifactName}"
   def image = "${imageName}:${dockerBuildVersion}"
   def cmd = "docker push '${image}'"
@@ -136,7 +132,7 @@ task dockerUpload(type: Exec) {
     additionalTags.add('develop')
   }
 
-  if (!(dockerBuildVersion ==~ /.*-SNAPSHOT/)) {
+  if (!(dockerBuildVersion ==~ /.*-SNAPSHOT/ || dockerBuildVersion ==~/.*develop.*/)) {
     additionalTags.add('latest')
     additionalTags.add(dockerBuildVersion.split(/\./)[0..1].join('.'))
   }

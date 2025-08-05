@@ -17,32 +17,27 @@ package org.hyperledger.besu.ethereum.permissioning.node;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.ethereum.p2p.peers.EnodeURLImpl;
-import org.hyperledger.besu.ethereum.permissioning.GoQuorumQip714Gate;
 import org.hyperledger.besu.ethereum.permissioning.NodeLocalConfigPermissioningController;
-import org.hyperledger.besu.ethereum.permissioning.node.provider.SyncStatusNodePermissioningProvider;
 import org.hyperledger.besu.plugin.data.EnodeURL;
 import org.hyperledger.besu.plugin.services.permissioning.NodeConnectionPermissioningProvider;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class NodePermissioningControllerTest {
 
   private static final EnodeURL enode1 =
@@ -52,37 +47,22 @@ public class NodePermissioningControllerTest {
       EnodeURLImpl.fromString(
           "enode://6f8a80d14311c39f35f516fa664deaaaa13e85b2f7493f37f6144d86991ec012937307647bd3b9a82abe2974e1407241d54947bbb39763a4cac9f77166ad92a0@192.168.0.3:5678");
 
-  @Mock private SyncStatusNodePermissioningProvider syncStatusNodePermissioningProvider;
-  Optional<SyncStatusNodePermissioningProvider> syncStatusNodePermissioningProviderOptional;
   @Mock private NodeLocalConfigPermissioningController localConfigNodePermissioningProvider;
   @Mock private NodeConnectionPermissioningProvider otherPermissioningProvider;
-  @Mock private GoQuorumQip714Gate goQuorumQip714Gate;
 
   private NodePermissioningController controller;
 
-  @Before
+  @BeforeEach
   public void before() {
-    syncStatusNodePermissioningProviderOptional = Optional.of(syncStatusNodePermissioningProvider);
     List<NodeConnectionPermissioningProvider> emptyProviders = new ArrayList<>();
-    this.controller =
-        new NodePermissioningController(
-            syncStatusNodePermissioningProviderOptional, emptyProviders, Optional.empty());
+    this.controller = new NodePermissioningController(emptyProviders);
   }
 
   @Test
-  public void isPermittedShouldDelegateToSyncStatusProvider() {
-    controller.isPermitted(enode1, enode2);
-
-    verify(syncStatusNodePermissioningProvider, atLeast(1))
-        .isConnectionPermitted(eq(enode1), eq(enode2));
-  }
-
-  @Test
-  public void whenNoSyncStatusProviderWeShouldDelegateToLocalConfigNodePermissioningProvider() {
+  public void delegateToLocalConfigNodePermissioningProvider() {
     List<NodeConnectionPermissioningProvider> providers = new ArrayList<>();
     providers.add(localConfigNodePermissioningProvider);
-    this.controller =
-        new NodePermissioningController(Optional.empty(), providers, Optional.empty());
+    this.controller = new NodePermissioningController(providers);
 
     controller.isPermitted(enode1, enode2);
 
@@ -90,23 +70,16 @@ public class NodePermissioningControllerTest {
   }
 
   @Test
-  public void
-      whenInSyncWeShouldDelegateToAnyOtherNodePermissioningProviderAndIsPermittedIfAllPermitted() {
+  public void shouldDelegateToOtherNodePermissioningProviderAndIsPermittedIfAllPermitted() {
     List<NodeConnectionPermissioningProvider> providers = getNodePermissioningProviders();
-    this.controller =
-        new NodePermissioningController(
-            syncStatusNodePermissioningProviderOptional, providers, Optional.empty());
+    this.controller = new NodePermissioningController(providers);
 
-    when(syncStatusNodePermissioningProvider.isConnectionPermitted(eq(enode1), eq(enode2)))
-        .thenReturn(true);
-    when(syncStatusNodePermissioningProvider.hasReachedSync()).thenReturn(true);
     when(localConfigNodePermissioningProvider.isConnectionPermitted(eq(enode1), eq(enode2)))
         .thenReturn(true);
     when(otherPermissioningProvider.isConnectionPermitted(eq(enode1), eq(enode2))).thenReturn(true);
 
     assertThat(controller.isPermitted(enode1, enode2)).isTrue();
 
-    verify(syncStatusNodePermissioningProvider).isConnectionPermitted(eq(enode1), eq(enode2));
     verify(localConfigNodePermissioningProvider).isConnectionPermitted(eq(enode1), eq(enode2));
     verify(otherPermissioningProvider).isConnectionPermitted(eq(enode1), eq(enode2));
   }
@@ -119,17 +92,11 @@ public class NodePermissioningControllerTest {
   }
 
   @Test
-  public void
-      whenInSyncWeShouldDelegateToAnyOtherNodePermissioningProviderAndIsNotPermittedIfAnyNotPermitted() {
+  public void shouldDelegateToOtherNodePermissioningProviderAndIsNotPermittedIfAnyNotPermitted() {
     List<NodeConnectionPermissioningProvider> providers = getNodePermissioningProviders();
 
-    this.controller =
-        new NodePermissioningController(
-            syncStatusNodePermissioningProviderOptional, providers, Optional.empty());
+    this.controller = new NodePermissioningController(providers);
 
-    when(syncStatusNodePermissioningProvider.isConnectionPermitted(eq(enode1), eq(enode2)))
-        .thenReturn(true);
-    when(syncStatusNodePermissioningProvider.hasReachedSync()).thenReturn(true);
     when(localConfigNodePermissioningProvider.isConnectionPermitted(eq(enode1), eq(enode2)))
         .thenReturn(true);
     when(otherPermissioningProvider.isConnectionPermitted(eq(enode1), eq(enode2)))
@@ -137,7 +104,6 @@ public class NodePermissioningControllerTest {
 
     assertThat(controller.isPermitted(enode1, enode2)).isFalse();
 
-    verify(syncStatusNodePermissioningProvider).isConnectionPermitted(eq(enode1), eq(enode2));
     verify(localConfigNodePermissioningProvider).isConnectionPermitted(eq(enode1), eq(enode2));
     verify(otherPermissioningProvider).isConnectionPermitted(eq(enode1), eq(enode2));
   }
@@ -146,14 +112,11 @@ public class NodePermissioningControllerTest {
   public void shouldStopAtInsufficientPeersWhenInsufficientAndBootnode() {
     final List<NodeConnectionPermissioningProvider> providers = getNodePermissioningProviders();
 
-    this.controller =
-        new NodePermissioningController(
-            syncStatusNodePermissioningProviderOptional, providers, Optional.empty());
+    this.controller = new NodePermissioningController(providers);
 
     final ContextualNodePermissioningProvider insufficientPeersPermissioningProvider =
         mock(ContextualNodePermissioningProvider.class);
 
-    when(syncStatusNodePermissioningProvider.hasReachedSync()).thenReturn(true);
     when(insufficientPeersPermissioningProvider.isPermitted(eq(enode1), eq(enode2)))
         .thenReturn(Optional.of(true));
 
@@ -169,15 +132,11 @@ public class NodePermissioningControllerTest {
   public void doesntStopAtInsufficientPeersWhenNoAnswer() {
     final List<NodeConnectionPermissioningProvider> providers = getNodePermissioningProviders();
 
-    this.controller =
-        new NodePermissioningController(
-            syncStatusNodePermissioningProviderOptional, providers, Optional.empty());
+    this.controller = new NodePermissioningController(providers);
 
     final ContextualNodePermissioningProvider insufficientPeersPermissioningProvider =
         mock(ContextualNodePermissioningProvider.class);
 
-    when(syncStatusNodePermissioningProvider.isConnectionPermitted(any(), any())).thenReturn(true);
-    when(syncStatusNodePermissioningProvider.hasReachedSync()).thenReturn(true);
     when(insufficientPeersPermissioningProvider.isPermitted(any(), any()))
         .thenReturn(Optional.empty());
     when(localConfigNodePermissioningProvider.isConnectionPermitted(any(), any())).thenReturn(true);
@@ -187,51 +146,7 @@ public class NodePermissioningControllerTest {
 
     assertThat(controller.isPermitted(enode1, enode2)).isTrue();
 
-    verify(syncStatusNodePermissioningProvider, times(1)).isConnectionPermitted(any(), any());
     verify(insufficientPeersPermissioningProvider, times(1)).isPermitted(any(), any());
     providers.forEach(p -> verify(p, times(1)).isConnectionPermitted(any(), any()));
-  }
-
-  @Test
-  public void whenQuorumQip714GateIsEmptyShouldDelegateToProviders() {
-    this.controller =
-        new NodePermissioningController(
-            syncStatusNodePermissioningProviderOptional, Collections.emptyList(), Optional.empty());
-
-    controller.isPermitted(enode1, enode2);
-
-    verify(syncStatusNodePermissioningProvider, atLeast(1))
-        .isConnectionPermitted(eq(enode1), eq(enode2));
-  }
-
-  @Test
-  public void whenQuorumQip714GateIsNotActiveShouldBypassProviders() {
-    this.controller =
-        new NodePermissioningController(
-            syncStatusNodePermissioningProviderOptional,
-            Collections.emptyList(),
-            Optional.of(goQuorumQip714Gate));
-
-    when(goQuorumQip714Gate.shouldCheckPermissions()).thenReturn(false);
-
-    assertThat(controller.isPermitted(enode1, enode2)).isTrue();
-
-    verifyNoInteractions(syncStatusNodePermissioningProvider);
-  }
-
-  @Test
-  public void whenQuorumQip714GateIsActiveShouldDelegateToProviders() {
-    this.controller =
-        new NodePermissioningController(
-            syncStatusNodePermissioningProviderOptional,
-            Collections.emptyList(),
-            Optional.of(goQuorumQip714Gate));
-
-    when(goQuorumQip714Gate.shouldCheckPermissions()).thenReturn(true);
-
-    controller.isPermitted(enode1, enode2);
-
-    verify(syncStatusNodePermissioningProvider, atLeast(1))
-        .isConnectionPermitted(eq(enode1), eq(enode2));
   }
 }

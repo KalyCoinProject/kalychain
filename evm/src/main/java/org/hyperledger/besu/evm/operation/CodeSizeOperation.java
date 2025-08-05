@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,20 +18,25 @@ import org.hyperledger.besu.evm.Code;
 import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
+import org.hyperledger.besu.evm.internal.Words;
 
-import org.apache.tuweni.units.bigints.UInt256;
-
+/** The Code size operation. */
 public class CodeSizeOperation extends AbstractFixedCostOperation {
 
+  /**
+   * Instantiates a new Code size operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public CodeSizeOperation(final GasCalculator gasCalculator) {
-    super(0x38, "CODESIZE", 0, 1, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
+    super(0x38, "CODESIZE", 0, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
   }
 
   @Override
   public Operation.OperationResult executeFixedCostOperation(
       final MessageFrame frame, final EVM evm) {
     final Code code = frame.getCode();
-    frame.pushStackItem(UInt256.valueOf(code.getSize()));
+    frame.pushStackItem(Words.intBytes(code.getSize()));
 
     return successResponse;
   }

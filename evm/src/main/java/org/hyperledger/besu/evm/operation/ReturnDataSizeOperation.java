@@ -17,21 +17,27 @@ package org.hyperledger.besu.evm.operation;
 import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
+import org.hyperledger.besu.evm.internal.Words;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.apache.tuweni.units.bigints.UInt256;
 
+/** The Return data size operation. */
 public class ReturnDataSizeOperation extends AbstractFixedCostOperation {
 
+  /**
+   * Instantiates a new Return data size operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public ReturnDataSizeOperation(final GasCalculator gasCalculator) {
-    super(0x3D, "RETURNDATASIZE", 0, 1, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
+    super(0x3D, "RETURNDATASIZE", 0, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
   }
 
   @Override
   public Operation.OperationResult executeFixedCostOperation(
       final MessageFrame frame, final EVM evm) {
     final Bytes returnData = frame.getReturnData();
-    frame.pushStackItem(UInt256.valueOf(returnData.size()));
+    frame.pushStackItem(Words.longBytes(returnData.size()));
 
     return successResponse;
   }

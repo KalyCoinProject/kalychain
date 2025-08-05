@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,34 +16,37 @@ package org.hyperledger.besu.config;
 
 import java.util.Map;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.common.collect.ImmutableMap;
+import org.immutables.value.Value;
 
-public class CliqueConfigOptions {
+/** Configuration options for the Clique consensus mechanism. */
+@Value.Immutable
+public interface CliqueConfigOptions {
 
-  public static final CliqueConfigOptions DEFAULT =
-      new CliqueConfigOptions(JsonUtil.createEmptyObjectNode());
+  /**
+   * The number of blocks in an epoch.
+   *
+   * @return the epoch length
+   */
+  long getEpochLength();
 
-  private static final long DEFAULT_EPOCH_LENGTH = 30_000;
-  private static final int DEFAULT_BLOCK_PERIOD_SECONDS = 15;
+  /**
+   * Gets block period seconds.
+   *
+   * @return the block period seconds
+   */
+  int getBlockPeriodSeconds();
 
-  private final ObjectNode cliqueConfigRoot;
+  /**
+   * Gets create empty blocks.
+   *
+   * @return whether empty blocks are permitted
+   */
+  boolean getCreateEmptyBlocks();
 
-  CliqueConfigOptions(final ObjectNode cliqueConfigRoot) {
-    this.cliqueConfigRoot = cliqueConfigRoot;
-  }
-
-  public long getEpochLength() {
-    return JsonUtil.getLong(cliqueConfigRoot, "epochlength", DEFAULT_EPOCH_LENGTH);
-  }
-
-  public int getBlockPeriodSeconds() {
-    return JsonUtil.getPositiveInt(
-        cliqueConfigRoot, "blockperiodseconds", DEFAULT_BLOCK_PERIOD_SECONDS);
-  }
-
-  Map<String, Object> asMap() {
-    return ImmutableMap.of(
-        "epochLength", getEpochLength(), "blockPeriodSeconds", getBlockPeriodSeconds());
-  }
+  /**
+   * A map of the config options.
+   *
+   * @return the map
+   */
+  Map<String, Object> asMap();
 }

@@ -21,10 +21,11 @@ import static org.hyperledger.besu.ethereum.mainnet.BodyValidation.receiptsRoot;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.TransactionReceipt;
+import org.hyperledger.besu.ethereum.eth.EthProtocol;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
 import org.hyperledger.besu.ethereum.eth.manager.PendingPeerRequest;
-import org.hyperledger.besu.ethereum.eth.messages.EthPV63;
+import org.hyperledger.besu.ethereum.eth.messages.EthProtocolMessages;
 import org.hyperledger.besu.ethereum.eth.messages.ReceiptsMessage;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MessageData;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
@@ -50,7 +51,7 @@ public class GetReceiptsFromPeerTask
       final EthContext ethContext,
       final Collection<BlockHeader> blockHeaders,
       final MetricsSystem metricsSystem) {
-    super(ethContext, EthPV63.GET_RECEIPTS, metricsSystem);
+    super(ethContext, EthProtocol.NAME, EthProtocolMessages.GET_RECEIPTS, metricsSystem);
     this.blockHeaders = blockHeaders;
     blockHeaders.forEach(
         header ->
@@ -83,7 +84,11 @@ public class GetReceiptsFromPeerTask
             .collect(toList());
     return sendRequestToPeer(
         peer -> {
-          LOG.debug("Requesting {} receipts from peer {}.", blockHeaders.size(), peer);
+          LOG.atTrace()
+              .setMessage("Requesting {} receipts from peer {}")
+              .addArgument(blockHeaders::size)
+              .addArgument(peer::getLoggableId)
+              .log();
           return peer.getReceipts(blockHashes);
         },
         maximumRequiredBlockNumber);
@@ -93,12 +98,11 @@ public class GetReceiptsFromPeerTask
   protected Optional<Map<BlockHeader, List<TransactionReceipt>>> processResponse(
       final boolean streamClosed, final MessageData message, final EthPeer peer) {
     if (streamClosed) {
-      // All outstanding requests have been responded to and we still haven't found the response
+      // All outstanding requests have been responded to, and we still haven't found the response
       // we wanted. It must have been empty or contain data that didn't match.
       peer.recordUselessResponse("receipts");
       return Optional.of(emptyMap());
     }
-
     final ReceiptsMessage receiptsMessage = ReceiptsMessage.readFrom(message);
     final List<List<TransactionReceipt>> receiptsByBlock = receiptsMessage.receipts();
     if (receiptsByBlock.isEmpty()) {

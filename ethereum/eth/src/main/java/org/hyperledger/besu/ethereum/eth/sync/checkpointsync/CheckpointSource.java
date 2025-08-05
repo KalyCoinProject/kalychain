@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,9 +16,7 @@ package org.hyperledger.besu.ethereum.eth.sync.checkpointsync;
 
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
-import org.hyperledger.besu.ethereum.core.BlockHeaderFunctions;
 import org.hyperledger.besu.ethereum.core.ProcessableBlockHeader;
-import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncState;
 
 import java.util.Iterator;
@@ -35,12 +33,10 @@ public class CheckpointSource implements Iterator<Hash> {
   private final AtomicBoolean isDownloading = new AtomicBoolean(false);
 
   public CheckpointSource(
-      final SyncState syncState,
-      final EthPeer ethPeer,
-      final BlockHeaderFunctions blockHeaderFunctions) {
+      final SyncState syncState, final BlockHeader blockHeader, final int nbBlocks) {
     this.syncState = syncState;
-    this.checkpoint = ethPeer.getCheckpointHeader().orElseThrow();
-    this.nbBlocks = blockHeaderFunctions.getCheckPointWindowSize(checkpoint);
+    this.checkpoint = blockHeader;
+    this.nbBlocks = nbBlocks;
     this.lastHeaderDownloaded = Optional.empty();
   }
 

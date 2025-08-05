@@ -22,7 +22,6 @@ import org.hyperledger.besu.evm.account.MutableAccount;
 import org.hyperledger.besu.evm.contractvalidation.ContractValidationRule;
 import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
 import org.hyperledger.besu.evm.frame.MessageFrame;
-import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 import org.hyperledger.besu.evm.tracing.OperationTracer;
 
 import java.util.Collection;
@@ -41,45 +40,51 @@ public class ContractCreationProcessor extends AbstractMessageProcessor {
 
   private final boolean requireCodeDepositToSucceed;
 
-  private final GasCalculator gasCalculator;
-
   private final long initialContractNonce;
 
   private final List<ContractValidationRule> contractValidationRules;
 
+  /**
+   * Instantiates a new Contract creation processor.
+   *
+   * @param evm the evm
+   * @param requireCodeDepositToSucceed the require code deposit to succeed
+   * @param contractValidationRules the contract validation rules
+   * @param initialContractNonce the initial contract nonce
+   * @param forceCommitAddresses the force commit addresses
+   */
   public ContractCreationProcessor(
-      final GasCalculator gasCalculator,
       final EVM evm,
       final boolean requireCodeDepositToSucceed,
       final List<ContractValidationRule> contractValidationRules,
       final long initialContractNonce,
       final Collection<Address> forceCommitAddresses) {
     super(evm, forceCommitAddresses);
-    this.gasCalculator = gasCalculator;
     this.requireCodeDepositToSucceed = requireCodeDepositToSucceed;
     this.contractValidationRules = contractValidationRules;
     this.initialContractNonce = initialContractNonce;
   }
 
+  /**
+   * Instantiates a new Contract creation processor.
+   *
+   * @param evm the evm
+   * @param requireCodeDepositToSucceed the require code deposit to succeed
+   * @param contractValidationRules the contract validation rules
+   * @param initialContractNonce the initial contract nonce
+   */
   public ContractCreationProcessor(
-      final GasCalculator gasCalculator,
       final EVM evm,
       final boolean requireCodeDepositToSucceed,
       final List<ContractValidationRule> contractValidationRules,
       final long initialContractNonce) {
-    this(
-        gasCalculator,
-        evm,
-        requireCodeDepositToSucceed,
-        contractValidationRules,
-        initialContractNonce,
-        Set.of());
+    this(evm, requireCodeDepositToSucceed, contractValidationRules, initialContractNonce, Set.of());
   }
 
   private static boolean accountExists(final Account account) {
     // The account exists if it has sent a transaction
     // or already has its code initialized.
-    return account.getNonce() > 0 || !account.getCode().isEmpty();
+    return account.getNonce() != 0 || !account.getCode().isEmpty() || !account.isStorageEmpty();
   }
 
   @Override
@@ -89,20 +94,21 @@ public class ContractCreationProcessor extends AbstractMessageProcessor {
     }
     try {
 
-      final MutableAccount sender = frame.getWorldUpdater().getSenderAccount(frame).getMutable();
+      final MutableAccount sender = frame.getWorldUpdater().getSenderAccount(frame);
       sender.decrementBalance(frame.getValue());
 
-      final MutableAccount contract =
-          frame.getWorldUpdater().getOrCreate(frame.getContractAddress()).getMutable();
+      Address contractAddress = frame.getContractAddress();
+      final MutableAccount contract = frame.getWorldUpdater().getOrCreate(contractAddress);
       if (accountExists(contract)) {
         LOG.trace(
             "Contract creation error: account has already been created for address {}",
-            frame.getContractAddress());
-        frame.setExceptionalHaltReason(Optional.of(ExceptionalHaltReason.INSUFFICIENT_GAS));
+            contractAddress);
+        frame.setExceptionalHaltReason(Optional.of(ExceptionalHaltReason.ILLEGAL_STATE_CHANGE));
         frame.setState(MessageFrame.State.EXCEPTIONAL_HALT);
         operationTracer.traceAccountCreationResult(
-            frame, Optional.of(ExceptionalHaltReason.INSUFFICIENT_GAS));
+            frame, Optional.of(ExceptionalHaltReason.ILLEGAL_STATE_CHANGE));
       } else {
+        frame.addCreate(contractAddress);
         contract.incrementBalance(frame.getValue());
         contract.setNonce(initialContractNonce);
         contract.clearStorage();
@@ -117,9 +123,10 @@ public class ContractCreationProcessor extends AbstractMessageProcessor {
 
   @Override
   public void codeSuccess(final MessageFrame frame, final OperationTracer operationTracer) {
-    final Bytes contractCode = frame.getOutputData();
+    final Bytes contractCode =
+        frame.getCreatedCode() == null ? frame.getOutputData() : frame.getCreatedCode().getBytes();
 
-    final long depositFee = gasCalculator.codeDepositGasCost(contractCode.size());
+    final long depositFee = evm.getGasCalculator().codeDepositGasCost(contractCode.size());
 
     if (frame.getRemainingGas() < depositFee) {
       LOG.trace(
@@ -140,7 +147,7 @@ public class ContractCreationProcessor extends AbstractMessageProcessor {
     } else {
       final var invalidReason =
           contractValidationRules.stream()
-              .map(rule -> rule.validate(frame))
+              .map(rule -> rule.validate(contractCode, frame, evm))
               .filter(Optional::isPresent)
               .findFirst();
       if (invalidReason.isEmpty()) {
@@ -148,7 +155,7 @@ public class ContractCreationProcessor extends AbstractMessageProcessor {
 
         // Finalize contract creation, setting the contract code.
         final MutableAccount contract =
-            frame.getWorldUpdater().getOrCreate(frame.getContractAddress()).getMutable();
+            frame.getWorldUpdater().getOrCreate(frame.getContractAddress());
         contract.setCode(contractCode);
         LOG.trace(
             "Successful creation of contract {} with code of size {} (Gas remaining: {})",
@@ -156,6 +163,9 @@ public class ContractCreationProcessor extends AbstractMessageProcessor {
             contractCode.size(),
             frame.getRemainingGas());
         frame.setState(MessageFrame.State.COMPLETED_SUCCESS);
+        if (operationTracer.isExtendedTracing()) {
+          operationTracer.traceAccountCreationResult(frame, Optional.empty());
+        }
       } else {
         final Optional<ExceptionalHaltReason> exceptionalHaltReason = invalidReason.get();
         frame.setExceptionalHaltReason(exceptionalHaltReason);

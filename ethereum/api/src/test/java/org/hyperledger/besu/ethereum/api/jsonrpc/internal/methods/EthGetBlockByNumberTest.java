@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -24,11 +24,10 @@ import static org.mockito.Mockito.when;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponseType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.BlockResult;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.BlockResultFactory;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
@@ -36,19 +35,25 @@ import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockDataGenerator;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.Synchronizer;
 import org.hyperledger.besu.ethereum.core.TransactionReceipt;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
+import org.hyperledger.besu.plugin.services.rpc.RpcResponseType;
 
 import java.util.List;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 public class EthGetBlockByNumberTest {
   private static final String JSON_RPC_VERSION = "2.0";
   private static final String ETH_METHOD = "eth_getBlockByNumber";
@@ -63,8 +68,9 @@ public class EthGetBlockByNumberTest {
   private EthGetBlockByNumber method;
   @Mock private Synchronizer synchronizer;
   @Mock private WorldStateArchive worldStateArchive;
+  @Mock private ProtocolSchedule protocolSchedule;
 
-  @Before
+  @BeforeEach
   public void setUp() {
     blockchain = createInMemoryBlockchain(blockDataGenerator.genesisBlock());
 
@@ -79,12 +85,15 @@ public class EthGetBlockByNumberTest {
       blockchain.appendBlock(block, receipts);
     }
 
-    BlockHeader lastestHeader = blockchain.getChainHeadBlock().getHeader();
+    BlockHeader latestHeader = blockchain.getChainHeadBlock().getHeader();
     when(worldStateArchive.isWorldStateAvailable(
-            lastestHeader.getStateRoot(), lastestHeader.getHash()))
+            latestHeader.getStateRoot(), latestHeader.getHash()))
         .thenReturn(Boolean.TRUE);
 
-    blockchainQueries = spy(new BlockchainQueries(blockchain, worldStateArchive));
+    blockchainQueries =
+        spy(
+            new BlockchainQueries(
+                protocolSchedule, blockchain, worldStateArchive, MiningConfiguration.newDefault()));
 
     method = new EthGetBlockByNumber(blockchainQueries, blockResult, synchronizer);
   }
@@ -97,14 +106,17 @@ public class EthGetBlockByNumberTest {
   @Test
   public void exceptionWhenNoParamsSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams()))
-        .isInstanceOf(InvalidJsonRpcParameters.class);
+        .isInstanceOf(InvalidJsonRpcParameters.class)
+        .hasFieldOrPropertyWithValue("rpcErrorType", RpcErrorType.INVALID_BLOCK_NUMBER_PARAMS);
     verifyNoMoreInteractions(blockchainQueries);
   }
 
   @Test
   public void exceptionWhenNoNumberSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams("false")))
-        .isInstanceOf(InvalidJsonRpcParameters.class);
+        .isInstanceOf(InvalidJsonRpcParameters.class)
+        .hasFieldOrPropertyWithValue("rpcErrorType", RpcErrorType.INVALID_BLOCK_NUMBER_PARAMS);
+
     verifyNoMoreInteractions(blockchainQueries);
   }
 
@@ -112,7 +124,7 @@ public class EthGetBlockByNumberTest {
   public void exceptionWhenNoBoolSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams("0")))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 1");
+        .hasMessage("Invalid return complete transaction parameter (index 1)");
     verifyNoMoreInteractions(blockchainQueries);
   }
 
@@ -120,8 +132,8 @@ public class EthGetBlockByNumberTest {
   public void exceptionWhenNumberParamInvalid() {
     assertThatThrownBy(() -> method.response(requestWithParams("invalid", "true")))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage(
-            "Invalid json rpc parameter at index 0. Supplied value was: 'invalid' of type: 'java.lang.String' - expected type: 'org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParameter'");
+        .hasMessage("Invalid block parameter (index 0)")
+        .hasFieldOrPropertyWithValue("rpcErrorType", RpcErrorType.INVALID_BLOCK_NUMBER_PARAMS);
     verifyNoMoreInteractions(blockchainQueries);
   }
 
@@ -129,25 +141,24 @@ public class EthGetBlockByNumberTest {
   public void exceptionWhenBoolParamInvalid() {
     assertThatThrownBy(() -> method.response(requestWithParams("0", "maybe")))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage(
-            "Invalid json rpc parameter at index 1. Supplied value was: 'maybe' of type: 'java.lang.String' - expected type: 'java.lang.Boolean'");
+        .hasMessage("Invalid return complete transaction parameter (index 1)");
     verifyNoMoreInteractions(blockchainQueries);
   }
 
   @Test
   public void errorWhenAskingFinalizedButFinalizedIsNotPresent() {
     JsonRpcResponse resp = method.response(requestWithParams("finalized", "false"));
-    assertThat(resp.getType()).isEqualTo(JsonRpcResponseType.ERROR);
+    assertThat(resp.getType()).isEqualTo(RpcResponseType.ERROR);
     JsonRpcErrorResponse errorResp = (JsonRpcErrorResponse) resp;
-    assertThat(errorResp.getError()).isEqualTo(JsonRpcError.UNKNOWN_BLOCK);
+    assertThat(errorResp.getErrorType()).isEqualTo(RpcErrorType.UNKNOWN_BLOCK);
   }
 
   @Test
   public void errorWhenAskingSafeButSafeIsNotPresent() {
     JsonRpcResponse resp = method.response(requestWithParams("safe", "false"));
-    assertThat(resp.getType()).isEqualTo(JsonRpcResponseType.ERROR);
+    assertThat(resp.getType()).isEqualTo(RpcResponseType.ERROR);
     JsonRpcErrorResponse errorResp = (JsonRpcErrorResponse) resp;
-    assertThat(errorResp.getError()).isEqualTo(JsonRpcError.UNKNOWN_BLOCK);
+    assertThat(errorResp.getErrorType()).isEqualTo(RpcErrorType.UNKNOWN_BLOCK);
   }
 
   @Test
@@ -172,7 +183,7 @@ public class EthGetBlockByNumberTest {
 
   private void assertSuccess(final String tag, final long height) {
     JsonRpcResponse resp = method.response(requestWithParams(tag, "false"));
-    assertThat(resp.getType()).isEqualTo(JsonRpcResponseType.SUCCESS);
+    assertThat(resp.getType()).isEqualTo(RpcResponseType.SUCCESS);
     JsonRpcSuccessResponse successResp = (JsonRpcSuccessResponse) resp;
     BlockResult blockResult = (BlockResult) successResp.getResult();
     assertThat(blockResult.getHash())

@@ -12,15 +12,20 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.nat.core;
 
 import org.hyperledger.besu.nat.NatMethod;
 
 import java.util.Optional;
 
+/** The interface Nat method detector. */
 @FunctionalInterface
 public interface NatMethodDetector {
 
+  /**
+   * Detect NatMethod.
+   *
+   * @return the optional NatMethod
+   */
   Optional<NatMethod> detect();
 }

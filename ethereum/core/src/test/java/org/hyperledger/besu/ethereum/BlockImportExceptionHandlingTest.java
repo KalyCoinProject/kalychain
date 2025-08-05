@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -15,6 +15,7 @@
 package org.hyperledger.besu.ethereum;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hyperledger.besu.ethereum.trie.pathbased.common.worldview.WorldStateConfig.createStatefulConfigWithTrie;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -23,10 +24,6 @@ import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
-import org.hyperledger.besu.ethereum.bonsai.BonsaiPersistedWorldState;
-import org.hyperledger.besu.ethereum.bonsai.BonsaiWorldStateArchive;
-import org.hyperledger.besu.ethereum.bonsai.BonsaiWorldStateKeyValueStorage;
-import org.hyperledger.besu.ethereum.bonsai.CachedMerkleTrieLoader;
 import org.hyperledger.besu.ethereum.chain.BadBlockManager;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.Block;
@@ -42,24 +39,37 @@ import org.hyperledger.besu.ethereum.mainnet.HeaderValidationMode;
 import org.hyperledger.besu.ethereum.mainnet.MainnetBlockHeaderFunctions;
 import org.hyperledger.besu.ethereum.mainnet.MainnetBlockProcessor;
 import org.hyperledger.besu.ethereum.mainnet.MainnetTransactionProcessor;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
+import org.hyperledger.besu.ethereum.mainnet.blockhash.FrontierPreExecutionProcessor;
+import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
 import org.hyperledger.besu.ethereum.storage.StorageProvider;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.BonsaiWorldStateProvider;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.cache.CodeCache;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.storage.BonsaiWorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.worldview.BonsaiWorldState;
+import org.hyperledger.besu.ethereum.worldstate.DataStorageConfiguration;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
+import org.hyperledger.besu.evm.gascalculator.GasCalculator;
+import org.hyperledger.besu.evm.internal.EvmConfiguration;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.services.exception.StorageException;
 
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-public class BlockImportExceptionHandlingTest {
+class BlockImportExceptionHandlingTest {
 
   private final MainnetTransactionProcessor transactionProcessor =
       mock(MainnetTransactionProcessor.class);
   private final AbstractBlockProcessor.TransactionReceiptFactory transactionReceiptFactory =
       mock(AbstractBlockProcessor.TransactionReceiptFactory.class);
+
+  private final ProtocolSchedule protocolSchedule = mock(ProtocolSchedule.class);
   private final BlockProcessor blockProcessor =
       new MainnetBlockProcessor(
           transactionProcessor,
@@ -67,50 +77,63 @@ public class BlockImportExceptionHandlingTest {
           Wei.ZERO,
           BlockHeader::getCoinbase,
           true,
-          Optional.empty());
+          protocolSchedule);
   private final BlockHeaderValidator blockHeaderValidator = mock(BlockHeaderValidator.class);
   private final BlockBodyValidator blockBodyValidator = mock(BlockBodyValidator.class);
   private final ProtocolContext protocolContext = mock(ProtocolContext.class);
+  private final ProtocolSpec protocolSpec = mock(ProtocolSpec.class);
+  private final GasCalculator gasCalculator = mock(GasCalculator.class);
+  private final GasLimitCalculator gasLimitCalculator = mock(GasLimitCalculator.class);
+  private final FeeMarket feeMarket = mock(FeeMarket.class);
   protected final MutableBlockchain blockchain = mock(MutableBlockchain.class);
   private final StorageProvider storageProvider = new InMemoryKeyValueStorageProvider();
 
-  private final WorldStateStorage worldStateStorage =
-      new BonsaiWorldStateKeyValueStorage(storageProvider);
-
-  private CachedMerkleTrieLoader cachedMerkleTrieLoader;
+  private final WorldStateStorageCoordinator worldStateStorageCoordinator =
+      new WorldStateStorageCoordinator(
+          new BonsaiWorldStateKeyValueStorage(
+              storageProvider,
+              new NoOpMetricsSystem(),
+              DataStorageConfiguration.DEFAULT_BONSAI_CONFIG));
 
   private final WorldStateArchive worldStateArchive =
-      // contains a BonsaiPersistedWorldState which we need to spy on.
+      // contains a BonsaiWorldState which we need to spy on.
       // do we need to also test with a DefaultWorldStateArchive?
-      spy(new BonsaiWorldStateArchive(storageProvider, blockchain, cachedMerkleTrieLoader));
+      spy(InMemoryKeyValueStorageProvider.createBonsaiInMemoryWorldStateArchive(blockchain));
 
-  private final BonsaiPersistedWorldState persisted =
+  private final BonsaiWorldState persisted =
       spy(
-          new BonsaiPersistedWorldState(
-              (BonsaiWorldStateArchive) worldStateArchive,
-              (BonsaiWorldStateKeyValueStorage) worldStateStorage));
+          new BonsaiWorldState(
+              (BonsaiWorldStateProvider) worldStateArchive,
+              (BonsaiWorldStateKeyValueStorage)
+                  worldStateStorageCoordinator.worldStateKeyValueStorage(),
+              EvmConfiguration.DEFAULT,
+              createStatefulConfigWithTrie(),
+              new CodeCache()));
 
   private final BadBlockManager badBlockManager = new BadBlockManager();
 
-  private MainnetBlockValidator mainnetBlockValidator;
+  private BlockValidator mainnetBlockValidator;
 
-  @Before
+  @BeforeEach
   public void setup() {
     when(protocolContext.getBlockchain()).thenReturn(blockchain);
-
     when(protocolContext.getWorldStateArchive()).thenReturn(worldStateArchive);
+    when(protocolSchedule.getByBlockHeader(any())).thenReturn(protocolSpec);
+    when(protocolSpec.getPreExecutionProcessor()).thenReturn(new FrontierPreExecutionProcessor());
+    when(protocolSpec.getGasCalculator()).thenReturn(gasCalculator);
+    when(protocolSpec.getGasLimitCalculator()).thenReturn(gasLimitCalculator);
+    when(protocolSpec.getFeeMarket()).thenReturn(feeMarket);
     mainnetBlockValidator =
-        new MainnetBlockValidator(
-            blockHeaderValidator, blockBodyValidator, blockProcessor, badBlockManager);
-    cachedMerkleTrieLoader = new CachedMerkleTrieLoader(new NoOpMetricsSystem());
+        MainnetBlockValidatorBuilder.frontier(
+            blockHeaderValidator, blockBodyValidator, blockProcessor);
   }
 
   @Test
-  public void shouldNotBadBlockWhenInternalErrorDuringPersisting() {
+  void shouldNotBadBlockWhenInternalErrorDuringPersisting() {
 
     Mockito.doThrow(new StorageException("database problem")).when(persisted).persist(any());
-    Mockito.doReturn(persisted).when(worldStateArchive).getMutable();
-    Mockito.doReturn(Optional.of(persisted)).when(worldStateArchive).getMutable(any(), any());
+    Mockito.doReturn(persisted).when(worldStateArchive).getWorldState();
+    Mockito.doReturn(Optional.of(persisted)).when(worldStateArchive).getWorldState(any());
 
     Block goodBlock =
         new BlockDataGenerator()
@@ -134,7 +157,8 @@ public class BlockImportExceptionHandlingTest {
             eq(goodBlock),
             any(),
             any(),
-            eq(HeaderValidationMode.DETACHED_ONLY)))
+            eq(HeaderValidationMode.DETACHED_ONLY),
+            any()))
         .thenReturn(true);
     assertThat(badBlockManager.getBadBlocks()).isEmpty();
     mainnetBlockValidator.validateAndProcessBlock(
@@ -146,7 +170,7 @@ public class BlockImportExceptionHandlingTest {
   }
 
   @Test
-  public void shouldNotBadBlockWhenInternalErrorOnBlockLookup() {
+  void shouldNotBadBlockWhenInternalErrorOnBlockLookup() {
 
     Block goodBlock =
         new BlockDataGenerator()
@@ -170,9 +194,10 @@ public class BlockImportExceptionHandlingTest {
             eq(goodBlock),
             any(),
             any(),
-            eq(HeaderValidationMode.DETACHED_ONLY)))
+            eq(HeaderValidationMode.DETACHED_ONLY),
+            any()))
         .thenReturn(true);
-    assertThat(badBlockManager.getBadBlocks().size()).isEqualTo(0);
+    assertThat(badBlockManager.getBadBlocks()).isEmpty();
     mainnetBlockValidator.validateAndProcessBlock(
         protocolContext,
         goodBlock,
@@ -182,7 +207,7 @@ public class BlockImportExceptionHandlingTest {
   }
 
   @Test
-  public void shouldNotBadBlockWhenInternalErrorDuringValidateHeader() {
+  void shouldNotBadBlockWhenInternalErrorDuringValidateHeader() {
 
     Block goodBlock =
         new BlockDataGenerator()
@@ -211,10 +236,10 @@ public class BlockImportExceptionHandlingTest {
   }
 
   @Test
-  public void shouldNotBadBlockWhenInternalErrorDuringValidateBody() {
+  void shouldNotBadBlockWhenInternalErrorDuringValidateBody() {
     Mockito.doNothing().when(persisted).persist(any());
-    Mockito.doReturn(persisted).when(worldStateArchive).getMutable();
-    Mockito.doReturn(Optional.of(persisted)).when(worldStateArchive).getMutable(any(), any());
+    Mockito.doReturn(persisted).when(worldStateArchive).getWorldState();
+    Mockito.doReturn(Optional.of(persisted)).when(worldStateArchive).getWorldState(any());
 
     Block goodBlock =
         new BlockDataGenerator()
@@ -238,7 +263,8 @@ public class BlockImportExceptionHandlingTest {
             eq(goodBlock),
             any(),
             any(),
-            eq(HeaderValidationMode.DETACHED_ONLY)))
+            eq(HeaderValidationMode.DETACHED_ONLY),
+            any()))
         .thenThrow(new StorageException("database problem"));
     assertThat(badBlockManager.getBadBlocks()).isEmpty();
     mainnetBlockValidator.validateAndProcessBlock(

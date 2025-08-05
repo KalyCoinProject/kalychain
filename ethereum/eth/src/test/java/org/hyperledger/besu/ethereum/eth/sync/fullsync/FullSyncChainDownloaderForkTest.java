@@ -15,29 +15,34 @@
 package org.hyperledger.besu.ethereum.eth.sync.fullsync;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.BlockchainSetupUtil;
-import org.hyperledger.besu.ethereum.core.Difficulty;
 import org.hyperledger.besu.ethereum.eth.EthProtocolConfiguration;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManager;
+import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestBuilder;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestUtil;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.manager.RespondingEthPeer;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutor;
 import org.hyperledger.besu.ethereum.eth.sync.ChainDownloader;
 import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncState;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage.DisconnectReason;
+import org.hyperledger.besu.metrics.SyncDurationMetrics;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import java.io.IOException;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class FullSyncChainDownloaderForkTest {
 
@@ -53,8 +58,8 @@ public class FullSyncChainDownloaderForkTest {
   protected Blockchain otherBlockchain;
   private final MetricsSystem metricsSystem = new NoOpMetricsSystem();
 
-  @Before
-  public void setupTest() {
+  @BeforeEach
+  public void setupTest() throws IOException {
     localBlockchainSetup = BlockchainSetupUtil.forUpgradedFork();
     localBlockchain = localBlockchainSetup.getBlockchain();
     otherBlockchainSetup = BlockchainSetupUtil.forOutdatedFork();
@@ -63,17 +68,19 @@ public class FullSyncChainDownloaderForkTest {
     protocolSchedule = localBlockchainSetup.getProtocolSchedule();
     protocolContext = localBlockchainSetup.getProtocolContext();
     ethProtocolManager =
-        EthProtocolManagerTestUtil.create(
-            localBlockchain,
-            new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()),
-            localBlockchainSetup.getWorldArchive(),
-            localBlockchainSetup.getTransactionPool(),
-            EthProtocolConfiguration.defaultConfig());
+        EthProtocolManagerTestBuilder.builder()
+            .setProtocolSchedule(protocolSchedule)
+            .setBlockchain(localBlockchain)
+            .setEthScheduler(new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()))
+            .setWorldStateArchive(localBlockchainSetup.getWorldArchive())
+            .setTransactionPool(localBlockchainSetup.getTransactionPool())
+            .setEthereumWireProtocolConfiguration(EthProtocolConfiguration.defaultConfig())
+            .build();
     ethContext = ethProtocolManager.ethContext();
     syncState = new SyncState(protocolContext.getBlockchain(), ethContext.getEthPeers());
   }
 
-  @After
+  @AfterEach
   public void tearDown() {
     ethProtocolManager.stop();
   }
@@ -86,7 +93,9 @@ public class FullSyncChainDownloaderForkTest {
         ethContext,
         syncState,
         metricsSystem,
-        SyncTerminationCondition.never());
+        SyncTerminationCondition.never(),
+        SyncDurationMetrics.NO_OP_SYNC_DURATION_METRICS,
+        mock(PeerTaskExecutor.class));
   }
 
   private ChainDownloader downloader() {
@@ -101,12 +110,10 @@ public class FullSyncChainDownloaderForkTest {
   @Test
   public void disconnectsFromPeerOnBadFork() {
     otherBlockchainSetup.importAllBlocks();
-    final Difficulty localTd = localBlockchain.getChainHead().getTotalDifficulty();
 
     final RespondingEthPeer.Responder responder =
         RespondingEthPeer.blockchainResponder(otherBlockchain);
-    final RespondingEthPeer peer =
-        EthProtocolManagerTestUtil.createPeer(ethProtocolManager, localTd.add(100), 100);
+    final RespondingEthPeer peer = EthProtocolManagerTestUtil.createPeer(ethProtocolManager, 100);
 
     final ChainDownloader downloader = downloader();
     downloader.start();
@@ -124,7 +131,7 @@ public class FullSyncChainDownloaderForkTest {
     // We should have disconnected from our peer on the invalid chain
     assertThat(peer.getEthPeer().isDisconnected()).isTrue();
     assertThat(peer.getPeerConnection().getDisconnectReason())
-        .contains(DisconnectReason.BREACH_OF_PROTOCOL);
+        .contains(DisconnectReason.BREACH_OF_PROTOCOL_INVALID_BLOCK);
     assertThat(syncState.syncTarget()).isEmpty();
   }
 }

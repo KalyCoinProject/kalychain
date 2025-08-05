@@ -31,6 +31,7 @@ import org.hyperledger.besu.testutil.BlockTestUtil;
 
 import java.net.InetSocketAddress;
 import java.net.URL;
+import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -49,17 +50,17 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 import org.apache.tuweni.bytes.Bytes;
 import org.assertj.core.api.Assertions;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 
 public class GraphQLHttpServiceTest {
 
-  @ClassRule public static final TemporaryFolder folder = new TemporaryFolder();
+  // this tempDir is deliberately static
+  @TempDir private static Path folder;
 
   private static final Vertx vertx = Vertx.vertx();
 
@@ -75,7 +76,7 @@ public class GraphQLHttpServiceTest {
 
   private final GraphQLTestHelper testHelper = new GraphQLTestHelper();
 
-  @BeforeClass
+  @BeforeAll
   public static void initServerAndClient() throws Exception {
     blockchainQueries = Mockito.mock(BlockchainQueries.class);
     final Synchronizer synchronizer = Mockito.mock(Synchronizer.class);
@@ -94,8 +95,7 @@ public class GraphQLHttpServiceTest {
             synchronizer);
 
     final Set<Capability> supportedCapabilities = new HashSet<>();
-    supportedCapabilities.add(EthProtocol.ETH62);
-    supportedCapabilities.add(EthProtocol.ETH63);
+    supportedCapabilities.add(EthProtocol.LATEST);
     final GraphQLDataFetchers dataFetchers = new GraphQLDataFetchers(supportedCapabilities);
     graphQL = GraphQLProvider.buildGraphQL(dataFetchers);
     service = createGraphQLHttpService();
@@ -109,18 +109,13 @@ public class GraphQLHttpServiceTest {
   private static GraphQLHttpService createGraphQLHttpService(final GraphQLConfiguration config)
       throws Exception {
     return new GraphQLHttpService(
-        vertx,
-        folder.newFolder().toPath(),
-        config,
-        graphQL,
-        graphQlContextMap,
-        Mockito.mock(EthScheduler.class));
+        vertx, folder, config, graphQL, graphQlContextMap, Mockito.mock(EthScheduler.class));
   }
 
   private static GraphQLHttpService createGraphQLHttpService() throws Exception {
     return new GraphQLHttpService(
         vertx,
-        folder.newFolder().toPath(),
+        folder,
         createGraphQLConfig(),
         graphQL,
         graphQlContextMap,
@@ -133,7 +128,7 @@ public class GraphQLHttpServiceTest {
     return config;
   }
 
-  @BeforeClass
+  @BeforeAll
   public static void setupConstants() {
     final URL blocksUrl = BlockTestUtil.getTestBlockchainUrl();
 
@@ -144,7 +139,7 @@ public class GraphQLHttpServiceTest {
   }
 
   /** Tears down the HTTP server. */
-  @AfterClass
+  @AfterAll
   public static void shutdownServer() {
     client.dispatcher().executorService().shutdown();
     client.connectionPool().evictAll();
@@ -220,7 +215,7 @@ public class GraphQLHttpServiceTest {
   @Test
   public void query_get() throws Exception {
     final Wei price = Wei.of(16);
-    Mockito.when(blockchainQueries.gasPrice()).thenReturn(Optional.of(price.toLong()));
+    Mockito.when(blockchainQueries.gasPrice()).thenReturn(price);
     Mockito.when(miningCoordinatorMock.getMinTransactionGasPrice()).thenReturn(price);
 
     try (final Response resp = client.newCall(buildGetRequest("?query={gasPrice}")).execute()) {
@@ -280,8 +275,8 @@ public class GraphQLHttpServiceTest {
   @Test
   public void getSocketAddressWhenActive() {
     final InetSocketAddress socketAddress = service.socketAddress();
-    Assertions.assertThat("127.0.0.1").isEqualTo(socketAddress.getAddress().getHostAddress());
-    Assertions.assertThat(socketAddress.getPort() > 0).isTrue();
+    Assertions.assertThat(socketAddress.getAddress().getHostAddress()).isEqualTo("127.0.0.1");
+    Assertions.assertThat(socketAddress.getPort()).isPositive();
   }
 
   @Test
@@ -289,9 +284,9 @@ public class GraphQLHttpServiceTest {
     final GraphQLHttpService service = createGraphQLHttpService();
 
     final InetSocketAddress socketAddress = service.socketAddress();
-    Assertions.assertThat("0.0.0.0").isEqualTo(socketAddress.getAddress().getHostAddress());
-    Assertions.assertThat(0).isEqualTo(socketAddress.getPort());
-    Assertions.assertThat("").isEqualTo(service.url());
+    Assertions.assertThat(socketAddress.getAddress().getHostAddress()).isEqualTo("0.0.0.0");
+    Assertions.assertThat(socketAddress.getPort()).isZero();
+    Assertions.assertThat(service.url()).isEmpty();
   }
 
   @Test
@@ -303,8 +298,8 @@ public class GraphQLHttpServiceTest {
 
     try {
       final InetSocketAddress socketAddress = service.socketAddress();
-      Assertions.assertThat("0.0.0.0").isEqualTo(socketAddress.getAddress().getHostAddress());
-      Assertions.assertThat(socketAddress.getPort() > 0).isTrue();
+      Assertions.assertThat(socketAddress.getAddress().getHostAddress()).isEqualTo("0.0.0.0");
+      Assertions.assertThat(socketAddress.getPort()).isPositive();
       Assertions.assertThat(!service.url().contains("0.0.0.0")).isTrue();
     } finally {
       service.stop().join();
@@ -331,12 +326,11 @@ public class GraphQLHttpServiceTest {
     @SuppressWarnings("unchecked")
     final List<Hash> list = Mockito.mock(List.class);
 
-    Mockito.when(blockchainQueries.blockByHash(ArgumentMatchers.eq(blockHash)))
-        .thenReturn(Optional.of(block));
+    Mockito.when(blockchainQueries.blockByHash(blockHash)).thenReturn(Optional.of(block));
     Mockito.when(block.getOmmers()).thenReturn(list);
     Mockito.when(list.size()).thenReturn(uncleCount);
 
-    final String query = "{block(hash:\"" + blockHash.toString() + "\") {ommerCount}}";
+    final String query = "{block(hash:\"" + blockHash + "\") {ommerCount}}";
 
     final RequestBody body = RequestBody.create(query, GRAPHQL);
     try (final Response resp = client.newCall(buildPostRequest(body)).execute()) {
@@ -344,8 +338,9 @@ public class GraphQLHttpServiceTest {
       final String jsonStr = resp.body().string();
       final JsonObject json = new JsonObject(jsonStr);
       testHelper.assertValidGraphQLResult(json);
-      final int result = json.getJsonObject("data").getJsonObject("block").getInteger("ommerCount");
-      Assertions.assertThat(result).isEqualTo(uncleCount);
+      final String result =
+          json.getJsonObject("data").getJsonObject("block").getString("ommerCount");
+      Assertions.assertThat(Bytes.fromHexStringLenient(result).toInt()).isEqualTo(uncleCount);
     }
   }
 
@@ -370,8 +365,9 @@ public class GraphQLHttpServiceTest {
       final String jsonStr = resp.body().string();
       final JsonObject json = new JsonObject(jsonStr);
       testHelper.assertValidGraphQLResult(json);
-      final int result = json.getJsonObject("data").getJsonObject("block").getInteger("ommerCount");
-      Assertions.assertThat(result).isEqualTo(uncleCount);
+      final String result =
+          json.getJsonObject("data").getJsonObject("block").getString("ommerCount");
+      Assertions.assertThat(Bytes.fromHexStringLenient(result).toInt()).isEqualTo(uncleCount);
     }
   }
 
@@ -395,8 +391,9 @@ public class GraphQLHttpServiceTest {
       final String jsonStr = resp.body().string();
       final JsonObject json = new JsonObject(jsonStr);
       testHelper.assertValidGraphQLResult(json);
-      final int result = json.getJsonObject("data").getJsonObject("block").getInteger("ommerCount");
-      Assertions.assertThat(result).isEqualTo(uncleCount);
+      final String result =
+          json.getJsonObject("data").getJsonObject("block").getString("ommerCount");
+      Assertions.assertThat(Bytes.fromHexStringLenient(result).toInt()).isEqualTo(uncleCount);
     }
   }
 

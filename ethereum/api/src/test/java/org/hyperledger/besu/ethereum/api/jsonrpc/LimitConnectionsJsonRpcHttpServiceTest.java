@@ -12,7 +12,6 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.ethereum.api.jsonrpc;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,12 +21,12 @@ import java.io.IOException;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Response;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 public class LimitConnectionsJsonRpcHttpServiceTest extends JsonRpcHttpServiceTestBase {
 
-  @BeforeClass
+  @BeforeAll
   public static void initLimitedServerAndClient() throws Exception {
     maxConnections = 2;
     initServerAndClient();

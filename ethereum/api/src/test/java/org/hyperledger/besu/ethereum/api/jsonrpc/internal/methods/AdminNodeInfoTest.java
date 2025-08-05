@@ -15,6 +15,8 @@
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.LONDON;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -24,14 +26,17 @@ import org.hyperledger.besu.config.StubGenesisConfigOptions;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
 import org.hyperledger.besu.ethereum.chain.ChainHead;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.Difficulty;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
 import org.hyperledger.besu.ethereum.p2p.network.P2PNetwork;
 import org.hyperledger.besu.ethereum.p2p.peers.DefaultPeer;
 import org.hyperledger.besu.ethereum.p2p.peers.EnodeURLImpl;
@@ -49,26 +54,31 @@ import java.util.Optional;
 
 import com.google.common.collect.ImmutableMap;
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
-@RunWith(MockitoJUnitRunner.StrictStubs.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 public class AdminNodeInfoTest {
 
   @Mock private P2PNetwork p2pNetwork;
   @Mock private Blockchain blockchain;
   @Mock private BlockchainQueries blockchainQueries;
   @Mock private NatService natService;
+  @Mock private BlockHeader blockHeader;
+  @Mock private ProtocolSchedule protocolSchedule;
+  @Mock private ProtocolSpec protocolSpec;
 
   private AdminNodeInfo method;
 
   private final Bytes nodeId =
       Bytes.fromHexString(
           "0x0f1b319e32017c3fcb221841f0f978701b4e9513fe6a567a2db43d43381a9c7e3dfe7cae13cbc2f56943400bacaf9082576ab087cd51983b17d729ae796f6807");
-  private final ChainHead testChainHead = new ChainHead(Hash.EMPTY, Difficulty.ONE, 1L);
   private final GenesisConfigOptions genesisConfigOptions =
       new StubGenesisConfigOptions().chainId(BigInteger.valueOf(2019));
   private final DefaultPeer defaultPeer =
@@ -80,12 +90,17 @@ public class AdminNodeInfoTest {
               .listeningPort(30303)
               .build());
 
-  @Before
+  @BeforeEach
   public void setup() {
+    when(blockHeader.getHash()).thenReturn(Hash.EMPTY);
+    final ChainHead testChainHead = new ChainHead(blockHeader, Difficulty.ONE, 1L);
+
     when(blockchainQueries.getBlockchain()).thenReturn(blockchain);
     when(blockchainQueries.getBlockHashByNumber(anyLong())).thenReturn(Optional.of(Hash.EMPTY));
     when(blockchain.getChainHead()).thenReturn(testChainHead);
     when(natService.queryExternalIPAddress(anyString())).thenReturn("1.2.3.4");
+    when(protocolSpec.getHardforkId()).thenReturn(LONDON);
+    when(protocolSchedule.getByBlockHeader(any())).thenReturn(protocolSpec);
     method =
         new AdminNodeInfo(
             "testnet/1.0/this/that",
@@ -93,7 +108,8 @@ public class AdminNodeInfoTest {
             genesisConfigOptions,
             p2pNetwork,
             blockchainQueries,
-            natService);
+            natService,
+            protocolSchedule);
   }
 
   @Test
@@ -103,6 +119,7 @@ public class AdminNodeInfoTest {
     final JsonRpcRequestContext request = adminNodeInfo();
 
     final Map<String, Object> expected = new HashMap<>();
+    expected.put("activeFork", "London");
     expected.put(
         "enode",
         "enode://0f1b319e32017c3fcb221841f0f978701b4e9513fe6a567a2db43d43381a9c7e3dfe7cae13cbc2f56943400bacaf9082576ab087cd51983b17d729ae796f6807@1.2.3.4:30303?discport=7890");
@@ -132,7 +149,7 @@ public class AdminNodeInfoTest {
     final JsonRpcResponse response = method.response(request);
     assertThat(response).isInstanceOf(JsonRpcSuccessResponse.class);
     final JsonRpcSuccessResponse actual = (JsonRpcSuccessResponse) response;
-    assertThat(actual.getResult()).isEqualTo(expected);
+    assertThat(actual.getResult()).usingRecursiveComparison().isEqualTo(expected);
   }
 
   @Test
@@ -154,6 +171,7 @@ public class AdminNodeInfoTest {
     final JsonRpcRequestContext request = adminNodeInfo();
 
     final Map<String, Object> expected = new HashMap<>();
+    expected.put("activeFork", "London");
     expected.put(
         "enode",
         "enode://0f1b319e32017c3fcb221841f0f978701b4e9513fe6a567a2db43d43381a9c7e3dfe7cae13cbc2f56943400bacaf9082576ab087cd51983b17d729ae796f6807@3.4.5.6:8081?discport=8080");
@@ -183,7 +201,7 @@ public class AdminNodeInfoTest {
     final JsonRpcResponse response = method.response(request);
     assertThat(response).isInstanceOf(JsonRpcSuccessResponse.class);
     final JsonRpcSuccessResponse actual = (JsonRpcSuccessResponse) response;
-    assertThat(actual.getResult()).isEqualTo(expected);
+    assertThat(actual.getResult()).usingRecursiveComparison().isEqualTo(expected);
   }
 
   @Test
@@ -200,6 +218,7 @@ public class AdminNodeInfoTest {
     final JsonRpcRequestContext request = adminNodeInfo();
 
     final Map<String, Object> expected = new HashMap<>();
+    expected.put("activeFork", "London");
     expected.put(
         "enode",
         "enode://0f1b319e32017c3fcb221841f0f978701b4e9513fe6a567a2db43d43381a9c7e3dfe7cae13cbc2f56943400bacaf9082576ab087cd51983b17d729ae796f6807@1.2.3.4:0");
@@ -228,7 +247,7 @@ public class AdminNodeInfoTest {
     final JsonRpcResponse response = method.response(request);
     assertThat(response).isInstanceOf(JsonRpcSuccessResponse.class);
     final JsonRpcSuccessResponse actual = (JsonRpcSuccessResponse) response;
-    assertThat(actual.getResult()).isEqualTo(expected);
+    assertThat(actual.getResult()).usingRecursiveComparison().isEqualTo(expected);
   }
 
   @Test
@@ -246,6 +265,7 @@ public class AdminNodeInfoTest {
     final JsonRpcRequestContext request = adminNodeInfo();
 
     final Map<String, Object> expected = new HashMap<>();
+    expected.put("activeFork", "London");
     expected.put(
         "enode",
         "enode://0f1b319e32017c3fcb221841f0f978701b4e9513fe6a567a2db43d43381a9c7e3dfe7cae13cbc2f56943400bacaf9082576ab087cd51983b17d729ae796f6807@1.2.3.4:0?discport=7890");
@@ -274,7 +294,7 @@ public class AdminNodeInfoTest {
     final JsonRpcResponse response = method.response(request);
     assertThat(response).isInstanceOf(JsonRpcSuccessResponse.class);
     final JsonRpcSuccessResponse actual = (JsonRpcSuccessResponse) response;
-    assertThat(actual.getResult()).isEqualTo(expected);
+    assertThat(actual.getResult()).usingRecursiveComparison().isEqualTo(expected);
   }
 
   @Test
@@ -292,6 +312,7 @@ public class AdminNodeInfoTest {
     final JsonRpcRequestContext request = adminNodeInfo();
 
     final Map<String, Object> expected = new HashMap<>();
+    expected.put("activeFork", "London");
     expected.put(
         "enode",
         "enode://0f1b319e32017c3fcb221841f0f978701b4e9513fe6a567a2db43d43381a9c7e3dfe7cae13cbc2f56943400bacaf9082576ab087cd51983b17d729ae796f6807@1.2.3.4:7890?discport=0");
@@ -321,7 +342,7 @@ public class AdminNodeInfoTest {
     final JsonRpcResponse response = method.response(request);
     assertThat(response).isInstanceOf(JsonRpcSuccessResponse.class);
     final JsonRpcSuccessResponse actual = (JsonRpcSuccessResponse) response;
-    assertThat(actual.getResult()).isEqualTo(expected);
+    assertThat(actual.getResult()).usingRecursiveComparison().isEqualTo(expected);
   }
 
   @Test
@@ -330,7 +351,7 @@ public class AdminNodeInfoTest {
     final JsonRpcRequestContext request = adminNodeInfo();
 
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(request.getRequest().getId(), JsonRpcError.P2P_DISABLED);
+        new JsonRpcErrorResponse(request.getRequest().getId(), RpcErrorType.P2P_DISABLED);
 
     final JsonRpcResponse response = method.response(request);
     assertThat(response).isInstanceOf(JsonRpcErrorResponse.class);
@@ -345,7 +366,7 @@ public class AdminNodeInfoTest {
 
     final JsonRpcResponse expectedResponse =
         new JsonRpcErrorResponse(
-            request.getRequest().getId(), JsonRpcError.P2P_NETWORK_NOT_RUNNING);
+            request.getRequest().getId(), RpcErrorType.P2P_NETWORK_NOT_RUNNING);
 
     final JsonRpcResponse response = method.response(request);
     assertThat(response).isInstanceOf(JsonRpcErrorResponse.class);
@@ -370,8 +391,8 @@ public class AdminNodeInfoTest {
             .phoenix(8)
             .thanos(9)
             .magneto(10)
-            .ecip1049(11)
-            .mystique(12);
+            .mystique(11)
+            .spiral(12);
 
     final AdminNodeInfo methodClassic =
         new AdminNodeInfo(
@@ -380,7 +401,8 @@ public class AdminNodeInfoTest {
             genesisClassicConfigOptions,
             p2pNetwork,
             blockchainQueries,
-            natService);
+            natService,
+            protocolSchedule);
 
     final JsonRpcRequestContext request = adminNodeInfo();
 
@@ -397,8 +419,8 @@ public class AdminNodeInfoTest {
                 "phoenixBlock", 8L,
                 "thanosBlock", 9L,
                 "magnetoBlock", 10L));
-    expectedConfig.put("ecip1049Block", 11L);
-    expectedConfig.put("mystiqueBlock", 12L);
+    expectedConfig.put("mystiqueBlock", 11L);
+    expectedConfig.put("spiralBlock", 12L);
 
     final JsonRpcResponse response = methodClassic.response(request);
     assertThat(response).isInstanceOf(JsonRpcSuccessResponse.class);

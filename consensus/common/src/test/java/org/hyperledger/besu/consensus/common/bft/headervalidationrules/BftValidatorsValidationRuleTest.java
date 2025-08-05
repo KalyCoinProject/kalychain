@@ -28,7 +28,7 @@ import org.hyperledger.besu.ethereum.core.BlockHeader;
 import java.util.List;
 
 import com.google.common.collect.Lists;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class BftValidatorsValidationRuleTest {
 
@@ -44,7 +44,9 @@ public class BftValidatorsValidationRuleTest {
             AddressHelpers.ofValue(1), AddressHelpers.ofValue(2), AddressHelpers.ofValue(3));
 
     final ProtocolContext context =
-        new ProtocolContext(null, null, setupContextWithBftExtraData(validators, bftExtraData));
+        new ProtocolContext.Builder()
+            .withConsensusContext(setupContextWithBftExtraData(validators, bftExtraData))
+            .build();
     when(bftExtraData.getValidators()).thenReturn(validators);
 
     assertThat(validatorsValidationRule.validate(blockHeader, null, context)).isTrue();
@@ -58,7 +60,9 @@ public class BftValidatorsValidationRuleTest {
             AddressHelpers.ofValue(1), AddressHelpers.ofValue(2), AddressHelpers.ofValue(3));
 
     final ProtocolContext context =
-        new ProtocolContext(null, null, setupContextWithBftExtraData(validators, bftExtraData));
+        new ProtocolContext.Builder()
+            .withConsensusContext(setupContextWithBftExtraData(validators, bftExtraData))
+            .build();
     when(bftExtraData.getValidators()).thenReturn(Lists.reverse(validators));
 
     assertThat(validatorsValidationRule.validate(blockHeader, null, context)).isFalse();
@@ -75,8 +79,9 @@ public class BftValidatorsValidationRuleTest {
             AddressHelpers.ofValue(2), AddressHelpers.ofValue(3), AddressHelpers.ofValue(4));
 
     final ProtocolContext context =
-        new ProtocolContext(
-            null, null, setupContextWithBftExtraData(storedValidators, bftExtraData));
+        new ProtocolContext.Builder()
+            .withConsensusContext(setupContextWithBftExtraData(storedValidators, bftExtraData))
+            .build();
     when(bftExtraData.getValidators()).thenReturn(Lists.reverse(reportedValidators));
 
     assertThat(validatorsValidationRule.validate(blockHeader, null, context)).isFalse();

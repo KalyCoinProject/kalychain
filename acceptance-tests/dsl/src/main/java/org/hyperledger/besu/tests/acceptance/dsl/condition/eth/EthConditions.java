@@ -29,14 +29,6 @@ public class EthConditions {
     this.transactions = transactions;
   }
 
-  public Condition getWork() {
-    return new SanityCheckEthGetWorkValues(transactions.getWork());
-  }
-
-  public Condition getWorkExceptional(final String expectedMessage) {
-    return new ExpectEthGetWorkException(transactions.getWork(), expectedMessage);
-  }
-
   public Condition accountsExceptional(final String expectedMessage) {
     return new ExpectEthAccountsException(transactions.accounts(), expectedMessage);
   }
@@ -75,6 +67,10 @@ public class EthConditions {
 
   public Condition miningStatus(final boolean isMining) {
     return new MiningStatusCondition(transactions.mining(), isMining);
+  }
+
+  public Condition syncingStatus(final boolean isSyncing) {
+    return new SyncingStatusCondition(transactions.syncing(), isSyncing);
   }
 
   public Condition expectNewPendingTransactions(

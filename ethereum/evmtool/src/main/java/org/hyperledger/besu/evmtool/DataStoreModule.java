@@ -11,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evmtool;
 
@@ -19,6 +18,7 @@ import org.hyperledger.besu.ethereum.chain.BlockchainStorage;
 import org.hyperledger.besu.ethereum.core.BlockHeaderFunctions;
 import org.hyperledger.besu.ethereum.storage.keyvalue.KeyValueSegmentIdentifier;
 import org.hyperledger.besu.ethereum.storage.keyvalue.KeyValueStoragePrefixedKeyBlockchainStorage;
+import org.hyperledger.besu.ethereum.storage.keyvalue.VariablesKeyValueStorage;
 import org.hyperledger.besu.plugin.services.BesuConfiguration;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.plugin.services.storage.KeyValueStorage;
@@ -37,14 +37,19 @@ import javax.inject.Singleton;
 import com.google.common.base.Suppliers;
 import dagger.Module;
 import dagger.Provides;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+/**
+ * This class is a Dagger module that provides dependencies related to the data store. It includes
+ * the GenesisFileModule for providing the genesis block. The class is annotated with
+ * {@code @Module} to indicate that it is a Dagger module. It provides various key-value storages
+ * such as variables, blockchain, world state, world state preimage, and pruning. The type of
+ * key-value storage (e.g., rocksdb, memory) can be specified. The class also provides a
+ * BlockchainStorage which is a prefixed key blockchain storage.
+ */
 @SuppressWarnings({"CloseableProvides"})
 @Module(includes = GenesisFileModule.class)
 public class DataStoreModule {
 
-  private static final Logger LOG = LoggerFactory.getLogger(DataStoreModule.class);
   private final Supplier<RocksDBKeyValueStorageFactory> rocksDBFactory =
       Suppliers.memoize(
           () ->
@@ -52,6 +57,23 @@ public class DataStoreModule {
                   RocksDBCLIOptions.create()::toDomainObject,
                   List.of(KeyValueSegmentIdentifier.values()),
                   RocksDBMetricsFactory.PUBLIC_ROCKS_DB_METRICS));
+
+  /** Default constructor for the DataStoreModule class. */
+  public DataStoreModule() {}
+
+  @Provides
+  @Singleton
+  @Named("variables")
+  KeyValueStorage provideVariablesKeyValueStorage(
+      @Named("KeyValueStorageName") final String keyValueStorageName,
+      final BesuConfiguration commonConfiguration,
+      final MetricsSystem metricsSystem) {
+    return constructKeyValueStorage(
+        keyValueStorageName,
+        commonConfiguration,
+        metricsSystem,
+        KeyValueSegmentIdentifier.VARIABLES);
+  }
 
   @Provides
   @Singleton
@@ -84,6 +106,7 @@ public class DataStoreModule {
   @Provides
   @Singleton
   @Named("worldStatePreimage")
+  @SuppressWarnings("UnusedVariable")
   KeyValueStorage provideWorldStatePreimageKeyValueStorage(
       @Named("KeyValueStorageName") final String keyValueStorageName,
       final BesuConfiguration commonConfiguration,
@@ -115,8 +138,8 @@ public class DataStoreModule {
       case "rocksdb":
         return rocksDBFactory.get().create(segment, commonConfiguration, metricsSystem);
       default:
-        LOG.error("Unknown key, continuing as though 'memory' was specified");
-        // fall through
+        System.err.println("Unknown key, continuing as though 'memory' was specified");
+      // fall through
       case "memory":
         return new InMemoryKeyValueStorage();
     }
@@ -126,7 +149,12 @@ public class DataStoreModule {
   @Singleton
   static BlockchainStorage provideBlockchainStorage(
       @Named("blockchain") final KeyValueStorage keyValueStorage,
+      @Named("variables") final KeyValueStorage variablesKeyValueStorage,
       final BlockHeaderFunctions blockHashFunction) {
-    return new KeyValueStoragePrefixedKeyBlockchainStorage(keyValueStorage, blockHashFunction);
+    return new KeyValueStoragePrefixedKeyBlockchainStorage(
+        keyValueStorage,
+        new VariablesKeyValueStorage(variablesKeyValueStorage),
+        blockHashFunction,
+        false);
   }
 }

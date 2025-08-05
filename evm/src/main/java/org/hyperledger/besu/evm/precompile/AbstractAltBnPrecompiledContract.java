@@ -11,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evm.precompile;
 
@@ -20,43 +19,69 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
-import org.hyperledger.besu.nativelib.bls12_381.LibEthPairings;
+import org.hyperledger.besu.nativelib.gnark.LibGnarkEIP196;
 
 import java.util.Optional;
-import javax.annotation.Nonnull;
 
 import com.sun.jna.ptr.IntByReference;
+import jakarta.validation.constraints.NotNull;
 import org.apache.tuweni.bytes.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Abstract AltBn precompiled contract. */
 public abstract class AbstractAltBnPrecompiledContract extends AbstractPrecompiledContract {
 
   private static final Logger LOG = LoggerFactory.getLogger(AbstractAltBnPrecompiledContract.class);
 
+  /** The constant useNative. */
   // use the native library implementation, if it is available
   static boolean useNative;
 
   static {
+    maybeEnableNative();
+  }
+
+  /**
+   * Attempt to enable the native library for AltBn contracts
+   *
+   * @return true if the native library was enabled.
+   */
+  public static boolean maybeEnableNative() {
     try {
-      useNative = LibEthPairings.ENABLED;
-    } catch (UnsatisfiedLinkError ule) {
+      useNative = LibGnarkEIP196.ENABLED;
+    } catch (UnsatisfiedLinkError | NoClassDefFoundError ule) {
       LOG.info("altbn128 native precompile not available: {}", ule.getMessage());
       useNative = false;
     }
+    return useNative;
   }
 
+  /** Disable native. */
   public static void disableNative() {
     useNative = false;
   }
 
+  /**
+   * Is native boolean.
+   *
+   * @return the boolean
+   */
   public static boolean isNative() {
     return useNative;
   }
 
   private final byte operationId;
-  private final int inputLen;
+  private final int inputLimit;
 
+  /**
+   * Instantiates a new Abstract alt bn precompiled contract.
+   *
+   * @param name the name
+   * @param gasCalculator the gas calculator
+   * @param operationId the operation id
+   * @param inputLen the input len
+   */
   AbstractAltBnPrecompiledContract(
       final String name,
       final GasCalculator gasCalculator,
@@ -64,26 +89,33 @@ public abstract class AbstractAltBnPrecompiledContract extends AbstractPrecompil
       final int inputLen) {
     super(name, gasCalculator);
     this.operationId = operationId;
-    this.inputLen = inputLen + 1;
+    this.inputLimit = inputLen + 1;
 
-    if (!LibEthPairings.ENABLED) {
+    if (!LibGnarkEIP196.ENABLED) {
       LOG.info("Native alt bn128 not available");
     }
   }
 
-  @Nonnull
+  /**
+   * Compute native precompile contract result.
+   *
+   * @param input the input
+   * @param messageFrame the message frame
+   * @return the precompile contract result
+   */
+  @NotNull
   public PrecompileContractResult computeNative(
-      final @Nonnull Bytes input, final MessageFrame messageFrame) {
-    final byte[] result = new byte[LibEthPairings.EIP196_PREALLOCATE_FOR_RESULT_BYTES];
-    final byte[] error = new byte[LibEthPairings.EIP2537_PREALLOCATE_FOR_ERROR_BYTES];
+      final @NotNull Bytes input, final MessageFrame messageFrame) {
+    final byte[] result = new byte[LibGnarkEIP196.EIP196_PREALLOCATE_FOR_RESULT_BYTES];
+    final byte[] error = new byte[LibGnarkEIP196.EIP196_PREALLOCATE_FOR_ERROR_BYTES];
 
     final IntByReference o_len =
-        new IntByReference(LibEthPairings.EIP196_PREALLOCATE_FOR_RESULT_BYTES);
+        new IntByReference(LibGnarkEIP196.EIP196_PREALLOCATE_FOR_RESULT_BYTES);
     final IntByReference err_len =
-        new IntByReference(LibEthPairings.EIP2537_PREALLOCATE_FOR_ERROR_BYTES);
-    final int inputSize = Math.min(inputLen, input.size());
+        new IntByReference(LibGnarkEIP196.EIP196_PREALLOCATE_FOR_ERROR_BYTES);
+    final int inputSize = Math.min(inputLimit, input.size());
     final int errorNo =
-        LibEthPairings.eip196_perform_operation(
+        LibGnarkEIP196.eip196_perform_operation(
             operationId,
             input.slice(0, inputSize).toArrayUnsafe(),
             inputSize,
@@ -91,6 +123,7 @@ public abstract class AbstractAltBnPrecompiledContract extends AbstractPrecompil
             o_len,
             error,
             err_len);
+
     if (errorNo == 0) {
       return PrecompileContractResult.success(Bytes.wrap(result, 0, o_len.getValue()));
     } else {

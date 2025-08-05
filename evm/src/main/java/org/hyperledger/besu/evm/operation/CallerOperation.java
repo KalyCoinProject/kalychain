@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,10 +18,16 @@ import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
+/** The Caller operation. */
 public class CallerOperation extends AbstractFixedCostOperation {
 
+  /**
+   * Instantiates a new Caller operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public CallerOperation(final GasCalculator gasCalculator) {
-    super(0x33, "CALLER", 0, 1, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
+    super(0x33, "CALLER", 0, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
   }
 
   @Override

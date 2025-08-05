@@ -16,13 +16,14 @@
 apply plugin: 'java-library'
 
 jar {
-  archiveBaseName = 'besu-api'
+  archiveBaseName = calculateArtifactId(project)
   manifest {
     attributes(
       'Specification-Title': archiveBaseName,
       'Specification-Version': project.version,
       'Implementation-Title': archiveBaseName,
-      'Implementation-Version': calculateVersion()
+      'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash
       )
   }
 }
@@ -35,9 +36,8 @@ dependencies {
 
   implementation project(':config')
   implementation project(':consensus:merge')
-  implementation project(':crypto')
+  implementation project(':crypto:services')
   implementation project(':datatypes')
-  implementation project(':enclave')
   implementation project(':ethereum:blockcreation')
   implementation project(':ethereum:core')
   implementation project(':ethereum:eth')
@@ -50,6 +50,8 @@ dependencies {
   implementation project(':nat')
   implementation project(':plugin-api')
   implementation project(':util')
+  implementation project(':services:pipeline')
+  implementation project(':services:tasks')
 
   implementation 'com.google.guava:guava'
   implementation 'com.graphql-java:graphql-java'
@@ -62,49 +64,51 @@ dependencies {
   implementation 'io.vertx:vertx-web'
   implementation 'io.vertx:vertx-codegen'
   implementation 'com.fasterxml.jackson.core:jackson-databind'
-  implementation 'org.apache.tuweni:tuweni-bytes'
-  implementation 'org.apache.tuweni:tuweni-net'
-  implementation 'org.apache.tuweni:tuweni-toml'
-  implementation 'org.apache.tuweni:tuweni-units'
+  implementation 'io.consensys.tuweni:tuweni-bytes'
+  implementation 'io.consensys.tuweni:tuweni-net'
+  implementation 'io.consensys.tuweni:tuweni-toml'
+  implementation 'io.consensys.tuweni:tuweni-units'
   implementation 'org.antlr:antlr4-runtime'
-  implementation 'org.bouncycastle:bcprov-jdk15on'
+  implementation 'org.bouncycastle:bcprov-jdk18on'
   implementation 'org.springframework.security:spring-security-crypto'
   implementation 'org.xerial.snappy:snappy-java'
+  implementation 'com.google.guava:guava'
+  implementation 'io.vertx:vertx-core'
+  implementation 'com.fasterxml.jackson.core:jackson-databind'
+  implementation 'io.consensys.tuweni:tuweni-bytes'
+  implementation 'io.consensys.tuweni:tuweni-units'
+  implementation 'org.web3j:abi'
+  implementation 'com.github.ben-manes.caffeine:caffeine'
 
   annotationProcessor "org.immutables:value"
   implementation "org.immutables:value-annotations"
 
-  runtimeOnly 'org.bouncycastle:bcpkix-jdk15on'
+  runtimeOnly 'org.bouncycastle:bcpkix-jdk18on'
   runtimeOnly 'io.netty:netty-transport-native-epoll'
   runtimeOnly 'io.netty:netty-transport-native-kqueue'
 
   testImplementation project(':config')
   testImplementation project(path: ':config', configuration: 'testSupportArtifacts')
-  testImplementation project(path: ':crypto', configuration: 'testSupportArtifacts')
+  testImplementation project(path: ':crypto:services', configuration: 'testSupportArtifacts')
   testImplementation project(path: ':ethereum:core', configuration: 'testArtifacts')
   testImplementation project(path: ':ethereum:core', configuration: 'testSupportArtifacts')
   testImplementation project(':services:kvstore')
   testImplementation project(':testutil')
 
-  testResourceGeneration project(':besu')
+  testResourceGeneration project(':app')
 
   testImplementation 'com.squareup.okhttp3:okhttp'
   testImplementation 'io.vertx:vertx-auth-jwt'
   testImplementation 'io.vertx:vertx-junit5'
-  testImplementation 'io.vertx:vertx-unit'
   testImplementation 'io.vertx:vertx-web-client'
-  testImplementation 'junit:junit'
   testImplementation 'org.apache.logging.log4j:log4j-core'
   testImplementation 'org.assertj:assertj-core'
   testImplementation 'org.junit.jupiter:junit-jupiter'
-  testImplementation 'org.junit.jupiter:junit-jupiter-params'
-  testImplementation 'org.junit.platform:junit-platform-runner'
+
   testImplementation 'org.mockito:mockito-core'
   testImplementation 'org.mockito:mockito-junit-jupiter'
 
-  testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
-
-  testSupportImplementation 'org.bouncycastle:bcpkix-jdk15on'
+  testSupportImplementation 'org.bouncycastle:bcpkix-jdk18on'
 
   integrationTestImplementation project(':config')
   integrationTestImplementation project(path: ':config', configuration: 'testSupportArtifacts')
@@ -113,53 +117,55 @@ dependencies {
   integrationTestImplementation project(':testutil')
 
   integrationTestImplementation 'org.assertj:assertj-core'
-  integrationTestImplementation 'org.junit.jupiter:junit-jupiter-api'
+  integrationTestImplementation 'org.junit.jupiter:junit-jupiter'
   integrationTestImplementation 'org.mockito:mockito-core'
   integrationTestImplementation 'org.mockito:mockito-junit-jupiter'
-  integrationTestImplementation 'org.testcontainers:testcontainers'
 
   integrationTestRuntimeOnly 'org.junit.jupiter:junit-jupiter'
 }
 
 artifacts { testSupportArtifacts testSupportJar }
 
-task generateTestBlockchain() {
+tasks.register('generateTestBlockchain') {
   def srcFiles = 'src/test/resources/org/hyperledger/besu/ethereum/api/jsonrpc/trace/chain-data'
-  def dataPath = "$buildDir/generated/data"
+  def dataPath = new File("$buildDir/generated/data")
   def blocksBin = "$buildDir/resources/test/org/hyperledger/besu/ethereum/api/jsonrpc/trace/chain-data/blocks.bin"
   inputs.dir(srcFiles)
   outputs.file(blocksBin)
   dependsOn(configurations.testResourceGeneration)
   dependsOn(processTestResources)
   doLast {
-    mkdir(dataPath)
-    javaexec {
-      main = 'org.hyperledger.besu.Besu'
-      classpath = configurations.testResourceGeneration
-      args = [
-        "--logging=ERROR",
-        "--data-path=$dataPath",
-        "--genesis-file=$srcFiles/genesis.json",
-        "blocks",
-        "import",
-        "--format=JSON",
-        "--from=$srcFiles/blocks.json",
-        "--start-time=1438269971"
-      ]
-    }
-    javaexec {
-      main = 'org.hyperledger.besu.Besu'
-      classpath = configurations.testResourceGeneration
-      args = [
-        "--logging=ERROR",
-        "--data-path=$dataPath",
-        "--genesis-file=$srcFiles/genesis.json",
-        "blocks",
-        "export",
-        "--format=RLP",
-        "--start-block=0",
-        "--to=$blocksBin"
-      ]
+    if(!dataPath.exists()) {
+      mkdir(dataPath)
+
+      javaexec {
+        main = 'org.hyperledger.besu.Besu'
+        classpath = configurations.testResourceGeneration
+        args = [
+          "--logging=ERROR",
+          "--data-path=$dataPath",
+          "--genesis-file=$srcFiles/genesis.json",
+          "blocks",
+          "import",
+          "--format=JSON",
+          "--from=$srcFiles/blocks.json",
+          "--start-time=1438269971"
+        ]
+      }
+      javaexec {
+        main = 'org.hyperledger.besu.Besu'
+        classpath = configurations.testResourceGeneration
+        args = [
+          "--logging=ERROR",
+          "--data-path=$dataPath",
+          "--genesis-file=$srcFiles/genesis.json",
+          "blocks",
+          "export",
+          "--format=RLP",
+          "--start-block=0",
+          "--to=$blocksBin"
+        ]
+      }
     }
   }
 }

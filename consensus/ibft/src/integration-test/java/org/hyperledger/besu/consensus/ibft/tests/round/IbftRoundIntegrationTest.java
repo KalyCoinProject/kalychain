@@ -24,6 +24,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.consensus.common.bft.BftExtraData;
+import org.hyperledger.besu.consensus.common.bft.BftProtocolSchedule;
 import org.hyperledger.besu.consensus.common.bft.ConsensusRoundIdentifier;
 import org.hyperledger.besu.consensus.common.bft.RoundTimer;
 import org.hyperledger.besu.consensus.common.bft.blockcreation.BftBlockCreator;
@@ -34,10 +35,10 @@ import org.hyperledger.besu.consensus.ibft.payload.MessageFactory;
 import org.hyperledger.besu.consensus.ibft.statemachine.IbftRound;
 import org.hyperledger.besu.consensus.ibft.statemachine.RoundState;
 import org.hyperledger.besu.consensus.ibft.validation.MessageValidator;
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
 import org.hyperledger.besu.crypto.SECPSignature;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.chain.MinedBlockObserver;
@@ -48,6 +49,7 @@ import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
 import org.hyperledger.besu.ethereum.core.BlockImporter;
 import org.hyperledger.besu.ethereum.mainnet.BlockImportResult;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
 import org.hyperledger.besu.plugin.services.securitymodule.SecurityModuleException;
 import org.hyperledger.besu.util.Subscribers;
@@ -74,6 +76,8 @@ public class IbftRoundIntegrationTest {
   private final Subscribers<MinedBlockObserver> subscribers = Subscribers.create();
   private ProtocolContext protocolContext;
 
+  @Mock private BftProtocolSchedule protocolSchedule;
+  @Mock private ProtocolSpec protocolSpec;
   @Mock private MutableBlockchain blockChain;
   @Mock private WorldStateArchive worldStateArchive;
   @Mock private BlockImporter blockImporter;
@@ -85,6 +89,7 @@ public class IbftRoundIntegrationTest {
   private MessageFactory throwingMessageFactory;
   private IbftMessageTransmitter transmitter;
   @Mock private StubValidatorMulticaster multicaster;
+  @Mock BlockHeader parentHeader;
 
   private Block proposedBlock;
 
@@ -112,13 +117,18 @@ public class IbftRoundIntegrationTest {
     final BlockHeader header = headerTestFixture.buildHeader();
     proposedBlock = new Block(header, new BlockBody(emptyList(), emptyList()));
 
+    when(protocolSchedule.getByBlockHeader(any())).thenReturn(protocolSpec);
+    when(protocolSpec.getBlockImporter()).thenReturn(blockImporter);
+
     when(blockImporter.importBlock(any(), any(), any())).thenReturn(new BlockImportResult(true));
 
     protocolContext =
-        new ProtocolContext(
-            blockChain,
-            worldStateArchive,
-            setupContextWithBftExtraDataEncoder(emptyList(), bftExtraDataEncoder));
+        new ProtocolContext.Builder()
+            .withBlockchain(blockChain)
+            .withWorldStateArchive(worldStateArchive)
+            .withConsensusContext(
+                setupContextWithBftExtraDataEncoder(emptyList(), bftExtraDataEncoder))
+            .build();
   }
 
   @Test
@@ -130,13 +140,14 @@ public class IbftRoundIntegrationTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             throwingMessageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataEncoder);
+            bftExtraDataEncoder,
+            parentHeader);
 
     round.handleProposalMessage(
         peerMessageFactory.createProposal(roundIdentifier, proposedBlock, Optional.empty()));
@@ -157,13 +168,14 @@ public class IbftRoundIntegrationTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             throwingMessageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataEncoder);
+            bftExtraDataEncoder,
+            parentHeader);
 
     // inject a block first, then a prepare on it.
     round.handleProposalMessage(

@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -28,8 +28,8 @@ import org.hyperledger.besu.evm.log.LogsBloomFilter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import javax.annotation.Nonnull;
 
+import jakarta.validation.constraints.NotNull;
 import org.apache.tuweni.bytes.Bytes;
 
 public class ChainForTestCreator {
@@ -56,6 +56,11 @@ public class ChainForTestCreator {
         null,
         Hash.EMPTY,
         0,
+        null,
+        null,
+        null,
+        null,
+        null,
         new MainnetBlockHeaderFunctions());
   }
 
@@ -79,6 +84,11 @@ public class ChainForTestCreator {
         blockHeader.getBaseFee().orElse(null),
         blockHeader.getMixHash(),
         blockHeader.getNonce(),
+        blockHeader.getWithdrawalsRoot().orElse(null),
+        blockHeader.getBlobGasUsed().orElse(null),
+        blockHeader.getExcessBlobGas().orElse(null),
+        blockHeader.getParentBeaconBlockRoot().orElse(null),
+        blockHeader.getRequestsHash().orElse(null),
         new MainnetBlockHeaderFunctions());
   }
 
@@ -105,7 +115,7 @@ public class ChainForTestCreator {
     return prepareHeader(number, Optional.empty());
   }
 
-  @Nonnull
+  @NotNull
   private static BlockHeader prepareEmptyHeader(final BlockHeader parent) {
     return new BlockHeader(
         parent.getHash(),
@@ -124,6 +134,11 @@ public class ChainForTestCreator {
         Wei.ZERO,
         Hash.EMPTY,
         0,
+        null,
+        null,
+        null,
+        null,
+        null,
         new MainnetBlockHeaderFunctions());
   }
 }

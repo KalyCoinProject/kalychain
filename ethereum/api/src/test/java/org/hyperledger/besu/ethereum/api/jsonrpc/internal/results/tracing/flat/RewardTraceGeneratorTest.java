@@ -35,19 +35,18 @@ import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class RewardTraceGeneratorTest {
 
   private final BlockDataGenerator gen = new BlockDataGenerator();
@@ -66,13 +65,13 @@ public class RewardTraceGeneratorTest {
   private final OptionalLong eraRounds = OptionalLong.of(5000000);
   private Block block;
 
-  @Before
+  @BeforeEach
   public void setUp() {
     final BlockBody blockBody = new BlockBody(Collections.emptyList(), List.of(ommerHeader));
     final BlockHeader blockHeader =
         gen.header(0x0A, blockBody, new BlockDataGenerator.BlockOptions());
     block = new Block(blockHeader, blockBody);
-    when(protocolSchedule.getByBlockNumber(block.getHeader().getNumber())).thenReturn(protocolSpec);
+    when(protocolSchedule.getByBlockHeader(block.getHeader())).thenReturn(protocolSpec);
     when(protocolSpec.getBlockReward()).thenReturn(blockReward);
     when(protocolSpec.getMiningBeneficiaryCalculator()).thenReturn(miningBeneficiaryCalculator);
     when(miningBeneficiaryCalculator.calculateBeneficiary(block.getHeader()))
@@ -92,7 +91,7 @@ public class RewardTraceGeneratorTest {
             blockReward,
             BlockHeader::getCoinbase,
             true,
-            Optional.empty());
+            protocolSchedule);
     when(protocolSpec.getBlockProcessor()).thenReturn(blockProcessor);
 
     final Stream<Trace> traceStream =
@@ -151,7 +150,8 @@ public class RewardTraceGeneratorTest {
             blockReward,
             BlockHeader::getCoinbase,
             true,
-            eraRounds);
+            eraRounds,
+            protocolSchedule);
     when(protocolSpec.getBlockProcessor()).thenReturn(blockProcessor);
 
     final Stream<Trace> traceStream =

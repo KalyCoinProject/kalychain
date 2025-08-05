@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,6 +16,8 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.methods;
 
 import org.hyperledger.besu.config.GenesisConfigOptions;
 import org.hyperledger.besu.ethereum.ProtocolContext;
+import org.hyperledger.besu.ethereum.api.ApiConfiguration;
+import org.hyperledger.besu.ethereum.api.graphql.GraphQLConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.filter.FilterManager;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
@@ -23,15 +25,18 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.RpcModules;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.WebSocketConfiguration;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.blockcreation.MiningCoordinator;
-import org.hyperledger.besu.ethereum.core.PrivacyParameters;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.Synchronizer;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeers;
+import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.p2p.network.P2PNetwork;
+import org.hyperledger.besu.ethereum.p2p.peers.EnodeDnsConfiguration;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
 import org.hyperledger.besu.ethereum.permissioning.AccountLocalConfigPermissioningController;
 import org.hyperledger.besu.ethereum.permissioning.NodeLocalConfigPermissioningController;
+import org.hyperledger.besu.ethereum.transaction.TransactionSimulator;
 import org.hyperledger.besu.metrics.ObservableMetricsSystem;
 import org.hyperledger.besu.metrics.prometheus.MetricsConfiguration;
 import org.hyperledger.besu.nat.NatService;
@@ -51,7 +56,9 @@ import io.vertx.core.Vertx;
 public class JsonRpcMethodsFactory {
 
   public Map<String, JsonRpcMethod> methods(
+      final String clientNodeName,
       final String clientVersion,
+      final String commit,
       final BigInteger networkId,
       final GenesisConfigOptions genesisConfigOptions,
       final P2PNetwork p2pNetwork,
@@ -61,52 +68,63 @@ public class JsonRpcMethodsFactory {
       final ProtocolContext protocolContext,
       final FilterManager filterManager,
       final TransactionPool transactionPool,
+      final MiningConfiguration miningConfiguration,
       final MiningCoordinator miningCoordinator,
       final ObservableMetricsSystem metricsSystem,
       final Set<Capability> supportedCapabilities,
       final Optional<AccountLocalConfigPermissioningController> accountsAllowlistController,
       final Optional<NodeLocalConfigPermissioningController> nodeAllowlistController,
       final Collection<String> rpcApis,
-      final PrivacyParameters privacyParameters,
       final JsonRpcConfiguration jsonRpcConfiguration,
       final WebSocketConfiguration webSocketConfiguration,
       final MetricsConfiguration metricsConfiguration,
+      final GraphQLConfiguration graphQLConfiguration,
       final NatService natService,
       final Map<String, BesuPlugin> namedPlugins,
       final Path dataDir,
       final EthPeers ethPeers,
       final Vertx consensusEngineServer,
-      final Optional<Long> maxLogRange) {
+      final ApiConfiguration apiConfiguration,
+      final Optional<EnodeDnsConfiguration> enodeDnsConfiguration,
+      final TransactionSimulator transactionSimulator,
+      final EthScheduler ethScheduler) {
     final Map<String, JsonRpcMethod> enabled = new HashMap<>();
-
     if (!rpcApis.isEmpty()) {
       final JsonRpcMethod modules = new RpcModules(rpcApis);
       enabled.put(modules.getName(), modules);
-
       final List<JsonRpcMethods> availableApiGroups =
           List.of(
               new AdminJsonRpcMethods(
-                  clientVersion,
+                  clientNodeName,
                   networkId,
                   genesisConfigOptions,
                   p2pNetwork,
                   blockchainQueries,
                   namedPlugins,
                   natService,
-                  ethPeers),
+                  ethPeers,
+                  enodeDnsConfiguration,
+                  protocolSchedule),
               new DebugJsonRpcMethods(
                   blockchainQueries,
                   protocolContext,
                   protocolSchedule,
                   metricsSystem,
                   transactionPool,
-                  dataDir),
-              new EeaJsonRpcMethods(
-                  blockchainQueries, protocolSchedule, transactionPool, privacyParameters),
+                  synchronizer,
+                  dataDir,
+                  transactionSimulator,
+                  ethScheduler),
               new ExecutionEngineJsonRpcMethods(
-                  miningCoordinator, protocolContext, ethPeers, consensusEngineServer),
-              new GoQuorumJsonRpcPrivacyMethods(
-                  blockchainQueries, protocolSchedule, transactionPool, privacyParameters),
+                  miningCoordinator,
+                  protocolSchedule,
+                  protocolContext,
+                  ethPeers,
+                  consensusEngineServer,
+                  clientVersion,
+                  commit,
+                  transactionPool,
+                  metricsSystem),
               new EthJsonRpcMethods(
                   blockchainQueries,
                   synchronizer,
@@ -114,27 +132,29 @@ public class JsonRpcMethodsFactory {
                   filterManager,
                   transactionPool,
                   miningCoordinator,
+                  miningConfiguration,
                   supportedCapabilities,
-                  privacyParameters,
-                  maxLogRange),
+                  apiConfiguration,
+                  genesisConfigOptions,
+                  transactionSimulator),
               new NetJsonRpcMethods(
                   p2pNetwork,
                   networkId,
                   jsonRpcConfiguration,
                   webSocketConfiguration,
-                  metricsConfiguration),
-              new MinerJsonRpcMethods(miningCoordinator),
+                  metricsConfiguration,
+                  graphQLConfiguration),
+              new MinerJsonRpcMethods(miningConfiguration, miningCoordinator),
               new PermJsonRpcMethods(accountsAllowlistController, nodeAllowlistController),
-              new PrivJsonRpcMethods(
+              new Web3JsonRpcMethods(clientNodeName),
+              new TraceJsonRpcMethods(
                   blockchainQueries,
                   protocolSchedule,
-                  transactionPool,
-                  privacyParameters,
-                  filterManager),
-              new PrivxJsonRpcMethods(
-                  blockchainQueries, protocolSchedule, transactionPool, privacyParameters),
-              new Web3JsonRpcMethods(clientVersion),
-              new TraceJsonRpcMethods(blockchainQueries, protocolSchedule, privacyParameters),
+                  protocolContext,
+                  apiConfiguration,
+                  transactionSimulator,
+                  metricsSystem,
+                  ethScheduler),
               new TxPoolJsonRpcMethods(transactionPool),
               new PluginsJsonRpcMethods(namedPlugins));
 

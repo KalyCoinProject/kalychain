@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,26 +16,29 @@ package org.hyperledger.besu.ethereum.api.jsonrpc;
 
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.config.StubGenesisConfigOptions;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.ProtocolContext;
+import org.hyperledger.besu.ethereum.api.ApiConfiguration;
+import org.hyperledger.besu.ethereum.api.graphql.GraphQLConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.health.HealthService;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.filter.FilterManager;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.methods.JsonRpcMethodsFactory;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.WebSocketConfiguration;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.blockcreation.PoWMiningCoordinator;
+import org.hyperledger.besu.ethereum.chain.Blockchain;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider;
-import org.hyperledger.besu.ethereum.core.PrivacyParameters;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.ProtocolScheduleFixture;
 import org.hyperledger.besu.ethereum.core.Synchronizer;
 import org.hyperledger.besu.ethereum.eth.EthProtocol;
@@ -49,11 +52,14 @@ import org.hyperledger.besu.ethereum.p2p.network.P2PNetwork;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
 import org.hyperledger.besu.ethereum.permissioning.AccountLocalConfigPermissioningController;
 import org.hyperledger.besu.ethereum.permissioning.NodeLocalConfigPermissioningController;
+import org.hyperledger.besu.ethereum.transaction.TransactionSimulator;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.metrics.prometheus.MetricsConfiguration;
 import org.hyperledger.besu.nat.NatService;
+import org.hyperledger.besu.testutil.DeterministicEthScheduler;
 
 import java.math.BigInteger;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -63,6 +69,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import com.google.common.collect.Lists;
 import io.vertx.core.Vertx;
@@ -73,26 +80,27 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class JsonRpcHttpServiceRpcApisTest {
 
-  @Rule public final TemporaryFolder folder = new TemporaryFolder();
+  @TempDir private Path folder;
 
   private final Vertx vertx = Vertx.vertx();
   private final OkHttpClient client = new OkHttpClient();
   private JsonRpcHttpService service;
   private static String baseUrl;
   private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-  private static final String CLIENT_VERSION = "TestClientVersion/0.1.0";
+  private static final String CLIENT_NODE_NAME = "TestClientVersion/0.1.0";
+  private static final String CLIENT_VERSION = "0.1.0";
+  private static final String CLIENT_COMMIT = "12345678";
   private static final BigInteger NETWORK_ID = BigInteger.valueOf(123);
   private JsonRpcConfiguration configuration;
   private static final List<String> netServices =
@@ -103,13 +111,13 @@ public class JsonRpcHttpServiceRpcApisTest {
   private final JsonRpcTestHelper testHelper = new JsonRpcTestHelper();
   private final NatService natService = new NatService(Optional.empty());
 
-  @Before
+  @BeforeEach
   public void before() {
     configuration = JsonRpcConfiguration.createDefault();
     configuration.setPort(0);
   }
 
-  @After
+  @AfterEach
   public void after() {
     service.stop().join();
   }
@@ -120,8 +128,8 @@ public class JsonRpcHttpServiceRpcApisTest {
     final String id = "123";
     final RequestBody body =
         RequestBody.create(
-            JSON,
-            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_version\"}");
+            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_version\"}",
+            JSON);
 
     try (final Response resp = client.newCall(buildRequest(body)).execute()) {
       assertThat(resp.code()).isEqualTo(200);
@@ -134,8 +142,8 @@ public class JsonRpcHttpServiceRpcApisTest {
     final String id = "123";
     final RequestBody body =
         RequestBody.create(
-            JSON,
-            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_version\"}");
+            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_version\"}",
+            JSON);
 
     try (final Response resp = client.newCall(buildRequest(body)).execute()) {
       assertThat(resp.code()).isEqualTo(200);
@@ -149,14 +157,14 @@ public class JsonRpcHttpServiceRpcApisTest {
     final String id = "123";
     final RequestBody body =
         RequestBody.create(
-            JSON,
-            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_version\"}");
+            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_version\"}",
+            JSON);
 
     try (final Response resp = client.newCall(buildRequest(body)).execute()) {
       assertThat(resp.code()).isEqualTo(200);
       // Check general format of result
       final JsonObject json = new JsonObject(resp.body().string());
-      final JsonRpcError expectedError = JsonRpcError.METHOD_NOT_ENABLED;
+      final RpcErrorType expectedError = RpcErrorType.METHOD_NOT_ENABLED;
       testHelper.assertValidJsonRpcError(
           json, id, expectedError.getCode(), expectedError.getMessage());
     }
@@ -168,8 +176,8 @@ public class JsonRpcHttpServiceRpcApisTest {
     final String id = "123";
     final RequestBody body =
         RequestBody.create(
-            JSON,
-            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_version\"}");
+            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_version\"}",
+            JSON);
 
     try (final Response resp = client.newCall(buildRequest(body)).execute()) {
       assertThat(resp.code()).isEqualTo(200);
@@ -193,44 +201,49 @@ public class JsonRpcHttpServiceRpcApisTest {
 
   private JsonRpcHttpService createJsonRpcHttpServiceWithRpcApis(final JsonRpcConfiguration config)
       throws Exception {
+    setupMocksRequiredForBlockchainGenesisHash();
     final Set<Capability> supportedCapabilities = new HashSet<>();
-    supportedCapabilities.add(EthProtocol.ETH62);
-    supportedCapabilities.add(EthProtocol.ETH63);
+    supportedCapabilities.add(EthProtocol.LATEST);
 
     final Map<String, JsonRpcMethod> rpcMethods =
-        spy(
-            new JsonRpcMethodsFactory()
-                .methods(
-                    CLIENT_VERSION,
-                    NETWORK_ID,
-                    new StubGenesisConfigOptions(),
-                    mock(P2PNetwork.class),
-                    blockchainQueries,
-                    mock(Synchronizer.class),
-                    ProtocolScheduleFixture.MAINNET,
-                    mock(ProtocolContext.class),
-                    mock(FilterManager.class),
-                    mock(TransactionPool.class),
-                    mock(PoWMiningCoordinator.class),
-                    new NoOpMetricsSystem(),
-                    supportedCapabilities,
-                    Optional.of(mock(AccountLocalConfigPermissioningController.class)),
-                    Optional.of(mock(NodeLocalConfigPermissioningController.class)),
-                    config.getRpcApis(),
-                    mock(PrivacyParameters.class),
-                    mock(JsonRpcConfiguration.class),
-                    mock(WebSocketConfiguration.class),
-                    mock(MetricsConfiguration.class),
-                    natService,
-                    new HashMap<>(),
-                    folder.getRoot().toPath(),
-                    mock(EthPeers.class),
-                    vertx,
-                    Optional.empty()));
+        new JsonRpcMethodsFactory()
+            .methods(
+                CLIENT_NODE_NAME,
+                CLIENT_VERSION,
+                CLIENT_COMMIT,
+                NETWORK_ID,
+                new StubGenesisConfigOptions(),
+                mock(P2PNetwork.class),
+                blockchainQueries,
+                mock(Synchronizer.class),
+                ProtocolScheduleFixture.TESTING_NETWORK,
+                mock(ProtocolContext.class),
+                mock(FilterManager.class),
+                mock(TransactionPool.class),
+                mock(MiningConfiguration.class),
+                mock(PoWMiningCoordinator.class),
+                new NoOpMetricsSystem(),
+                supportedCapabilities,
+                Optional.of(mock(AccountLocalConfigPermissioningController.class)),
+                Optional.of(mock(NodeLocalConfigPermissioningController.class)),
+                config.getRpcApis(),
+                mock(JsonRpcConfiguration.class),
+                mock(WebSocketConfiguration.class),
+                mock(MetricsConfiguration.class),
+                mock(GraphQLConfiguration.class),
+                natService,
+                new HashMap<>(),
+                folder,
+                mock(EthPeers.class),
+                vertx,
+                mock(ApiConfiguration.class),
+                Optional.empty(),
+                mock(TransactionSimulator.class),
+                new DeterministicEthScheduler());
     final JsonRpcHttpService jsonRpcHttpService =
         new JsonRpcHttpService(
             vertx,
-            folder.newFolder().toPath(),
+            folder,
             config,
             new NoOpMetricsSystem(),
             natService,
@@ -271,14 +284,17 @@ public class JsonRpcHttpServiceRpcApisTest {
     when(genesisBlock.getHash()).thenReturn(Hash.ZERO);
     final P2PNetwork p2pNetwork =
         DefaultP2PNetwork.builder()
-            .supportedCapabilities(Capability.create("eth", 63))
+            .supportedCapabilities(EthProtocol.LATEST)
             .nodeKey(NodeKeyUtils.generate())
             .vertx(vertx)
             .config(config)
             .metricsSystem(new NoOpMetricsSystem())
             .storageProvider(new InMemoryKeyValueStorageProvider())
             .blockchain(blockchain)
-            .forks(Collections.emptyList())
+            .blockNumberForks(Collections.emptyList())
+            .timestampForks(Collections.emptyList())
+            .allConnectionsSupplier(Stream::empty)
+            .allActiveConnectionsSupplier(Stream::empty)
             .build();
 
     p2pNetwork.start();
@@ -294,48 +310,53 @@ public class JsonRpcHttpServiceRpcApisTest {
       final WebSocketConfiguration webSocketConfiguration,
       final P2PNetwork p2pNetwork,
       final MetricsConfiguration metricsConfiguration,
-      final NatService natService)
-      throws Exception {
+      final NatService natService) {
     final Set<Capability> supportedCapabilities = new HashSet<>();
-    supportedCapabilities.add(EthProtocol.ETH62);
-    supportedCapabilities.add(EthProtocol.ETH63);
+    supportedCapabilities.add(EthProtocol.LATEST);
     jsonRpcConfiguration.setPort(0);
     webSocketConfiguration.setPort(0);
 
+    setupMocksRequiredForBlockchainGenesisHash();
+
     final Map<String, JsonRpcMethod> rpcMethods =
-        spy(
-            new JsonRpcMethodsFactory()
-                .methods(
-                    CLIENT_VERSION,
-                    NETWORK_ID,
-                    new StubGenesisConfigOptions(),
-                    p2pNetwork,
-                    blockchainQueries,
-                    mock(Synchronizer.class),
-                    ProtocolScheduleFixture.MAINNET,
-                    mock(ProtocolContext.class),
-                    mock(FilterManager.class),
-                    mock(TransactionPool.class),
-                    mock(PoWMiningCoordinator.class),
-                    new NoOpMetricsSystem(),
-                    supportedCapabilities,
-                    Optional.of(mock(AccountLocalConfigPermissioningController.class)),
-                    Optional.of(mock(NodeLocalConfigPermissioningController.class)),
-                    jsonRpcConfiguration.getRpcApis(),
-                    mock(PrivacyParameters.class),
-                    jsonRpcConfiguration,
-                    webSocketConfiguration,
-                    metricsConfiguration,
-                    natService,
-                    new HashMap<>(),
-                    folder.getRoot().toPath(),
-                    mock(EthPeers.class),
-                    vertx,
-                    Optional.empty()));
+        new JsonRpcMethodsFactory()
+            .methods(
+                CLIENT_NODE_NAME,
+                CLIENT_VERSION,
+                CLIENT_COMMIT,
+                NETWORK_ID,
+                new StubGenesisConfigOptions(),
+                p2pNetwork,
+                blockchainQueries,
+                mock(Synchronizer.class),
+                ProtocolScheduleFixture.TESTING_NETWORK,
+                mock(ProtocolContext.class),
+                mock(FilterManager.class),
+                mock(TransactionPool.class),
+                mock(MiningConfiguration.class),
+                mock(PoWMiningCoordinator.class),
+                new NoOpMetricsSystem(),
+                supportedCapabilities,
+                Optional.of(mock(AccountLocalConfigPermissioningController.class)),
+                Optional.of(mock(NodeLocalConfigPermissioningController.class)),
+                jsonRpcConfiguration.getRpcApis(),
+                jsonRpcConfiguration,
+                webSocketConfiguration,
+                metricsConfiguration,
+                mock(GraphQLConfiguration.class),
+                natService,
+                new HashMap<>(),
+                folder,
+                mock(EthPeers.class),
+                vertx,
+                mock(ApiConfiguration.class),
+                Optional.empty(),
+                mock(TransactionSimulator.class),
+                new DeterministicEthScheduler());
     final JsonRpcHttpService jsonRpcHttpService =
         new JsonRpcHttpService(
             vertx,
-            folder.newFolder().toPath(),
+            folder,
             jsonRpcConfiguration,
             new NoOpMetricsSystem(),
             natService,
@@ -412,11 +433,12 @@ public class JsonRpcHttpServiceRpcApisTest {
   public RequestBody createNetServicesRequestBody() {
     final String id = "123";
     return RequestBody.create(
-        JSON, "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_services\"}");
+        "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_services\"}", JSON);
   }
 
-  public JsonRpcHttpService getJsonRpcHttpService(final boolean[] enabledNetServices)
-      throws Exception {
+  public JsonRpcHttpService getJsonRpcHttpService(final boolean[] enabledNetServices) {
+
+    setupMocksRequiredForBlockchainGenesisHash();
 
     JsonRpcConfiguration jsonRpcConfiguration = JsonRpcConfiguration.createDefault();
     WebSocketConfiguration webSocketConfiguration = WebSocketConfiguration.createDefault();
@@ -440,6 +462,14 @@ public class JsonRpcHttpServiceRpcApisTest {
 
     return createJsonRpcHttpService(
         jsonRpcConfiguration, webSocketConfiguration, p2pNetwork, metricsConfiguration, natService);
+  }
+
+  private void setupMocksRequiredForBlockchainGenesisHash() {
+    Blockchain blockchain = mock(Blockchain.class);
+    Block block = mock(Block.class);
+    lenient().when(blockchainQueries.getBlockchain()).thenReturn(blockchain);
+    lenient().when(blockchain.getGenesisBlock()).thenReturn(block);
+    lenient().when(block.getHash()).thenReturn(Hash.EMPTY);
   }
 
   @Test

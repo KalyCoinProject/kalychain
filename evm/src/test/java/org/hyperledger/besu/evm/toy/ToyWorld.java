@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -11,14 +11,13 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evm.toy;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.evm.account.Account;
-import org.hyperledger.besu.evm.account.EvmAccount;
+import org.hyperledger.besu.evm.account.MutableAccount;
 import org.hyperledger.besu.evm.worldstate.WorldUpdater;
 
 import java.util.Collection;
@@ -26,6 +25,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+
+import org.apache.tuweni.bytes.Bytes;
 
 public class ToyWorld implements WorldUpdater {
 
@@ -57,18 +58,37 @@ public class ToyWorld implements WorldUpdater {
   }
 
   @Override
-  public EvmAccount createAccount(final Address address, final long nonce, final Wei balance) {
-    ToyAccount account = new ToyAccount(address, nonce, balance);
+  public MutableAccount createAccount(final Address address, final long nonce, final Wei balance) {
+    return createAccount(null, address, nonce, balance, Bytes.EMPTY);
+  }
+
+  public MutableAccount createAccount(
+      final Account parentAccount,
+      final Address address,
+      final long nonce,
+      final Wei balance,
+      final Bytes code) {
+    ToyAccount account = new ToyAccount(parentAccount, address, nonce, balance, code);
     accounts.put(address, account);
     return account;
   }
 
   @Override
-  public EvmAccount getAccount(final Address address) {
+  public MutableAccount getAccount(final Address address) {
     if (accounts.containsKey(address)) {
       return accounts.get(address);
     } else if (parent != null) {
-      return parent.getAccount(address);
+      Account parentAccount = parent.getAccount(address);
+      if (parentAccount == null) {
+        return null;
+      } else {
+        return createAccount(
+            parentAccount,
+            parentAccount.getAddress(),
+            parentAccount.getNonce(),
+            parentAccount.getBalance(),
+            parentAccount.getCode());
+      }
     } else {
       return null;
     }
@@ -99,7 +119,9 @@ public class ToyWorld implements WorldUpdater {
 
   @Override
   public void commit() {
-    parent.accounts.putAll(accounts);
+    if (parent != null) {
+      parent.accounts.putAll(accounts);
+    }
   }
 
   @Override

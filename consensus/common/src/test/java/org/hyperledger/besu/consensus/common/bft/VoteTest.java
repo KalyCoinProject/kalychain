@@ -14,11 +14,11 @@
  */
 package org.hyperledger.besu.consensus.common.bft;
 
-import static org.assertj.core.api.Java6Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import org.hyperledger.besu.datatypes.Address;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class VoteTest {
   @Test

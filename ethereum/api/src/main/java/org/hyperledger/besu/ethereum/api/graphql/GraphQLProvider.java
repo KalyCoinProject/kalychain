@@ -18,8 +18,8 @@ import org.hyperledger.besu.ethereum.api.graphql.internal.Scalars;
 
 import java.io.IOException;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
-import com.google.common.base.Charsets;
 import com.google.common.io.Resources;
 import graphql.GraphQL;
 import graphql.analysis.FieldComplexityEnvironment;
@@ -31,16 +31,34 @@ import graphql.schema.idl.SchemaParser;
 import graphql.schema.idl.TypeDefinitionRegistry;
 import graphql.schema.idl.TypeRuntimeWiring;
 
+/**
+ * This class provides the GraphQL service.
+ *
+ * <p>It contains a method to build the GraphQL service with the provided data fetchers.
+ */
 public class GraphQLProvider {
 
+  /**
+   * The maximum complexity allowed for a GraphQL query.
+   *
+   * <p>This constant is used to prevent overly complex queries from being executed. A query's
+   * complexity is calculated based on the number and type of fields it contains.
+   */
   public static final int MAX_COMPLEXITY = 200;
 
   private GraphQLProvider() {}
 
+  /**
+   * Builds the GraphQL service with the provided data fetchers.
+   *
+   * @param graphQLDataFetchers the data fetchers to be used in the GraphQL service.
+   * @return the built GraphQL service.
+   * @throws IOException if there is an error reading the schema file.
+   */
   public static GraphQL buildGraphQL(final GraphQLDataFetchers graphQLDataFetchers)
       throws IOException {
     final URL url = Resources.getResource("schema.graphqls");
-    final String sdl = Resources.toString(url, Charsets.UTF_8);
+    final String sdl = Resources.toString(url, StandardCharsets.UTF_8);
     final GraphQLSchema graphQLSchema = buildSchema(sdl, graphQLDataFetchers);
     return GraphQL.newGraphQL(graphQLSchema)
         .instrumentation(

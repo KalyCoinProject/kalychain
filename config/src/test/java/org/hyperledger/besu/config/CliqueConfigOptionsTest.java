@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class CliqueConfigOptionsTest {
 
@@ -43,7 +43,7 @@ public class CliqueConfigOptionsTest {
 
   @Test
   public void shouldGetDefaultEpochLengthFromDefaultConfig() {
-    assertThat(CliqueConfigOptions.DEFAULT.getEpochLength())
+    assertThat(JsonCliqueConfigOptions.DEFAULT.getEpochLength())
         .isEqualTo(EXPECTED_DEFAULT_EPOCH_LENGTH);
   }
 
@@ -61,7 +61,7 @@ public class CliqueConfigOptionsTest {
 
   @Test
   public void shouldGetDefaultBlockPeriodFromDefaultConfig() {
-    assertThat(CliqueConfigOptions.DEFAULT.getBlockPeriodSeconds())
+    assertThat(JsonCliqueConfigOptions.DEFAULT.getBlockPeriodSeconds())
         .isEqualTo(EXPECTED_DEFAULT_BLOCK_PERIOD);
   }
 
@@ -78,6 +78,6 @@ public class CliqueConfigOptionsTest {
     final ObjectNode options = JsonUtil.objectNodeFromMap(cliqueConfigOptions);
     configNode.set("clique", options);
     rootNode.set("config", configNode);
-    return GenesisConfigFile.fromConfig(rootNode).getConfigOptions().getCliqueConfigOptions();
+    return GenesisConfig.fromConfig(rootNode).getConfigOptions().getCliqueConfigOptions();
   }
 }

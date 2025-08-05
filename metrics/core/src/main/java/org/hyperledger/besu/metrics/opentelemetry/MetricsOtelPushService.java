@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -11,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.metrics.opentelemetry;
 
@@ -23,11 +22,20 @@ import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Metrics open telemetry push service. */
 public class MetricsOtelPushService implements MetricsService {
 
   private static final Logger LOG = LoggerFactory.getLogger(MetricsOtelPushService.class);
+  private final OpenTelemetrySystem metricsSystem;
 
-  public MetricsOtelPushService() {}
+  /**
+   * Instantiates a new Metrics open telemetry push service.
+   *
+   * @param metricsSystem The OpenTelemetry metrics system
+   */
+  public MetricsOtelPushService(final OpenTelemetrySystem metricsSystem) {
+    this.metricsSystem = metricsSystem;
+  }
 
   @Override
   public CompletableFuture<?> start() {
@@ -38,6 +46,7 @@ public class MetricsOtelPushService implements MetricsService {
 
   @Override
   public CompletableFuture<?> stop() {
+    metricsSystem.shutdown();
     return CompletableFuture.completedFuture(null);
   }
 

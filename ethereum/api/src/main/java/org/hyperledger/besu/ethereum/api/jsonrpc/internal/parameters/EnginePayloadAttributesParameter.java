@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,6 +16,9 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters;
 
 import org.hyperledger.besu.datatypes.Address;
 
+import java.util.List;
+import java.util.stream.Collectors;
+
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.vertx.core.json.JsonObject;
@@ -26,15 +29,22 @@ public class EnginePayloadAttributesParameter {
   final Long timestamp;
   final Bytes32 prevRandao;
   final Address suggestedFeeRecipient;
+  final List<WithdrawalParameter> withdrawals;
+  private final Bytes32 parentBeaconBlockRoot;
 
   @JsonCreator
   public EnginePayloadAttributesParameter(
       @JsonProperty("timestamp") final String timestamp,
       @JsonProperty("prevRandao") final String prevRandao,
-      @JsonProperty("suggestedFeeRecipient") final String suggestedFeeRecipient) {
+      @JsonProperty("suggestedFeeRecipient") final String suggestedFeeRecipient,
+      @JsonProperty("withdrawals") final List<WithdrawalParameter> withdrawals,
+      @JsonProperty("parentBeaconBlockRoot") final String parentBeaconBlockRoot) {
     this.timestamp = Long.decode(timestamp);
     this.prevRandao = Bytes32.fromHexString(prevRandao);
     this.suggestedFeeRecipient = Address.fromHexString(suggestedFeeRecipient);
+    this.withdrawals = withdrawals;
+    this.parentBeaconBlockRoot =
+        parentBeaconBlockRoot == null ? null : Bytes32.fromHexString(parentBeaconBlockRoot);
   }
 
   public Long getTimestamp() {
@@ -49,11 +59,28 @@ public class EnginePayloadAttributesParameter {
     return suggestedFeeRecipient;
   }
 
+  public Bytes32 getParentBeaconBlockRoot() {
+    return parentBeaconBlockRoot;
+  }
+
+  public List<WithdrawalParameter> getWithdrawals() {
+    return withdrawals;
+  }
+
   public String serialize() {
-    return new JsonObject()
-        .put("timestamp", timestamp)
-        .put("prevRandao", prevRandao.toHexString())
-        .put("suggestedFeeRecipient", suggestedFeeRecipient.toHexString())
-        .encode();
+    final JsonObject json =
+        new JsonObject()
+            .put("timestamp", timestamp)
+            .put("prevRandao", prevRandao.toHexString())
+            .put("suggestedFeeRecipient", suggestedFeeRecipient.toHexString());
+    if (withdrawals != null) {
+      json.put(
+          "withdrawals",
+          withdrawals.stream().map(WithdrawalParameter::asJsonObject).collect(Collectors.toList()));
+    }
+    if (parentBeaconBlockRoot != null) {
+      json.put("parentBeaconBlockRoot", parentBeaconBlockRoot.toHexString());
+    }
+    return json.encode();
   }
 }

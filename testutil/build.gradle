@@ -16,18 +16,24 @@
 apply plugin: 'java-library'
 
 jar {
-  archiveBaseName = 'besu-util-test'
+  archiveBaseName = calculateArtifactId(project)
   manifest {
     attributes(
       'Specification-Title': archiveBaseName,
       'Specification-Version': project.version,
       'Implementation-Title': archiveBaseName,
-      'Implementation-Version': calculateVersion()
+      'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash
       )
   }
 }
 
+sonarqube {
+  skipProject = true
+}
+
 dependencies {
+  implementation project(':ethereum:eth')
   implementation project(':plugin-api')
   implementation project(':util')
 
@@ -36,13 +42,11 @@ dependencies {
   implementation 'com.google.guava:guava'
   implementation 'com.squareup.okhttp3:okhttp'
   implementation 'io.vertx:vertx-core'
-  implementation 'junit:junit'
-  implementation 'org.apache.tuweni:tuweni-bytes'
-  implementation 'org.apache.tuweni:tuweni-io'
-  implementation 'org.apache.tuweni:tuweni-toml'
+  implementation 'org.junit.jupiter:junit-jupiter'
+  implementation 'io.consensys.tuweni:tuweni-bytes'
+  implementation 'io.consensys.tuweni:tuweni-io'
+  implementation 'io.consensys.tuweni:tuweni-toml'
   implementation 'org.assertj:assertj-core'
   implementation 'org.mockito:mockito-core'
   implementation 'org.web3j:core'
-
-  implementation 'org.testcontainers:testcontainers'
 }

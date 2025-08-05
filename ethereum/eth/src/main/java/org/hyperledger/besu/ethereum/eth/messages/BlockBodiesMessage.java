@@ -16,6 +16,7 @@ package org.hyperledger.besu.ethereum.eth.messages;
 
 import org.hyperledger.besu.ethereum.core.BlockBody;
 import org.hyperledger.besu.ethereum.core.BlockHeaderFunctions;
+import org.hyperledger.besu.ethereum.core.SyncBlockBody;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ScheduleBasedBlockHeaderFunctions;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.AbstractMessageData;
@@ -34,7 +35,7 @@ public final class BlockBodiesMessage extends AbstractMessageData {
       return (BlockBodiesMessage) message;
     }
     final int code = message.getCode();
-    if (code != EthPV62.BLOCK_BODIES) {
+    if (code != EthProtocolMessages.BLOCK_BODIES) {
       throw new IllegalArgumentException(
           String.format("Message has code %d and thus is not a BlockBodiesMessage.", code));
     }
@@ -43,7 +44,7 @@ public final class BlockBodiesMessage extends AbstractMessageData {
 
   public static BlockBodiesMessage create(final Iterable<BlockBody> bodies) {
     final BytesValueRLPOutput tmp = new BytesValueRLPOutput();
-    tmp.writeList(bodies, BlockBody::writeTo);
+    tmp.writeList(bodies, BlockBody::writeWrappedBodyTo);
     return new BlockBodiesMessage(tmp.encoded());
   }
 
@@ -64,13 +65,18 @@ public final class BlockBodiesMessage extends AbstractMessageData {
 
   @Override
   public int getCode() {
-    return EthPV62.BLOCK_BODIES;
+    return EthProtocolMessages.BLOCK_BODIES;
   }
 
   public List<BlockBody> bodies(final ProtocolSchedule protocolSchedule) {
     final BlockHeaderFunctions blockHeaderFunctions =
         ScheduleBasedBlockHeaderFunctions.create(protocolSchedule);
     return new BytesValueRLPInput(data, false)
-        .readList(rlp -> BlockBody.readFrom(rlp, blockHeaderFunctions));
+        .readList(rlp -> BlockBody.readWrappedBodyFrom(rlp, blockHeaderFunctions, true));
+  }
+
+  public List<SyncBlockBody> syncBodies(final ProtocolSchedule protocolSchedule) {
+    return new BytesValueRLPInput(data, false)
+        .readList(rlp -> SyncBlockBody.readWrappedBodyFrom(rlp, true, protocolSchedule));
   }
 }

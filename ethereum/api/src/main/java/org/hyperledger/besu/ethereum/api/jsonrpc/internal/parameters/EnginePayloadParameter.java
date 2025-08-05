@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -17,6 +17,7 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.datatypes.parameters.UnsignedLongParameter;
 import org.hyperledger.besu.evm.log.LogsBloomFilter;
 
 import java.util.List;
@@ -25,12 +26,6 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.tuweni.bytes.Bytes32;
 
-/**
- * parentHash: DATA, 32 Bytes feeRecipient: DATA, 20 Bytes stateRoot: DATA, 32 Bytes receiptsRoot:
- * DATA, 32 Bytes logsBloom: DATA, 256 Bytes prevRandao: DATA, 32 Bytes blockNumber: QUANTITY
- * gasLimit: QUANTITY gasUsed: QUANTITY timestamp: QUANTITY baseFeePerGas: QUANTITY blockHash: DATA,
- * 32 Bytes transactions: Array of TypedTransaction
- */
 public class EnginePayloadParameter {
   private final Hash blockHash;
   private final Hash parentHash;
@@ -46,7 +41,31 @@ public class EnginePayloadParameter {
   private final Hash receiptsRoot;
   private final LogsBloomFilter logsBloom;
   private final List<String> transactions;
+  private final List<WithdrawalParameter> withdrawals;
+  private final Long blobGasUsed;
+  private final String excessBlobGas;
 
+  /**
+   * Creates an instance of EnginePayloadParameter.
+   *
+   * @param blockHash DATA, 32 Bytes
+   * @param parentHash DATA, 32 Bytes
+   * @param feeRecipient DATA, 20 Bytes
+   * @param stateRoot DATA, 32 Bytes
+   * @param blockNumber QUANTITY, 64 Bits
+   * @param baseFeePerGas QUANTITY, 256 Bits
+   * @param gasLimit QUANTITY, 64 Bits
+   * @param gasUsed QUANTITY, 64 Bits
+   * @param timestamp QUANTITY, 64 Bits
+   * @param extraData DATA, 0 to 32 Bytes
+   * @param receiptsRoot DATA, 32 Bytes
+   * @param logsBloom DATA, 256 Bytes
+   * @param prevRandao DATA, 32 Bytes
+   * @param transactions Array of DATA
+   * @param withdrawals Array of Withdrawal
+   * @param blobGasUsed QUANTITY, 64 Bits
+   * @param excessBlobGas QUANTITY, 64 Bits
+   */
   @JsonCreator
   public EnginePayloadParameter(
       @JsonProperty("blockHash") final Hash blockHash,
@@ -59,10 +78,13 @@ public class EnginePayloadParameter {
       @JsonProperty("gasUsed") final UnsignedLongParameter gasUsed,
       @JsonProperty("timestamp") final UnsignedLongParameter timestamp,
       @JsonProperty("extraData") final String extraData,
-      @JsonProperty("receiptRoot") final Hash receiptsRoot,
+      @JsonProperty("receiptsRoot") final Hash receiptsRoot,
       @JsonProperty("logsBloom") final LogsBloomFilter logsBloom,
       @JsonProperty("prevRandao") final String prevRandao,
-      @JsonProperty("transactions") final List<String> transactions) {
+      @JsonProperty("transactions") final List<String> transactions,
+      @JsonProperty("withdrawals") final List<WithdrawalParameter> withdrawals,
+      @JsonProperty("blobGasUsed") final UnsignedLongParameter blobGasUsed,
+      @JsonProperty("excessBlobGas") final String excessBlobGas) {
     this.blockHash = blockHash;
     this.parentHash = parentHash;
     this.feeRecipient = feeRecipient;
@@ -77,6 +99,9 @@ public class EnginePayloadParameter {
     this.logsBloom = logsBloom;
     this.prevRandao = Bytes32.fromHexString(prevRandao);
     this.transactions = transactions;
+    this.withdrawals = withdrawals;
+    this.blobGasUsed = blobGasUsed == null ? null : blobGasUsed.getValue();
+    this.excessBlobGas = excessBlobGas;
   }
 
   public Hash getBlockHash() {
@@ -133,5 +158,17 @@ public class EnginePayloadParameter {
 
   public List<String> getTransactions() {
     return transactions;
+  }
+
+  public List<WithdrawalParameter> getWithdrawals() {
+    return withdrawals;
+  }
+
+  public Long getBlobGasUsed() {
+    return blobGasUsed;
+  }
+
+  public String getExcessBlobGas() {
+    return excessBlobGas;
   }
 }

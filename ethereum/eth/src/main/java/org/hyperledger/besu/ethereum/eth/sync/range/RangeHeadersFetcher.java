@@ -21,6 +21,10 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutorResponseCode;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutorResult;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.task.GetHeadersFromPeerTask;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.task.GetHeadersFromPeerTask.Direction;
 import org.hyperledger.besu.ethereum.eth.manager.task.AbstractPeerTask.PeerTaskResult;
 import org.hyperledger.besu.ethereum.eth.manager.task.GetHeadersFromPeerByHashTask;
 import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
@@ -68,6 +72,10 @@ public class RangeHeadersFetcher {
 
   public CompletableFuture<List<BlockHeader>> getNextRangeHeaders(
       final EthPeer peer, final BlockHeader previousRangeHeader) {
+    LOG.atTrace()
+        .setMessage("Requesting next range headers from peer {}")
+        .addArgument(peer.getLoggableId())
+        .log();
     final int skip = syncConfig.getDownloaderChainSegmentSize() - 1;
     final int maximumHeaderRequestSize = syncConfig.getDownloaderHeaderRequestSize();
     final long previousRangeNumber = previousRangeHeader.getNumber();
@@ -78,11 +86,20 @@ public class RangeHeadersFetcher {
       final BlockHeader targetHeader = finalRangeHeader.get();
       final long blocksUntilTarget = targetHeader.getNumber() - previousRangeNumber;
       if (blocksUntilTarget <= 0) {
+        LOG.atTrace()
+            .setMessage("Requesting next range headers: no blocks until target: {}")
+            .addArgument(blocksUntilTarget)
+            .log();
         return completedFuture(emptyList());
       }
       final long maxHeadersToRequest = blocksUntilTarget / (skip + 1);
       additionalHeaderCount = (int) Math.min(maxHeadersToRequest, maximumHeaderRequestSize);
       if (additionalHeaderCount == 0) {
+        LOG.atTrace()
+            .setMessage(
+                "Requesting next range headers: additional header count is 0, blocks until target: {}")
+            .addArgument(blocksUntilTarget)
+            .log();
         return completedFuture(singletonList(targetHeader));
       }
     } else {
@@ -97,23 +114,70 @@ public class RangeHeadersFetcher {
       final BlockHeader referenceHeader,
       final int headerCount,
       final int skip) {
-    LOG.debug(
-        "Requesting {} range headers, starting from {}, {} blocks apart",
-        headerCount,
-        referenceHeader.getNumber(),
-        skip);
-    return GetHeadersFromPeerByHashTask.startingAtHash(
-            protocolSchedule,
-            ethContext,
-            referenceHeader.getHash(),
-            // + 1 because lastHeader will be returned as well.
-            headerCount + 1,
-            skip,
-            metricsSystem)
-        .assignPeer(peer)
-        .run()
-        .thenApply(PeerTaskResult::getResult)
-        .thenApply(headers -> stripExistingRangeHeaders(referenceHeader, headers));
+    LOG.atTrace()
+        .setMessage("Requesting {} range headers, starting from {}, {} blocks apart")
+        .addArgument(headerCount)
+        .addArgument(referenceHeader.getNumber())
+        .addArgument(skip)
+        .log();
+    CompletableFuture<List<BlockHeader>> headersFuture;
+    if (syncConfig.isPeerTaskSystemEnabled()) {
+      headersFuture =
+          ethContext
+              .getScheduler()
+              .scheduleServiceTask(
+                  () -> {
+                    GetHeadersFromPeerTask task =
+                        new GetHeadersFromPeerTask(
+                            referenceHeader.getHash(),
+                            referenceHeader.getNumber(),
+                            // + 1 because lastHeader will be returned as well.
+                            headerCount + 1,
+                            skip,
+                            Direction.FORWARD,
+                            protocolSchedule);
+                    PeerTaskExecutorResult<List<BlockHeader>> taskResult =
+                        ethContext.getPeerTaskExecutor().executeAgainstPeer(task, peer);
+                    if (taskResult.responseCode() != PeerTaskExecutorResponseCode.SUCCESS
+                        || taskResult.result().isEmpty()) {
+                      LOG.warn(
+                          "Unsuccessfully used peer task system to fetch headers. Response code was {}",
+                          taskResult.responseCode());
+                      return CompletableFuture.failedFuture(
+                          new RuntimeException(
+                              "Unable to retrieve headers. Response code was "
+                                  + taskResult.responseCode()));
+                    }
+                    return CompletableFuture.completedFuture(taskResult.result().get());
+                  });
+    } else {
+      headersFuture =
+          GetHeadersFromPeerByHashTask.startingAtHash(
+                  protocolSchedule,
+                  ethContext,
+                  referenceHeader.getHash(),
+                  referenceHeader.getNumber(),
+                  // + 1 because lastHeader will be returned as well.
+                  headerCount + 1,
+                  skip,
+                  metricsSystem)
+              .assignPeer(peer)
+              .run()
+              .thenApply(PeerTaskResult::getResult);
+    }
+    return headersFuture.thenApply(
+        headers -> {
+          if (headers.size() < headerCount) {
+            LOG.atTrace()
+                .setMessage(
+                    "Peer {} returned fewer headers than requested. Expected: {}, Actual: {}")
+                .addArgument(peer)
+                .addArgument(headerCount)
+                .addArgument(headers.size())
+                .log();
+          }
+          return stripExistingRangeHeaders(referenceHeader, headers);
+        });
   }
 
   private List<BlockHeader> stripExistingRangeHeaders(

@@ -19,15 +19,14 @@ import static org.hyperledger.besu.evm.frame.MessageFrame.DEFAULT_MAX_STACK_SIZE
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
-import org.hyperledger.besu.ethereum.vm.BlockHashLookup;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
 import org.hyperledger.besu.evm.Code;
+import org.hyperledger.besu.evm.blockhash.BlockHashLookup;
 import org.hyperledger.besu.evm.code.CodeV0;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.worldstate.WorldUpdater;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 
@@ -36,35 +35,35 @@ import org.apache.tuweni.units.bigints.UInt256;
 
 public class MessageFrameTestFixture {
 
-  public static final Address DEFAUT_ADDRESS = AddressHelpers.ofValue(244259721);
+  public static final Address DEFAULT_ADDRESS = AddressHelpers.ofValue(244259721);
   private static final int maxStackSize = DEFAULT_MAX_STACK_SIZE;
 
+  private MessageFrame parentFrame;
   private MessageFrame.Type type = MessageFrame.Type.MESSAGE_CALL;
-  private Deque<MessageFrame> messageFrameStack = new ArrayDeque<>();
   private Optional<Blockchain> blockchain = Optional.empty();
   private Optional<WorldUpdater> worldUpdater = Optional.empty();
   private long initialGas = Long.MAX_VALUE;
-  private Address address = DEFAUT_ADDRESS;
-  private Address sender = DEFAUT_ADDRESS;
-  private Address originator = DEFAUT_ADDRESS;
-  private Address contract = DEFAUT_ADDRESS;
+  private Address address = DEFAULT_ADDRESS;
+  private Address sender = DEFAULT_ADDRESS;
+  private Address originator = DEFAULT_ADDRESS;
+  private Address contract = DEFAULT_ADDRESS;
   private Wei gasPrice = Wei.ZERO;
+  private Wei blobGasPrice = Wei.ZERO;
   private Wei value = Wei.ZERO;
   private Bytes inputData = Bytes.EMPTY;
   private Code code = CodeV0.EMPTY_CODE;
   private final List<UInt256> stackItems = new ArrayList<>();
   private Optional<BlockHeader> blockHeader = Optional.empty();
-  private int depth = 0;
   private Optional<BlockHashLookup> blockHashLookup = Optional.empty();
   private ExecutionContextTestFixture executionContextTestFixture;
 
-  public MessageFrameTestFixture type(final MessageFrame.Type type) {
-    this.type = type;
+  public MessageFrameTestFixture parentFrame(final MessageFrame parentFrame) {
+    this.parentFrame = parentFrame;
     return this;
   }
 
-  MessageFrameTestFixture messageFrameStack(final Deque<MessageFrame> messageFrameStack) {
-    this.messageFrameStack = messageFrameStack;
+  public MessageFrameTestFixture type(final MessageFrame.Type type) {
+    this.type = type;
     return this;
   }
 
@@ -119,6 +118,11 @@ public class MessageFrameTestFixture {
     return this;
   }
 
+  public MessageFrameTestFixture blobGasPrice(final Wei blobGasPrice) {
+    this.blobGasPrice = blobGasPrice;
+    return this;
+  }
+
   public MessageFrameTestFixture value(final Wei value) {
     this.value = value;
     return this;
@@ -139,11 +143,6 @@ public class MessageFrameTestFixture {
     return this;
   }
 
-  public MessageFrameTestFixture depth(final int depth) {
-    this.depth = depth;
-    return this;
-  }
-
   public MessageFrameTestFixture pushStackItem(final UInt256 item) {
     stackItems.add(item);
     return this;
@@ -155,30 +154,36 @@ public class MessageFrameTestFixture {
   }
 
   public MessageFrame build() {
-    final Blockchain blockchain = this.blockchain.orElseGet(this::createDefaultBlockchain);
-    final BlockHeader blockHeader =
-        this.blockHeader.orElseGet(() -> blockchain.getBlockHeader(0).get());
+    final Blockchain localBlockchain = this.blockchain.orElseGet(this::createDefaultBlockchain);
+    final BlockHeader localBlockHeader =
+        this.blockHeader.orElseGet(() -> localBlockchain.getBlockHeader(0).get());
+    final ProtocolSpec protocolSpec =
+        executionContextTestFixture.getProtocolSchedule().getByBlockHeader(localBlockHeader);
     final MessageFrame frame =
         MessageFrame.builder()
+            .parentMessageFrame(parentFrame)
             .type(type)
-            .messageFrameStack(messageFrameStack)
             .worldUpdater(worldUpdater.orElseGet(this::createDefaultWorldUpdater))
             .initialGas(initialGas)
             .address(address)
             .originator(originator)
             .gasPrice(gasPrice)
+            .blobGasPrice(blobGasPrice)
             .inputData(inputData)
             .sender(sender)
             .value(value)
             .apparentValue(value)
             .contract(contract)
             .code(code)
-            .blockValues(blockHeader)
-            .depth(depth)
+            .blockValues(localBlockHeader)
             .completer(c -> {})
-            .miningBeneficiary(blockHeader.getCoinbase())
+            .miningBeneficiary(localBlockHeader.getCoinbase())
             .blockHashLookup(
-                blockHashLookup.orElseGet(() -> new BlockHashLookup(blockHeader, blockchain)))
+                blockHashLookup.orElseGet(
+                    () ->
+                        protocolSpec
+                            .getPreExecutionProcessor()
+                            .createBlockHashLookup(localBlockchain, localBlockHeader)))
             .maxStackSize(maxStackSize)
             .build();
     stackItems.forEach(frame::pushStackItem);
@@ -186,7 +191,7 @@ public class MessageFrameTestFixture {
   }
 
   private WorldUpdater createDefaultWorldUpdater() {
-    return getOrCreateExecutionContextTestFixture().getStateArchive().getMutable().updater();
+    return getOrCreateExecutionContextTestFixture().getStateArchive().getWorldState().updater();
   }
 
   private Blockchain createDefaultBlockchain() {

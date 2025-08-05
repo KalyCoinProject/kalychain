@@ -36,7 +36,7 @@ import org.apache.tuweni.bytes.Bytes;
  * <p>The following methods have been created to be invoked when the message state changes via the
  * {@link MessageFrame.State}. Note that some of these methods are abstract while others have
  * default behaviors. There is currently no method for responding to a {@link
- * MessageFrame.State#CODE_SUSPENDED}.
+ * MessageFrame.State#CODE_SUSPENDED}*.
  *
  * <table>
  * <caption>Method Overview</caption>
@@ -70,13 +70,25 @@ public abstract class AbstractMessageProcessor {
   // List of addresses to force delete when they are touched but empty
   // when the state changes in the message are were not meant to be committed.
   private final Collection<? super Address> forceDeleteAccountsWhenEmpty;
-  private final EVM evm;
+  final EVM evm;
 
+  /**
+   * Instantiates a new Abstract message processor.
+   *
+   * @param evm the evm
+   * @param forceDeleteAccountsWhenEmpty the force delete accounts when empty
+   */
   AbstractMessageProcessor(final EVM evm, final Collection<Address> forceDeleteAccountsWhenEmpty) {
     this.evm = evm;
     this.forceDeleteAccountsWhenEmpty = forceDeleteAccountsWhenEmpty;
   }
 
+  /**
+   * Start.
+   *
+   * @param frame the frame
+   * @param operationTracer the operation tracer
+   */
   protected abstract void start(MessageFrame frame, final OperationTracer operationTracer);
 
   /**
@@ -103,8 +115,9 @@ public abstract class AbstractMessageProcessor {
     frame.getWorldUpdater().commit();
 
     frame.clearLogs();
-    frame.clearSelfDestructs();
     frame.clearGasRefund();
+
+    frame.rollback();
   }
 
   /**
@@ -164,9 +177,20 @@ public abstract class AbstractMessageProcessor {
     }
   }
 
+  /**
+   * Process.
+   *
+   * @param frame the frame
+   * @param operationTracer the operation tracer
+   */
   public void process(final MessageFrame frame, final OperationTracer operationTracer) {
-    if (frame.getState() == MessageFrame.State.NOT_STARTED) {
-      start(frame, operationTracer);
+    if (operationTracer != null) {
+      if (frame.getState() == MessageFrame.State.NOT_STARTED) {
+        operationTracer.traceContextEnter(frame);
+        start(frame, operationTracer);
+      } else {
+        operationTracer.traceContextReEnter(frame);
+      }
     }
 
     if (frame.getState() == MessageFrame.State.CODE_EXECUTING) {
@@ -190,15 +214,47 @@ public abstract class AbstractMessageProcessor {
     }
 
     if (frame.getState() == MessageFrame.State.COMPLETED_SUCCESS) {
+      if (operationTracer != null) {
+        operationTracer.traceContextExit(frame);
+      }
       completedSuccess(frame);
     }
-
     if (frame.getState() == MessageFrame.State.COMPLETED_FAILED) {
+      if (operationTracer != null) {
+        operationTracer.traceContextExit(frame);
+      }
       completedFailed(frame);
     }
   }
 
-  public Code getCodeFromEVM(final Hash codeHash, final Bytes codeBytes) {
-    return evm.getCode(codeHash, codeBytes);
+  /**
+   * Gets or creates code instance with a cached jump destination.
+   *
+   * @param codeHash the code hash
+   * @param codeBytes the code bytes
+   * @return the code instance with the cached jump destination
+   */
+  public Code getOrCreateCachedJumpDest(final Hash codeHash, final Bytes codeBytes) {
+    return evm.getOrCreateCachedJumpDest(codeHash, codeBytes);
+  }
+
+  /**
+   * Wraps code in the correct Code object.
+   *
+   * @param codeBytes the code bytes
+   * @return the wrapped code from the evm
+   */
+  public Code wrapCode(final Bytes codeBytes) {
+    return evm.wrapCode(codeBytes);
+  }
+
+  /**
+   * Wraps the code from the evm, with handling for EOF code plus calldata
+   *
+   * @param codeBytes the code bytes
+   * @return the wrapped code from the evm
+   */
+  public Code wrapCodeForCreation(final Bytes codeBytes) {
+    return evm.wrapCodeForCreation(codeBytes);
   }
 }

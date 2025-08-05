@@ -14,180 +14,91 @@
  */
 package org.hyperledger.besu.services.kvstore;
 
-import static java.util.stream.Collectors.toUnmodifiableSet;
-
-import org.hyperledger.besu.plugin.services.exception.StorageException;
-import org.hyperledger.besu.plugin.services.storage.KeyValueStorage;
-import org.hyperledger.besu.plugin.services.storage.KeyValueStorageTransaction;
+import org.hyperledger.besu.plugin.services.storage.SegmentIdentifier;
 
 import java.io.PrintStream;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.util.NavigableMap;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.locks.Lock;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.Predicate;
-import java.util.stream.Stream;
 
-import com.google.common.collect.ImmutableSet;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.tuweni.bytes.Bytes;
 
-public class InMemoryKeyValueStorage implements KeyValueStorage {
+/**
+ * InMemoryKeyValueStorage is just a wrapper around a single segment instance of
+ * SegmentedInMemoryKeyValueStorage.
+ */
+public class InMemoryKeyValueStorage extends SegmentedKeyValueStorageAdapter {
 
-  private final Map<Bytes, byte[]> hashValueStore;
-  private final ReadWriteLock rwLock = new ReentrantReadWriteLock();
+  static final SegmentIdentifier SEGMENT_IDENTIFIER =
+      new SegmentIdentifier() {
+        private static final String NAME = "SEGMENT_IDENTIFIER";
 
+        @Override
+        public String getName() {
+          return NAME;
+        }
+
+        @Override
+        public byte[] getId() {
+          return NAME.getBytes(StandardCharsets.UTF_8);
+        }
+
+        @Override
+        public boolean containsStaticData() {
+          return false;
+        }
+
+        @Override
+        public boolean isEligibleToHighSpecFlag() {
+          return false;
+        }
+      };
+
+  private static ConcurrentMap<SegmentIdentifier, NavigableMap<Bytes, Optional<byte[]>>>
+      asSegmentMap(final NavigableMap<Bytes, Optional<byte[]>> initialMap) {
+    final ConcurrentMap<SegmentIdentifier, NavigableMap<Bytes, Optional<byte[]>>> segmentMap =
+        new ConcurrentHashMap<>();
+    segmentMap.put(SEGMENT_IDENTIFIER, initialMap);
+    return segmentMap;
+  }
+
+  /** protected access to the rw lock. */
+  protected final ReadWriteLock rwLock;
+
+  /** Instantiates a new In memory key value storage. */
   public InMemoryKeyValueStorage() {
-    this(new HashMap<>());
+    this(SEGMENT_IDENTIFIER);
   }
 
-  protected InMemoryKeyValueStorage(final Map<Bytes, byte[]> hashValueStore) {
-    this.hashValueStore = hashValueStore;
+  /**
+   * Instantiates a new In memory key value storage with an initial map.
+   *
+   * @param initialMap the initial map
+   */
+  public InMemoryKeyValueStorage(final NavigableMap<Bytes, Optional<byte[]>> initialMap) {
+    super(SEGMENT_IDENTIFIER, new SegmentedInMemoryKeyValueStorage(asSegmentMap(initialMap)));
+    rwLock = ((SegmentedInMemoryKeyValueStorage) storage).rwLock;
   }
 
-  @Override
-  public void clear() {
-    final Lock lock = rwLock.writeLock();
-    lock.lock();
-    try {
-      hashValueStore.clear();
-    } finally {
-      lock.unlock();
-    }
+  /**
+   * Instantiates a new In memory key value storage with a single segment identifier.
+   *
+   * @param segmentIdentifier the segment identifier
+   */
+  public InMemoryKeyValueStorage(final SegmentIdentifier segmentIdentifier) {
+    super(segmentIdentifier, new SegmentedInMemoryKeyValueStorage());
+    rwLock = ((SegmentedInMemoryKeyValueStorage) storage).rwLock;
   }
 
-  @Override
-  public boolean containsKey(final byte[] key) throws StorageException {
-    return get(key).isPresent();
-  }
-
-  @Override
-  public Optional<byte[]> get(final byte[] key) throws StorageException {
-    final Lock lock = rwLock.readLock();
-    lock.lock();
-    try {
-      return Optional.ofNullable(hashValueStore.get(Bytes.wrap(key)));
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  @Override
-  public Set<byte[]> getAllKeysThat(final Predicate<byte[]> returnCondition) {
-    return stream()
-        .filter(pair -> returnCondition.test(pair.getKey()))
-        .map(Pair::getKey)
-        .collect(toUnmodifiableSet());
-  }
-
-  @Override
-  public Set<byte[]> getAllValuesFromKeysThat(final Predicate<byte[]> returnCondition) {
-    return stream()
-        .filter(pair -> returnCondition.test(pair.getKey()))
-        .map(Pair::getValue)
-        .collect(toUnmodifiableSet());
-  }
-
-  @Override
-  public Stream<Pair<byte[], byte[]>> stream() {
-    final Lock lock = rwLock.readLock();
-    lock.lock();
-    try {
-      return ImmutableSet.copyOf(hashValueStore.entrySet()).stream()
-          .map(bytesEntry -> Pair.of(bytesEntry.getKey().toArrayUnsafe(), bytesEntry.getValue()));
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  @Override
-  public Stream<byte[]> streamKeys() {
-    final Lock lock = rwLock.readLock();
-    lock.lock();
-    try {
-      return ImmutableSet.copyOf(hashValueStore.entrySet()).stream()
-          .map(bytesEntry -> bytesEntry.getKey().toArrayUnsafe());
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  @Override
-  public boolean tryDelete(final byte[] key) {
-    final Lock lock = rwLock.writeLock();
-    if (lock.tryLock()) {
-      try {
-        hashValueStore.remove(Bytes.wrap(key));
-      } finally {
-        lock.unlock();
-      }
-      return true;
-    }
-    return false;
-  }
-
-  @Override
-  public void close() {}
-
-  @Override
-  public KeyValueStorageTransaction startTransaction() {
-    return new KeyValueStorageTransactionTransitionValidatorDecorator(new InMemoryTransaction());
-  }
-
-  public Set<Bytes> keySet() {
-    return Set.copyOf(hashValueStore.keySet());
-  }
-
-  private class InMemoryTransaction implements KeyValueStorageTransaction {
-
-    private Map<Bytes, byte[]> updatedValues = new HashMap<>();
-    private Set<Bytes> removedKeys = new HashSet<>();
-
-    @Override
-    public void put(final byte[] key, final byte[] value) {
-      updatedValues.put(Bytes.wrap(key), value);
-      removedKeys.remove(Bytes.wrap(key));
-    }
-
-    @Override
-    public void remove(final byte[] key) {
-      removedKeys.add(Bytes.wrap(key));
-      updatedValues.remove(Bytes.wrap(key));
-    }
-
-    @Override
-    public void commit() throws StorageException {
-      final Lock lock = rwLock.writeLock();
-      lock.lock();
-      try {
-        hashValueStore.putAll(updatedValues);
-        removedKeys.forEach(hashValueStore::remove);
-        updatedValues = null;
-        removedKeys = null;
-      } finally {
-        lock.unlock();
-      }
-    }
-
-    @Override
-    public void rollback() {
-      updatedValues.clear();
-      removedKeys.clear();
-    }
-  }
-
+  /**
+   * Dump the contents of the storage to the print stream.
+   *
+   * @param ps the print stream.
+   */
   public void dump(final PrintStream ps) {
-    final Lock lock = rwLock.readLock();
-    lock.lock();
-    try {
-      hashValueStore.forEach(
-          (k, v) -> ps.printf("  %s : %s%n", k.toHexString(), Bytes.wrap(v).toHexString()));
-    } finally {
-      lock.unlock();
-    }
+    ((SegmentedInMemoryKeyValueStorage) storage).dump(ps);
   }
 }

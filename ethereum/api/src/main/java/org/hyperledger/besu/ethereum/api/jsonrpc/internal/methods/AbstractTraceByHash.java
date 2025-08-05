@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -17,17 +17,19 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.BlockTrace;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.BlockTracer;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.Tracer;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.TransactionTrace;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.tracing.flat.FlatTrace;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.tracing.flat.FlatTraceGenerator;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.api.query.TransactionWithMetadata;
 import org.hyperledger.besu.ethereum.core.Block;
-import org.hyperledger.besu.ethereum.debug.TraceOptions;
+import org.hyperledger.besu.ethereum.debug.OpCodeTracerConfig;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.vm.DebugOperationTracer;
 
 import java.util.Collections;
+import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -62,19 +64,32 @@ public abstract class AbstractTraceByHash implements JsonRpcMethod {
     if (block == null || block.getBody().getTransactions().isEmpty()) {
       return Stream.empty();
     }
-    final TransactionTrace transactionTrace = getTransactionTrace(block, transactionHash);
-    return getTraceStream(transactionTrace, block);
+    return Tracer.processTracing(
+            blockchainQueries,
+            Optional.of(block.getHeader()),
+            mutableWorldState -> {
+              final TransactionTrace transactionTrace = getTransactionTrace(block, transactionHash);
+              return Optional.ofNullable(getTraceStream(transactionTrace, block));
+            })
+        .orElse(Stream.empty());
   }
 
   private TransactionTrace getTransactionTrace(final Block block, final Hash transactionHash) {
-    return blockTracerSupplier
-        .get()
-        .trace(block, new DebugOperationTracer(new TraceOptions(false, false, true)))
-        .map(BlockTrace::getTransactionTraces)
-        .orElse(Collections.emptyList())
-        .stream()
-        .filter(trxTrace -> trxTrace.getTransaction().getHash().equals(transactionHash))
-        .findFirst()
+    return Tracer.processTracing(
+            blockchainQueries,
+            Optional.of(block.getHeader()),
+            mutableWorldState ->
+                blockTracerSupplier
+                    .get()
+                    .trace(
+                        mutableWorldState,
+                        block,
+                        new DebugOperationTracer(new OpCodeTracerConfig(false, false, true), false))
+                    .map(BlockTrace::getTransactionTraces)
+                    .orElse(Collections.emptyList())
+                    .stream()
+                    .filter(trxTrace -> trxTrace.getTransaction().getHash().equals(transactionHash))
+                    .findFirst())
         .orElseThrow();
   }
 

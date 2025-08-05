@@ -12,21 +12,24 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.ImmutableMinerDataResult;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.ImmutableUncleRewardResult;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.MinerDataResult;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.MinerDataResult.UncleRewardResult;
 import org.hyperledger.besu.ethereum.api.query.BlockWithMetadata;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
+import org.hyperledger.besu.ethereum.api.query.TransactionReceiptWithMetadata;
 import org.hyperledger.besu.ethereum.api.query.TransactionWithMetadata;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
@@ -39,6 +42,7 @@ import java.util.function.Supplier;
 import com.google.common.base.Suppliers;
 import org.apache.tuweni.units.bigints.BaseUInt256Value;
 
+@Deprecated(since = "24.12.0")
 public class EthGetMinerDataByBlockHash implements JsonRpcMethod {
   private final Supplier<BlockchainQueries> blockchain;
   private final ProtocolSchedule protocolSchedule;
@@ -61,7 +65,13 @@ public class EthGetMinerDataByBlockHash implements JsonRpcMethod {
 
   @Override
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
-    final Hash hash = requestContext.getRequest().getRequiredParameter(0, Hash.class);
+    final Hash hash;
+    try {
+      hash = requestContext.getRequest().getRequiredParameter(0, Hash.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid block hash parameter (index 0)", RpcErrorType.INVALID_BLOCK_HASH_PARAMS, e);
+    }
 
     BlockWithMetadata<TransactionWithMetadata, Hash> block =
         blockchain.get().blockByHash(hash).orElse(null);
@@ -79,21 +89,19 @@ public class EthGetMinerDataByBlockHash implements JsonRpcMethod {
       final ProtocolSchedule protocolSchedule,
       final BlockchainQueries blockchainQueries) {
     final BlockHeader blockHeader = block.getHeader();
-    final ProtocolSpec protocolSpec = protocolSchedule.getByBlockNumber(blockHeader.getNumber());
+    final ProtocolSpec protocolSpec = protocolSchedule.getByBlockHeader(blockHeader);
     final Wei staticBlockReward = protocolSpec.getBlockReward();
     final Wei transactionFee =
-        block.getTransactions().stream()
+        blockchainQueries
+            .transactionReceiptsByBlockHash(blockHeader.getHash(), protocolSchedule)
+            .orElse(new ArrayList<TransactionReceiptWithMetadata>())
+            .stream()
             .map(
-                t ->
-                    blockchainQueries
-                        .transactionReceiptByTransactionHash(t.getTransaction().getHash())
-                        .map(
-                            receipt ->
-                                receipt
-                                    .getTransaction()
-                                    .getEffectiveGasPrice(receipt.getBaseFee())
-                                    .multiply(receipt.getGasUsed()))
-                        .orElse(Wei.ZERO))
+                receipt ->
+                    receipt
+                        .getTransaction()
+                        .getEffectivePriorityFeePerGas(receipt.getBaseFee())
+                        .multiply(receipt.getGasUsed()))
             .reduce(Wei.ZERO, BaseUInt256Value::add);
     final Wei uncleInclusionReward =
         staticBlockReward.multiply(block.getOmmers().size()).divide(32);

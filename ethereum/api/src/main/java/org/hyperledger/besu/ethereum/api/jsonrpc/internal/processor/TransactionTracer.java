@@ -15,21 +15,22 @@
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor;
 
 import static java.util.function.Predicate.isEqual;
+import static org.hyperledger.besu.ethereum.mainnet.feemarket.ExcessBlobGasCalculator.calculateExcessBlobGasForParent;
 
+import org.hyperledger.besu.datatypes.BlobGas;
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.TransactionTraceParams;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.MutableWorldState;
 import org.hyperledger.besu.ethereum.core.Transaction;
-import org.hyperledger.besu.ethereum.debug.TraceOptions;
 import org.hyperledger.besu.ethereum.mainnet.ImmutableTransactionValidationParams;
 import org.hyperledger.besu.ethereum.mainnet.MainnetTransactionProcessor;
 import org.hyperledger.besu.ethereum.processing.TransactionProcessingResult;
-import org.hyperledger.besu.ethereum.vm.BlockHashLookup;
 import org.hyperledger.besu.ethereum.vm.DebugOperationTracer;
 import org.hyperledger.besu.evm.tracing.OperationTracer;
 import org.hyperledger.besu.evm.tracing.StandardJsonTracer;
-import org.hyperledger.besu.evm.worldstate.StackedUpdater;
 import org.hyperledger.besu.evm.worldstate.WorldUpdater;
 
 import java.io.File;
@@ -61,24 +62,30 @@ public class TransactionTracer {
   }
 
   public Optional<TransactionTrace> traceTransaction(
-      final Hash blockHash, final Hash transactionHash, final DebugOperationTracer tracer) {
+      final Tracer.TraceableState mutableWorldState,
+      final Hash blockHash,
+      final Hash transactionHash,
+      final DebugOperationTracer tracer) {
     return blockReplay.beforeTransactionInBlock(
+        mutableWorldState,
         blockHash,
         transactionHash,
-        (transaction, header, blockchain, worldState, transactionProcessor) -> {
+        (transaction, header, blockchain, transactionProcessor, blobGasPrice) -> {
           final TransactionProcessingResult result =
               processTransaction(
                   header,
                   blockchain,
-                  worldState.updater(),
+                  mutableWorldState.updater(),
                   transaction,
                   transactionProcessor,
-                  tracer);
+                  tracer,
+                  blobGasPrice);
           return new TransactionTrace(transaction, result, tracer.getTraceFrames());
         });
   }
 
   public List<String> traceTransactionToFile(
+      final MutableWorldState mutableWorldState,
       final Hash blockHash,
       final Optional<TransactionTraceParams> transactionTraceParams,
       final Path traceDir) {
@@ -90,7 +97,7 @@ public class TransactionTracer {
     final boolean showMemory =
         transactionTraceParams
             .map(TransactionTraceParams::traceOptions)
-            .map(TraceOptions::isMemoryEnabled)
+            .map(options -> options.opCodeTracerConfig().traceMemory())
             .orElse(true);
 
     if (!Files.isDirectory(traceDir) && !traceDir.toFile().mkdirs()) {
@@ -101,11 +108,19 @@ public class TransactionTracer {
     return blockReplay
         .performActionWithBlock(
             blockHash,
-            (body, header, blockchain, worldState, transactionProcessor) -> {
-              WorldUpdater stackedUpdater = worldState.updater().updater();
+            (body, header, blockchain, transactionProcessor, protocolSpec) -> {
+              WorldUpdater stackedUpdater = mutableWorldState.updater().updater();
               final List<String> traces = new ArrayList<>();
+              final Wei blobGasPrice =
+                  protocolSpec
+                      .getFeeMarket()
+                      .blobGasPricePerGas(
+                          blockchain
+                              .getBlockHeader(header.getParentHash())
+                              .map(parent -> calculateExcessBlobGasForParent(protocolSpec, parent))
+                              .orElse(BlobGas.ZERO));
               for (int i = 0; i < body.getTransactions().size(); i++) {
-                ((StackedUpdater<?, ?>) stackedUpdater).markTransactionBoundary();
+                stackedUpdater.markTransactionBoundary();
                 final Transaction transaction = body.getTransactions().get(i);
                 if (selectedHash.isEmpty()
                     || selectedHash.filter(isEqual(transaction.getHash())).isPresent()) {
@@ -119,7 +134,8 @@ public class TransactionTracer {
                             stackedUpdater,
                             transaction,
                             transactionProcessor,
-                            new StandardJsonTracer(out, showMemory));
+                            new StandardJsonTracer(out, showMemory, true, true, false, true),
+                            blobGasPrice);
                     out.println(
                         summaryTrace(
                             transaction, timer.stop().elapsed(TimeUnit.NANOSECONDS), result));
@@ -135,7 +151,8 @@ public class TransactionTracer {
                       stackedUpdater,
                       transaction,
                       transactionProcessor,
-                      OperationTracer.NO_TRACING);
+                      OperationTracer.NO_TRACING,
+                      blobGasPrice);
                 }
               }
               return Optional.of(traces);
@@ -165,17 +182,20 @@ public class TransactionTracer {
       final WorldUpdater worldUpdater,
       final Transaction transaction,
       final MainnetTransactionProcessor transactionProcessor,
-      final OperationTracer tracer) {
+      final OperationTracer tracer,
+      final Wei blobGasPrice) {
     return transactionProcessor.processTransaction(
-        blockchain,
         worldUpdater,
         header,
         transaction,
         header.getCoinbase(),
         tracer,
-        new BlockHashLookup(header, blockchain),
-        false,
-        ImmutableTransactionValidationParams.builder().isAllowFutureNonce(true).build());
+        blockReplay
+            .getProtocolSpec(header)
+            .getPreExecutionProcessor()
+            .createBlockHashLookup(blockchain, header),
+        ImmutableTransactionValidationParams.builder().isAllowFutureNonce(true).build(),
+        blobGasPrice);
   }
 
   public static String summaryTrace(

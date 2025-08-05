@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -30,8 +30,8 @@ import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class RpcEndpointServicePluginTest extends AcceptanceTestBase {
 
@@ -40,7 +40,7 @@ public class RpcEndpointServicePluginTest extends AcceptanceTestBase {
   private OkHttpClient client;
   protected static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
     node = besu.createPluginsNode("node1", List.of("testPlugins"), List.of("--rpc-http-api=TESTS"));
     cluster.start(node);

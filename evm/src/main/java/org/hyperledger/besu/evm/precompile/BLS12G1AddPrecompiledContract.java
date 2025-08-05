@@ -11,24 +11,34 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evm.precompile;
 
-import org.hyperledger.besu.nativelib.bls12_381.LibEthPairings;
+import org.hyperledger.besu.nativelib.gnark.LibGnarkEIP2537;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.apache.tuweni.bytes.Bytes;
 
+/** The BLS12G1 Add precompiled contract. */
 public class BLS12G1AddPrecompiledContract extends AbstractBLS12PrecompiledContract {
 
   private static final int PARAMETER_LENGTH = 256;
+  private static final Cache<Integer, PrecompileInputResultTuple> g1AddCache =
+      Caffeine.newBuilder().maximumSize(1000).build();
 
-  public BLS12G1AddPrecompiledContract() {
-    super("BLS12_G1ADD", LibEthPairings.BLS12_G1ADD_OPERATION_RAW_VALUE, PARAMETER_LENGTH);
+  /** Instantiates a new BLS12G1 Add precompiled contract. */
+  BLS12G1AddPrecompiledContract() {
+    super("BLS12_G1ADD", LibGnarkEIP2537.BLS12_G1ADD_OPERATION_SHIM_VALUE, PARAMETER_LENGTH);
   }
 
   @Override
   public long gasRequirement(final Bytes input) {
-    return 600L;
+    return 375L;
+  }
+
+  @Override
+  protected Cache<Integer, PrecompileInputResultTuple> getCache() {
+    return g1AddCache;
   }
 }

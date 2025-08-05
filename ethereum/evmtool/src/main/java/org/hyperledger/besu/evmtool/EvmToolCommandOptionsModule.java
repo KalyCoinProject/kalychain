@@ -11,26 +11,37 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.evmtool;
 
 import static org.hyperledger.besu.cli.DefaultCommandValues.getDefaultBesuDataPath;
 
 import org.hyperledger.besu.controller.BesuController;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParameter;
+import org.hyperledger.besu.evm.internal.EvmConfiguration;
 import org.hyperledger.besu.plugin.services.BesuConfiguration;
 import org.hyperledger.besu.services.BesuConfigurationImpl;
 
 import java.nio.file.Path;
+import java.util.Optional;
 import javax.inject.Named;
+import javax.inject.Singleton;
 
 import dagger.Module;
 import dagger.Provides;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+/**
+ * This class, EvmToolCommandOptionsModule, is a Dagger module that provides dependencies for the
+ * EvmToolCommand. It contains options for setting up the EVM tool, such as whether revert reasons
+ * should be persisted, the fork to evaluate, the key-value storage to be used, the data path, the
+ * block number to evaluate against, and the world state update mode.
+ *
+ * <p>The class uses PicoCLI annotations to define these options, which can be provided via the
+ * command line when running the EVM tool. Each option has a corresponding provider method that
+ * Dagger uses to inject the option's value where needed.
+ */
 @SuppressWarnings("WeakerAccess")
 @Module
 public class EvmToolCommandOptionsModule {
@@ -47,6 +58,18 @@ public class EvmToolCommandOptionsModule {
   @Named("RevertReasonEnabled")
   boolean provideRevertReasonEnabled() {
     return revertReasonEnabled;
+  }
+
+  @Option(
+      names = {"--fork"},
+      paramLabel = "<String>",
+      description = "Fork to evaluate, overriding network setting.")
+  String fork = null;
+
+  @Provides
+  @Named("Fork")
+  Optional<String> provideFork() {
+    return Optional.ofNullable(fork);
   }
 
   @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
@@ -71,8 +94,11 @@ public class EvmToolCommandOptionsModule {
   final Path dataPath = getDefaultBesuDataPath(this);
 
   @Provides
+  @Singleton
   BesuConfiguration provideBesuConfiguration() {
-    return new BesuConfigurationImpl(dataPath, dataPath.resolve(BesuController.DATABASE_PATH));
+    final var besuConfiguration = new BesuConfigurationImpl();
+    besuConfiguration.init(dataPath, dataPath.resolve(BesuController.DATABASE_PATH), null);
+    return besuConfiguration;
   }
 
   @Option(
@@ -83,7 +109,43 @@ public class EvmToolCommandOptionsModule {
   private final BlockParameter blockParameter = BlockParameter.PENDING;
 
   @Provides
+  @Singleton
   BlockParameter provideBlockParameter() {
     return blockParameter;
+  }
+
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"})
+  @CommandLine.Option(
+      names = {"--Xevm-jumpdest-cache-weight-kb"},
+      description =
+          "size in kilobytes to allow the cache "
+              + "of valid jump destinations to grow to before evicting the least recently used entry",
+      fallbackValue = "32000",
+      defaultValue = "32000",
+      hidden = true,
+      arity = "1")
+  private Long jumpDestCacheWeightKilobytes =
+      32_000L; // 10k contracts, (25k max contract size / 8 bit) + 32byte hash
+
+  @CommandLine.Option(
+      names = {"--Xevm-worldstate-update-mode"},
+      description = "How to handle worldstate updates within a transaction",
+      fallbackValue = "STACKED",
+      defaultValue = "STACKED",
+      hidden = true,
+      arity = "1")
+  private EvmConfiguration.WorldUpdaterMode worldstateUpdateMode =
+      EvmConfiguration.WorldUpdaterMode
+          .STACKED; // Stacked Updater.  Years of battle tested correctness.
+
+  @Provides
+  @Singleton
+  EvmConfiguration provideEvmConfiguration() {
+    return new EvmConfiguration(jumpDestCacheWeightKilobytes, worldstateUpdateMode);
+  }
+
+  /** Default constructor for the EvmToolCommandOptionsModule class. */
+  public EvmToolCommandOptionsModule() {
+    // This is only here because of JavaDoc linting
   }
 }

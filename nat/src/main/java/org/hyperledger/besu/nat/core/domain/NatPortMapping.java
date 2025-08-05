@@ -12,7 +12,6 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.nat.core.domain;
 
 /** This class describes a NAT configuration. */
@@ -25,6 +24,16 @@ public class NatPortMapping {
   private final int externalPort;
   private final int internalPort;
 
+  /**
+   * Instantiates a new Nat port mapping.
+   *
+   * @param natServiceType the nat service type
+   * @param protocol the protocol
+   * @param internalHost the internal host
+   * @param remoteHost the remote host
+   * @param externalPort the external port
+   * @param internalPort the internal port
+   */
   public NatPortMapping(
       final NatServiceType natServiceType,
       final NetworkProtocol protocol,
@@ -40,26 +49,56 @@ public class NatPortMapping {
     this.internalPort = internalPort;
   }
 
+  /**
+   * Gets nat service type.
+   *
+   * @return the nat service type
+   */
   public NatServiceType getNatServiceType() {
     return natServiceType;
   }
 
+  /**
+   * Gets protocol.
+   *
+   * @return the protocol
+   */
   public NetworkProtocol getProtocol() {
     return protocol;
   }
 
+  /**
+   * Gets internal host.
+   *
+   * @return the internal host
+   */
   public String getInternalHost() {
     return internalHost;
   }
 
+  /**
+   * Gets remote host.
+   *
+   * @return the remote host
+   */
   public String getRemoteHost() {
     return remoteHost;
   }
 
+  /**
+   * Gets external port.
+   *
+   * @return the external port
+   */
   public int getExternalPort() {
     return externalPort;
   }
 
+  /**
+   * Gets internal port.
+   *
+   * @return the internal port
+   */
   public int getInternalPort() {
     return internalPort;
   }

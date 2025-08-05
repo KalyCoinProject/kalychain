@@ -17,7 +17,6 @@ package org.hyperledger.besu.consensus.ibft.validation;
 import static java.util.Collections.singletonList;
 import static java.util.Optional.empty;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -32,8 +31,8 @@ import org.hyperledger.besu.consensus.ibft.payload.PreparedCertificate;
 import org.hyperledger.besu.consensus.ibft.payload.RoundChangeCertificate;
 import org.hyperledger.besu.consensus.ibft.statemachine.PreparedRoundArtifacts;
 import org.hyperledger.besu.consensus.ibft.validation.RoundChangePayloadValidator.MessageValidatorForHeightFactory;
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.Block;
@@ -44,9 +43,10 @@ import java.util.List;
 import java.util.Optional;
 
 import com.google.common.collect.Lists;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
+@SuppressWarnings("DirectInvocationOnMock")
 public class RoundChangeCertificateValidatorTest {
 
   private final NodeKey proposerKey = NodeKeyUtils.generate();
@@ -62,13 +62,12 @@ public class RoundChangeCertificateValidatorTest {
 
   private final MessageValidatorForHeightFactory validatorFactory =
       mock(MessageValidatorForHeightFactory.class);
-  private final SignedDataValidator signedDataValidator = mock(SignedDataValidator.class);
   final IbftExtraDataCodec bftExtraDataEncoder = new IbftExtraDataCodec();
   final BftBlockInterface bftBlockInterface = new BftBlockInterface(bftExtraDataEncoder);
 
   private Block proposedBlock;
 
-  @Before
+  @BeforeEach
   public void setup() {
     validators.add(Util.publicKeyToAddress(proposerKey.getPublicKey()));
     validators.add(Util.publicKeyToAddress(validatorKey.getPublicKey()));
@@ -124,9 +123,6 @@ public class RoundChangeCertificateValidatorTest {
                     Lists.newArrayList(
                         validatorMessageFactory.createPrepare(
                             prevRound, proposedBlock.getHash()))))));
-
-    // The prepare Message in the RoundChange Cert will be deemed illegal.
-    when(signedDataValidator.validatePrepare(any())).thenReturn(false);
 
     assertThat(
             validator.validateRoundChangeMessagesAndEnsureTargetRoundMatchesRoot(

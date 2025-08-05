@@ -26,6 +26,7 @@ import org.hyperledger.besu.ethereum.p2p.rlpx.wire.DefaultMessage;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Message;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MessageData;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.PeerInfo;
+import org.hyperledger.besu.ethereum.p2p.rlpx.wire.ShouldConnectCallback;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage.DisconnectReason;
 import org.hyperledger.besu.plugin.data.EnodeURL;
 import org.hyperledger.besu.util.Subscribers;
@@ -54,6 +55,11 @@ public final class MockNetwork {
   private final Map<Peer, MockNetwork.MockP2PNetwork> nodes = new HashMap<>();
   private final List<Capability> capabilities;
 
+  /**
+   * Constructs a new MockNetwork with the specified capabilities.
+   *
+   * @param capabilities a list of capabilities that the mock network should have.
+   */
   public MockNetwork(final List<Capability> capabilities) {
     this.capabilities = capabilities;
   }
@@ -169,6 +175,9 @@ public final class MockNetwork {
     }
 
     @Override
+    public void subscribeConnectRequest(final ShouldConnectCallback callback) {}
+
+    @Override
     public void subscribeDisconnect(final DisconnectCallback callback) {
       disconnectCallbacks.subscribe(callback);
     }
@@ -211,6 +220,11 @@ public final class MockNetwork {
     }
 
     @Override
+    public boolean isStopped() {
+      return true;
+    }
+
+    @Override
     public Optional<EnodeURL> getLocalEnode() {
       return Optional.empty();
     }
@@ -237,6 +251,8 @@ public final class MockNetwork {
     private final Peer to;
 
     private final MockNetwork network;
+    private boolean statusSent;
+    private boolean statusReceived;
 
     MockPeerConnection(final Peer source, final Peer target, final MockNetwork network) {
       from = source;
@@ -307,6 +323,31 @@ public final class MockNetwork {
     @Override
     public InetSocketAddress getRemoteAddress() {
       throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getInitiatedAt() {
+      return 0;
+    }
+
+    @Override
+    public boolean inboundInitiated() {
+      return false;
+    }
+
+    @Override
+    public void setStatusSent() {
+      this.statusSent = true;
+    }
+
+    @Override
+    public void setStatusReceived() {
+      this.statusReceived = true;
+    }
+
+    @Override
+    public boolean getStatusExchanged() {
+      return statusSent && statusReceived;
     }
   }
 }

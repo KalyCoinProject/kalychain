@@ -23,45 +23,65 @@ import org.hyperledger.besu.crypto.altbn128.Fq2;
 import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
-import org.hyperledger.besu.nativelib.bls12_381.LibEthPairings;
+import org.hyperledger.besu.nativelib.gnark.LibGnarkEIP196;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import javax.annotation.Nonnull;
+import java.util.concurrent.TimeUnit;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import jakarta.validation.constraints.NotNull;
 import org.apache.tuweni.bytes.Bytes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+/** The AltBN128Pairing precompiled contract. */
 public class AltBN128PairingPrecompiledContract extends AbstractAltBnPrecompiledContract {
-
+  private static final Logger LOG =
+      LoggerFactory.getLogger(AltBN128PairingPrecompiledContract.class);
   private static final int FIELD_LENGTH = 32;
   private static final int PARAMETER_LENGTH = 192;
+  private static final String PRECOMPILE_NAME = "BN254_PAIRING";
 
+  private static final Cache<Integer, PrecompileInputResultTuple> bnPairingCache =
+      Caffeine.newBuilder()
+          .maximumWeight(16_000_000)
+          .weigher((k, v) -> ((PrecompileInputResultTuple) v).cachedInput().size())
+          .expireAfterWrite(15, TimeUnit.MINUTES) // Evict 15 minutes after each entry is written
+          .build();
+
+  /** The constant FALSE. */
   static final Bytes FALSE =
       Bytes.fromHexString("0x0000000000000000000000000000000000000000000000000000000000000000");
+
+  /** The constant TRUE. */
   public static final Bytes TRUE =
       Bytes.fromHexString("0x0000000000000000000000000000000000000000000000000000000000000001");
 
   private final long pairingGasCost;
   private final long baseGasCost;
 
-  private AltBN128PairingPrecompiledContract(
+  AltBN128PairingPrecompiledContract(
       final GasCalculator gasCalculator, final long pairingGasCost, final long baseGasCost) {
     super(
-        "AltBN128Pairing",
+        PRECOMPILE_NAME,
         gasCalculator,
-        LibEthPairings.EIP196_PAIR_OPERATION_RAW_VALUE,
+        LibGnarkEIP196.EIP196_PAIR_OPERATION_RAW_VALUE,
         Integer.MAX_VALUE / PARAMETER_LENGTH * PARAMETER_LENGTH);
     this.pairingGasCost = pairingGasCost;
     this.baseGasCost = baseGasCost;
   }
 
-  public static AltBN128PairingPrecompiledContract byzantium(final GasCalculator gasCalculator) {
-    return new AltBN128PairingPrecompiledContract(gasCalculator, 80_000L, 100_000L);
-  }
-
+  /**
+   * Create Istanbul AltBN128Pairing precompiled contract.
+   *
+   * @param gasCalculator the gas calculator
+   * @return the AltBN128Pairing precompiled contract
+   */
   public static AltBN128PairingPrecompiledContract istanbul(final GasCalculator gasCalculator) {
     return new AltBN128PairingPrecompiledContract(gasCalculator, 34_000L, 45_000L);
   }
@@ -72,10 +92,10 @@ public class AltBN128PairingPrecompiledContract extends AbstractAltBnPrecompiled
     return (pairingGasCost * parameters) + baseGasCost;
   }
 
-  @Nonnull
+  @NotNull
   @Override
   public PrecompileContractResult computePrecompile(
-      final Bytes input, @Nonnull final MessageFrame messageFrame) {
+      final Bytes input, @NotNull final MessageFrame messageFrame) {
     if (input.isEmpty()) {
       return PrecompileContractResult.success(TRUE);
     }
@@ -83,14 +103,45 @@ public class AltBN128PairingPrecompiledContract extends AbstractAltBnPrecompiled
       return PrecompileContractResult.halt(
           null, Optional.of(ExceptionalHaltReason.PRECOMPILE_ERROR));
     }
-    if (useNative) {
-      return computeNative(input, messageFrame);
-    } else {
-      return computeDefault(input);
+    PrecompileInputResultTuple res;
+    Integer cacheKey = null;
+    if (enableResultCaching) {
+      cacheKey = getCacheKey(input);
+      res = bnPairingCache.getIfPresent(cacheKey);
+      if (res != null) {
+        if (res.cachedInput().equals(input)) {
+          cacheEventConsumer.accept(new CacheEvent(PRECOMPILE_NAME, CacheMetric.HIT));
+          return res.cachedResult();
+        } else {
+          LOG.debug(
+              "false positive altbn128Pairing {}, cache key {}, cached input: {}, input: {}",
+              input.getClass().getSimpleName(),
+              cacheKey,
+              res.cachedInput().toHexString(),
+              input.toHexString());
+          cacheEventConsumer.accept(new CacheEvent(PRECOMPILE_NAME, CacheMetric.FALSE_POSITIVE));
+        }
+      } else {
+        cacheEventConsumer.accept(new CacheEvent(PRECOMPILE_NAME, CacheMetric.MISS));
+      }
     }
+    if (useNative) {
+      res =
+          new PrecompileInputResultTuple(
+              enableResultCaching ? input.copy() : input, computeNative(input, messageFrame));
+    } else {
+      res =
+          new PrecompileInputResultTuple(
+              enableResultCaching ? input.copy() : input, computeDefault(input));
+    }
+    if (cacheKey != null) {
+      bnPairingCache.put(cacheKey, res);
+    }
+
+    return res.cachedResult();
   }
 
-  @Nonnull
+  @NotNull
   private static PrecompileContractResult computeDefault(final Bytes input) {
     final int parameters = input.size() / PARAMETER_LENGTH;
     final List<AltBn128Point> a = new ArrayList<>();
@@ -136,7 +187,7 @@ public class AltBN128PairingPrecompiledContract extends AbstractAltBnPrecompiled
     if (offset > input.size() || length == 0) {
       return BigInteger.ZERO;
     }
-    final byte[] raw = Arrays.copyOfRange(input.toArray(), offset, offset + length);
+    final byte[] raw = Arrays.copyOfRange(input.toArrayUnsafe(), offset, offset + length);
     return new BigInteger(1, raw);
   }
 }

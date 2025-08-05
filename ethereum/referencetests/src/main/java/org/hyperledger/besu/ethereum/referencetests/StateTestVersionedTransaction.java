@@ -11,17 +11,17 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.ethereum.referencetests;
 
 import org.hyperledger.besu.crypto.KeyPair;
 import org.hyperledger.besu.crypto.SignatureAlgorithm;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.datatypes.AccessListEntry;
 import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.VersionedHash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.Transaction;
-import org.hyperledger.besu.evm.AccessListEntry;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -71,6 +71,12 @@ public class StateTestVersionedTransaction {
   private final List<Wei> values;
   private final List<Bytes> payloads;
   private final Optional<List<List<AccessListEntry>>> maybeAccessLists;
+  private final Wei maxFeePerBlobGas;
+  // String instead of VersionedHash because reference tests intentionally use bad hashes.
+  private final List<String> blobVersionedHashes;
+
+  @JsonDeserialize(contentAs = org.hyperledger.besu.ethereum.core.CodeDelegation.class)
+  private final List<org.hyperledger.besu.datatypes.CodeDelegation> authorizationList;
 
   /**
    * Constructor for populating a mock transaction with json data.
@@ -98,14 +104,18 @@ public class StateTestVersionedTransaction {
       @JsonProperty("secretKey") final String secretKey,
       @JsonProperty("data") final String[] data,
       @JsonDeserialize(using = StateTestAccessListDeserializer.class) @JsonProperty("accessLists")
-          final List<List<AccessListEntry>> maybeAccessLists) {
+          final List<List<AccessListEntry>> maybeAccessLists,
+      @JsonProperty("maxFeePerBlobGas") final String maxFeePerBlobGas,
+      @JsonProperty("blobVersionedHashes") final List<String> blobVersionedHashes,
+      @JsonProperty("authorizationList")
+          final List<org.hyperledger.besu.datatypes.CodeDelegation> authorizationList) {
 
     this.nonce = Bytes.fromHexStringLenient(nonce).toLong();
     this.gasPrice = Optional.ofNullable(gasPrice).map(Wei::fromHexString).orElse(null);
     this.maxFeePerGas = Optional.ofNullable(maxFeePerGas).map(Wei::fromHexString).orElse(null);
     this.maxPriorityFeePerGas =
         Optional.ofNullable(maxPriorityFeePerGas).map(Wei::fromHexString).orElse(null);
-    this.to = to.isEmpty() ? null : Address.fromHexString(to);
+    this.to = (to == null || to.isEmpty()) ? null : Address.fromHexString(to);
 
     SignatureAlgorithm signatureAlgorithm = SignatureAlgorithmFactory.getInstance();
     this.keys =
@@ -116,9 +126,17 @@ public class StateTestVersionedTransaction {
     this.values = parseArray(value, Wei::fromHexString);
     this.payloads = parseArray(data, Bytes::fromHexString);
     this.maybeAccessLists = Optional.ofNullable(maybeAccessLists);
+    this.maxFeePerBlobGas =
+        Optional.ofNullable(maxFeePerBlobGas).map(Wei::fromHexString).orElse(null);
+    this.blobVersionedHashes = blobVersionedHashes;
+    this.authorizationList = authorizationList;
   }
 
   private static <T> List<T> parseArray(final String[] array, final Function<String, T> parseFct) {
+    if (array == null) {
+      return null;
+    }
+
     final List<T> res = new ArrayList<>(array.length);
     for (final String str : array) {
       try {
@@ -148,6 +166,17 @@ public class StateTestVersionedTransaction {
     Optional.ofNullable(maxPriorityFeePerGas).ifPresent(transactionBuilder::maxPriorityFeePerGas);
     maybeAccessLists.ifPresent(
         accessLists -> transactionBuilder.accessList(accessLists.get(indexes.data)));
+    Optional.ofNullable(maxFeePerBlobGas).ifPresent(transactionBuilder::maxFeePerBlobGas);
+    try {
+      transactionBuilder.versionedHashes(
+          blobVersionedHashes == null
+              ? null
+              : blobVersionedHashes.stream().map(VersionedHash::fromHexString).toList());
+    } catch (IllegalArgumentException iae) {
+      // versioned hash string was bad, so this is an invalid transaction
+      return null;
+    }
+    Optional.ofNullable(authorizationList).ifPresent(transactionBuilder::codeDelegations);
 
     transactionBuilder.guessType();
     if (transactionBuilder.getTransactionType().requiresChainId()) {

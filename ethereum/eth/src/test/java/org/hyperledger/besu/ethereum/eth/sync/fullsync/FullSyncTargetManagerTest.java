@@ -28,27 +28,28 @@ import org.hyperledger.besu.ethereum.core.ProtocolScheduleFixture;
 import org.hyperledger.besu.ethereum.eth.EthProtocolConfiguration;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManager;
+import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestBuilder;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestUtil;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.manager.RespondingEthPeer;
 import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncTarget;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
+import org.hyperledger.besu.plugin.services.storage.DataStorageFormat;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Stream;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.ArgumentsProvider;
+import org.junit.jupiter.params.provider.ArgumentsSource;
 
-@RunWith(Parameterized.class)
 public class FullSyncTargetManagerTest {
 
   private EthProtocolManager ethProtocolManager;
@@ -58,19 +59,15 @@ public class FullSyncTargetManagerTest {
   private RespondingEthPeer.Responder responder;
   private FullSyncTargetManager syncTargetManager;
 
-  @Parameterized.Parameters
-  public static Collection<Object[]> data() {
-    return Arrays.asList(new Object[][] {{DataStorageFormat.BONSAI}, {DataStorageFormat.FOREST}});
+  static class FullSyncTargetManagerTestArguments implements ArgumentsProvider {
+    @Override
+    public Stream<? extends Arguments> provideArguments(final ExtensionContext context) {
+      return Stream.of(
+          Arguments.of(DataStorageFormat.BONSAI), Arguments.of(DataStorageFormat.FOREST));
+    }
   }
 
-  private final DataStorageFormat storageFormat;
-
-  public FullSyncTargetManagerTest(final DataStorageFormat storageFormat) {
-    this.storageFormat = storageFormat;
-  }
-
-  @Before
-  public void setup() {
+  public void setup(final DataStorageFormat storageFormat) {
     final BlockchainSetupUtil otherBlockchainSetup = BlockchainSetupUtil.forTesting(storageFormat);
     final Blockchain otherBlockchain = otherBlockchainSetup.getBlockchain();
     responder = RespondingEthPeer.blockchainResponder(otherBlockchain);
@@ -78,16 +75,21 @@ public class FullSyncTargetManagerTest {
     final BlockchainSetupUtil localBlockchainSetup = BlockchainSetupUtil.forTesting(storageFormat);
     localBlockchain = localBlockchainSetup.getBlockchain();
 
-    final ProtocolSchedule protocolSchedule = ProtocolScheduleFixture.MAINNET;
+    final ProtocolSchedule protocolSchedule = ProtocolScheduleFixture.TESTING_NETWORK;
     final ProtocolContext protocolContext =
-        new ProtocolContext(localBlockchain, localWorldState, null);
+        new ProtocolContext.Builder()
+            .withBlockchain(localBlockchain)
+            .withWorldStateArchive(localWorldState)
+            .build();
     ethProtocolManager =
-        EthProtocolManagerTestUtil.create(
-            localBlockchain,
-            new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()),
-            localWorldState,
-            localBlockchainSetup.getTransactionPool(),
-            EthProtocolConfiguration.defaultConfig());
+        EthProtocolManagerTestBuilder.builder()
+            .setProtocolSchedule(protocolSchedule)
+            .setBlockchain(localBlockchain)
+            .setEthScheduler(new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()))
+            .setWorldStateArchive(localBlockchainSetup.getWorldArchive())
+            .setTransactionPool(localBlockchainSetup.getTransactionPool())
+            .setEthereumWireProtocolConfiguration(EthProtocolConfiguration.defaultConfig())
+            .build();
     final EthContext ethContext = ethProtocolManager.ethContext();
     localBlockchainSetup.importFirstBlocks(5);
     otherBlockchainSetup.importFirstBlocks(20);
@@ -101,13 +103,17 @@ public class FullSyncTargetManagerTest {
             SyncTerminationCondition.never());
   }
 
-  @After
+  @AfterEach
   public void tearDown() {
-    ethProtocolManager.stop();
+    if (ethProtocolManager != null) {
+      ethProtocolManager.stop();
+    }
   }
 
-  @Test
-  public void findSyncTarget_withHeightEstimates() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncTargetManagerTest.FullSyncTargetManagerTestArguments.class)
+  public void findSyncTarget_withHeightEstimates(final DataStorageFormat storageFormat) {
+    setup(storageFormat);
     final BlockHeader chainHeadHeader = localBlockchain.getChainHeadHeader();
     when(localWorldState.isWorldStateAvailable(
             chainHeadHeader.getStateRoot(), chainHeadHeader.getHash()))
@@ -123,14 +129,15 @@ public class FullSyncTargetManagerTest {
             new SyncTarget(bestPeer.getEthPeer(), localBlockchain.getBlockHeader(4L).get()));
   }
 
-  @Test
-  public void findSyncTarget_noHeightEstimates() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncTargetManagerTest.FullSyncTargetManagerTestArguments.class)
+  public void findSyncTarget_noHeightEstimates(final DataStorageFormat storageFormat) {
+    setup(storageFormat);
     final BlockHeader chainHeadHeader = localBlockchain.getChainHeadHeader();
     when(localWorldState.isWorldStateAvailable(
             chainHeadHeader.getStateRoot(), chainHeadHeader.getHash()))
         .thenReturn(true);
-    final RespondingEthPeer bestPeer =
-        EthProtocolManagerTestUtil.createPeer(ethProtocolManager, Difficulty.MAX_VALUE, 0);
+    final RespondingEthPeer bestPeer = EthProtocolManagerTestUtil.createPeer(ethProtocolManager, 0);
 
     final CompletableFuture<SyncTarget> result = syncTargetManager.findSyncTarget();
     bestPeer.respond(responder);
@@ -138,8 +145,11 @@ public class FullSyncTargetManagerTest {
     assertThat(result).isNotCompleted();
   }
 
-  @Test
-  public void shouldDisconnectPeerIfWorldStateIsUnavailableForCommonAncestor() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncTargetManagerTest.FullSyncTargetManagerTestArguments.class)
+  public void shouldDisconnectPeerIfWorldStateIsUnavailableForCommonAncestor(
+      final DataStorageFormat storageFormat) {
+    setup(storageFormat);
     final BlockHeader chainHeadHeader = localBlockchain.getChainHeadHeader();
     when(localWorldState.isWorldStateAvailable(
             chainHeadHeader.getStateRoot(), chainHeadHeader.getHash()))
@@ -155,8 +165,11 @@ public class FullSyncTargetManagerTest {
     assertThat(bestPeer.getPeerConnection().isDisconnected()).isTrue();
   }
 
-  @Test
-  public void shouldAllowSyncTargetWhenIfWorldStateIsAvailableForCommonAncestor() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncTargetManagerTest.FullSyncTargetManagerTestArguments.class)
+  public void shouldAllowSyncTargetWhenIfWorldStateIsAvailableForCommonAncestor(
+      final DataStorageFormat storageFormat) {
+    setup(storageFormat);
     final BlockHeader chainHeadHeader = localBlockchain.getChainHeadHeader();
     when(localWorldState.isWorldStateAvailable(
             chainHeadHeader.getStateRoot(), chainHeadHeader.getHash()))
@@ -172,5 +185,12 @@ public class FullSyncTargetManagerTest {
         .isCompletedWithValue(
             new SyncTarget(bestPeer.getEthPeer(), localBlockchain.getChainHeadHeader()));
     assertThat(bestPeer.getPeerConnection().isDisconnected()).isFalse();
+  }
+
+  @Test
+  void dryRunDetector() {
+    assertThat(true)
+        .withFailMessage("This test is here so gradle --dry-run executes this class")
+        .isTrue();
   }
 }

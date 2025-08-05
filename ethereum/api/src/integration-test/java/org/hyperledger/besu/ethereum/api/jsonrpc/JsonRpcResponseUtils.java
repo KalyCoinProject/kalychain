@@ -27,15 +27,18 @@ import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.NUMBE
 import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.OMMERS_HASH;
 import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.PARENT_HASH;
 import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.RECEIPTS_ROOT;
+import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.REQUESTS_HASH;
 import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.SIZE;
 import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.STATE_ROOT;
 import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.TIMESTAMP;
 import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.TOTAL_DIFFICULTY;
 import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.TRANSACTION_ROOT;
+import static org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcResponseKey.WITHDRAWALS_ROOT;
 
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.TransactionType;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
@@ -50,7 +53,6 @@ import org.hyperledger.besu.ethereum.core.Difficulty;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.mainnet.MainnetBlockHeaderFunctions;
 import org.hyperledger.besu.evm.log.LogsBloomFilter;
-import org.hyperledger.besu.plugin.data.TransactionType;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -100,7 +102,10 @@ public class JsonRpcResponseUtils {
         values.containsKey(BASEFEE) ? Wei.of(unsignedInt256(values.get(BASEFEE))) : null;
     final Difficulty totalDifficulty = Difficulty.of(unsignedInt256(values.get(TOTAL_DIFFICULTY)));
     final int size = unsignedInt(values.get(SIZE));
-
+    final Hash withdrawalsRoot =
+        values.containsKey(WITHDRAWALS_ROOT) ? hash(values.get(WITHDRAWALS_ROOT)) : null;
+    final Hash requestsHash =
+        values.containsKey(REQUESTS_HASH) ? hash(values.get(REQUESTS_HASH)) : null;
     final List<JsonNode> ommers = new ArrayList<>();
 
     final BlockHeader header =
@@ -121,6 +126,11 @@ public class JsonRpcResponseUtils {
             baseFee,
             mixHash,
             nonce,
+            withdrawalsRoot,
+            null, // ToDo 4844: set with the value of blob_gas_used field
+            null, // ToDo 4844: set with the value of excess_blob_gas field
+            null, // TODO 4788: set with the value of the parent beacon block root field
+            requestsHash,
             blockHeaderFunctions);
 
     return new JsonRpcSuccessResponse(
@@ -168,28 +178,25 @@ public class JsonRpcResponseUtils {
       final String s) {
 
     final Transaction transaction =
-        new Transaction(
-            transactionType,
-            unsignedLong(nonce),
-            Optional.of(Wei.fromHexString(gasPrice)),
-            Optional.empty(),
-            Optional.empty(),
-            unsignedLong(gas),
-            Optional.ofNullable(address(toAddress)),
-            wei(value),
-            SignatureAlgorithmFactory.getInstance()
-                .createSignature(
-                    Bytes.fromHexString(r).toUnsignedBigInteger(),
-                    Bytes.fromHexString(s).toUnsignedBigInteger(),
-                    Bytes.fromHexString(v)
-                        .toUnsignedBigInteger()
-                        .subtract(Transaction.REPLAY_UNPROTECTED_V_BASE)
-                        .byteValueExact()),
-            bytes(input),
-            Optional.empty(),
-            address(fromAddress),
-            Optional.empty(),
-            Optional.of(bigInteger(v)));
+        Transaction.builder()
+            .type(transactionType)
+            .nonce(unsignedLong(nonce))
+            .gasPrice(Wei.fromHexString(gasPrice))
+            .gasLimit(unsignedLong(gas))
+            .to(address(toAddress))
+            .value(wei(value))
+            .signature(
+                SignatureAlgorithmFactory.getInstance()
+                    .createSignature(
+                        Bytes.fromHexString(r).toUnsignedBigInteger(),
+                        Bytes.fromHexString(s).toUnsignedBigInteger(),
+                        Bytes.fromHexString(v)
+                            .toUnsignedBigInteger()
+                            .subtract(Transaction.REPLAY_UNPROTECTED_V_BASE)
+                            .byteValueExact()))
+            .payload(bytes(input))
+            .sender(address(fromAddress))
+            .build();
 
     return new TransactionCompleteResult(
         new TransactionWithMetadata(
@@ -216,10 +223,6 @@ public class JsonRpcResponseUtils {
 
   private String removeHexPrefix(final String prefixedHex) {
     return prefixedHex.startsWith("0x") ? prefixedHex.substring(2) : prefixedHex;
-  }
-
-  private BigInteger bigInteger(final String hex) {
-    return hex == null ? null : new BigInteger(removeHexPrefix(hex), HEX_RADIX);
   }
 
   private Wei wei(final String hex) {

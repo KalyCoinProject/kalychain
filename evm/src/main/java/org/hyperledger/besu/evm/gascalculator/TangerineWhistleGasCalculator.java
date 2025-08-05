@@ -22,6 +22,7 @@ import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.internal.Words;
 
+/** The Tangerine whistle gas calculator. */
 public class TangerineWhistleGasCalculator extends HomesteadGasCalculator {
 
   private static final long BALANCE_OPERATION_GAS_COST = 400L;
@@ -35,6 +36,9 @@ public class TangerineWhistleGasCalculator extends HomesteadGasCalculator {
   private static final long SELFDESTRUCT_OPERATION_CREATES_NEW_ACCOUNT = 30_000L;
 
   private static final long SLOAD_OPERATION_GAS_COST = 200L;
+
+  /** Default constructor. */
+  public TangerineWhistleGasCalculator() {}
 
   @Override
   public long getBalanceOperationGasCost() {
@@ -61,7 +65,8 @@ public class TangerineWhistleGasCalculator extends HomesteadGasCalculator {
       final long outputDataLength,
       final Wei transferValue,
       final Account recipient,
-      final Address to) {
+      final Address to,
+      final boolean accountIsWarm) {
     final long inputDataMemoryExpansionCost =
         memoryExpansionGasCost(frame, inputDataOffset, inputDataLength);
     final long outputDataMemoryExpansionCost =

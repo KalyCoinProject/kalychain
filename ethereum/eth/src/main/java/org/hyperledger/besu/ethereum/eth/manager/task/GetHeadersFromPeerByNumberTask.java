@@ -43,25 +43,15 @@ public class GetHeadersFromPeerByNumberTask extends AbstractGetHeadersFromPeerTa
     this.blockNumber = blockNumber;
   }
 
-  public static AbstractGetHeadersFromPeerTask startingAtNumber(
-      final ProtocolSchedule protocolSchedule,
-      final EthContext ethContext,
-      final long firstBlockNumber,
-      final int segmentLength,
-      final MetricsSystem metricsSystem) {
-    return new GetHeadersFromPeerByNumberTask(
-        protocolSchedule, ethContext, firstBlockNumber, segmentLength, 0, false, metricsSystem);
-  }
-
   public static AbstractGetHeadersFromPeerTask endingAtNumber(
       final ProtocolSchedule protocolSchedule,
       final EthContext ethContext,
-      final long lastlockNumber,
+      final long lastBlockNumber,
       final int segmentLength,
       final int skip,
       final MetricsSystem metricsSystem) {
     return new GetHeadersFromPeerByNumberTask(
-        protocolSchedule, ethContext, lastlockNumber, segmentLength, skip, true, metricsSystem);
+        protocolSchedule, ethContext, lastBlockNumber, segmentLength, skip, true, metricsSystem);
   }
 
   public static AbstractGetHeadersFromPeerTask forSingleNumber(
@@ -77,9 +67,15 @@ public class GetHeadersFromPeerByNumberTask extends AbstractGetHeadersFromPeerTa
   protected PendingPeerRequest sendRequest() {
     return sendRequestToPeer(
         peer -> {
-          LOG.debug("Requesting {} headers from peer {}.", count, peer);
+          LOG.atTrace()
+              .setMessage("Requesting {} headers (blockNumber {}) from peer {}.")
+              .addArgument(count)
+              .addArgument(blockNumber)
+              .addArgument(peer::getLoggableId)
+              .log();
           return peer.getHeadersByNumber(blockNumber, count, skip, reverse);
-        });
+        },
+        blockNumber);
   }
 
   @Override

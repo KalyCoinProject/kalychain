@@ -18,22 +18,12 @@ import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.mainnet.ValidationResult;
 import org.hyperledger.besu.ethereum.processing.TransactionProcessingResult;
 
-import java.util.Objects;
+import java.util.Optional;
 
-import com.google.common.annotations.VisibleForTesting;
 import org.apache.tuweni.bytes.Bytes;
 
-public class TransactionSimulatorResult {
-
-  private final Transaction transaction;
-  private final TransactionProcessingResult result;
-
-  @VisibleForTesting
-  public TransactionSimulatorResult(
-      final Transaction transaction, final TransactionProcessingResult result) {
-    this.transaction = transaction;
-    this.result = result;
-  }
+public record TransactionSimulatorResult(
+    Transaction transaction, TransactionProcessingResult result) {
 
   public boolean isSuccessful() {
     return result.isSuccessful();
@@ -55,28 +45,7 @@ public class TransactionSimulatorResult {
     return result.getValidationResult();
   }
 
-  public TransactionProcessingResult getResult() {
-    return result;
-  }
-
-  public Transaction getTransaction() {
-    return transaction;
-  }
-
-  @Override
-  public boolean equals(final Object o) {
-    if (this == o) {
-      return true;
-    }
-    if (o == null || getClass() != o.getClass()) {
-      return false;
-    }
-    final TransactionSimulatorResult that = (TransactionSimulatorResult) o;
-    return Objects.equals(transaction, that.transaction) && Objects.equals(result, that.result);
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hash(transaction, result);
+  public Optional<String> getInvalidReason() {
+    return result.getInvalidReason();
   }
 }

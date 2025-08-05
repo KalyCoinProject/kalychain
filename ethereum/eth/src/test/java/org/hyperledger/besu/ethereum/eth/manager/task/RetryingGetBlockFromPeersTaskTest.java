@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -22,12 +22,13 @@ import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
 import org.hyperledger.besu.ethereum.eth.manager.ethtaskutils.RetryingSwitchingPeerMessageTaskTest;
 import org.hyperledger.besu.ethereum.eth.manager.task.AbstractPeerTask.PeerTaskResult;
+import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 public class RetryingGetBlockFromPeersTaskTest
     extends RetryingSwitchingPeerMessageTaskTest<PeerTaskResult<Block>> {
@@ -51,6 +52,7 @@ public class RetryingGetBlockFromPeersTaskTest
     return RetryingGetBlockFromPeersTask.create(
         protocolSchedule,
         ethContext,
+        SynchronizerConfiguration.builder().build(),
         metricsSystem,
         maxRetries,
         Optional.of(requestedData.getResult().getHash()),
@@ -59,12 +61,12 @@ public class RetryingGetBlockFromPeersTaskTest
 
   @Test
   @Override
-  @Ignore("GetBlock could not return partial response")
+  @Disabled("GetBlock could not return partial response")
   public void failsWhenPeerReturnsPartialResultThenStops() {}
 
   @Override
   @Test
-  @Ignore("GetBlock could not return partial response")
+  @Disabled("GetBlock could not return partial response")
   public void completesWhenPeerReturnsPartialResult()
       throws ExecutionException, InterruptedException {
     super.completesWhenPeerReturnsPartialResult();

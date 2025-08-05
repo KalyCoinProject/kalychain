@@ -16,26 +16,29 @@
 apply plugin: 'java-library'
 
 jar {
-  archiveBaseName = 'besu-core'
+  archiveBaseName = calculateArtifactId(project)
   manifest {
     attributes(
       'Specification-Title': archiveBaseName,
       'Specification-Version': project.version,
       'Implementation-Title': archiveBaseName,
-      'Implementation-Version': calculateVersion()
+      'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash
       )
   }
 }
 
 dependencies {
   api 'org.slf4j:slf4j-api'
+  api 'org.web3j:core'
+  implementation project(path: ':util')
 
   annotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess'
+  annotationProcessor 'org.hyperledger.besu:besu-errorprone-checks'
 
   implementation project(':config')
-  implementation project(':crypto')
+  implementation project(':crypto:algorithms')
   implementation project(':datatypes')
-  implementation project(':enclave')
   implementation project(':ethereum:rlp')
   implementation project(':ethereum:trie')
   implementation project(':evm')
@@ -43,21 +46,24 @@ dependencies {
   implementation project(':plugin-api')
   implementation project(':services:kvstore')
 
-
   implementation 'com.fasterxml.jackson.core:jackson-databind'
+  implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jdk8'
   implementation 'com.google.guava:guava'
+  implementation 'com.github.ben-manes.caffeine:caffeine'
+  implementation 'com.google.dagger:dagger'
+  implementation 'org.apache.maven:maven-artifact'
+  annotationProcessor 'com.google.dagger:dagger-compiler'
   implementation 'io.opentelemetry:opentelemetry-api'
   implementation 'io.vertx:vertx-core'
+
   implementation 'net.java.dev.jna:jna'
   implementation 'org.apache.commons:commons-lang3'
-  implementation 'org.apache.tuweni:tuweni-bytes'
-  implementation 'org.apache.tuweni:tuweni-concurrent'
-  implementation 'org.apache.tuweni:tuweni-units'
-  implementation 'org.apache.tuweni:tuweni-rlp'
-  implementation 'org.hyperledger.besu:bls12-381'
+  implementation 'io.consensys.tuweni:tuweni-bytes'
+  implementation 'io.consensys.tuweni:tuweni-concurrent'
+  implementation 'io.consensys.tuweni:tuweni-units'
+  implementation 'io.consensys.tuweni:tuweni-rlp'
   implementation 'org.immutables:value-annotations'
-
-  implementation 'io.prometheus:simpleclient_guava'
+  implementation 'io.consensys.protocols:jc-kzg-4844'
 
   implementation 'org.xerial.snappy:snappy-java'
 
@@ -71,18 +77,16 @@ dependencies {
   testImplementation project(':testutil')
   testImplementation project(path: ':plugins:rocksdb')
 
-
-  testImplementation 'junit:junit'
   testImplementation 'org.apache.logging.log4j:log4j-core'
-  testImplementation 'org.apache.tuweni:tuweni-bytes'
-  testImplementation 'org.apache.tuweni:tuweni-io'
-  testImplementation 'org.apache.tuweni:tuweni-units'
+  testImplementation 'io.consensys.tuweni:tuweni-bytes'
+  testImplementation 'io.consensys.tuweni:tuweni-io'
+  testImplementation 'io.consensys.tuweni:tuweni-units'
   testImplementation 'org.assertj:assertj-core'
   testImplementation 'org.junit.jupiter:junit-jupiter'
   testImplementation 'org.junit.jupiter:junit-jupiter-params'
   testImplementation 'org.mockito:mockito-core'
-
-  testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
+  testImplementation 'org.mockito:mockito-junit-jupiter'
+  testImplementation 'org.awaitility:awaitility'
 
   integrationTestImplementation project(path: ':config', configuration: 'testSupportArtifacts')
   integrationTestImplementation project(':testutil')
@@ -90,7 +94,7 @@ dependencies {
   integrationTestImplementation 'org.assertj:assertj-core'
   integrationTestImplementation 'org.junit.jupiter:junit-jupiter-api'
   integrationTestImplementation 'org.mockito:mockito-core'
-  integrationTestImplementation 'org.testcontainers:testcontainers'
+  integrationTestImplementation 'io.consensys.tuweni:tuweni-bytes'
 
   integrationTestRuntimeOnly 'org.junit.jupiter:junit-jupiter'
 
@@ -98,12 +102,14 @@ dependencies {
   testSupportImplementation project(':ethereum:eth')
   testSupportImplementation project(':testutil')
 
-  testSupportImplementation 'junit:junit'
+  testSupportImplementation 'org.junit.jupiter:junit-jupiter'
   testSupportImplementation 'org.assertj:assertj-core'
   testSupportImplementation 'org.mockito:mockito-core'
+  testSupportImplementation 'com.google.dagger:dagger'
+  testSupportAnnotationProcessor 'com.google.dagger:dagger-compiler'
 
   jmhImplementation project(path: ':config', configuration: 'testSupportArtifacts')
-  jmhImplementation project(':crypto')
+  jmhImplementation project(':crypto:algorithms')
   jmhImplementation project(path: ':ethereum:core', configuration: 'testSupportArtifacts')
   jmhImplementation project(':ethereum:rlp')
   jmhImplementation project(':ethereum:trie')
@@ -118,7 +124,7 @@ dependencies {
 
 configurations { testArtifacts }
 task testJar(type: Jar) {
-  archiveBaseName = "${project.name}-test"
+  archiveBaseName = calculateArtifactId(project) + '-test'
   from sourceSets.test.output
 }
 

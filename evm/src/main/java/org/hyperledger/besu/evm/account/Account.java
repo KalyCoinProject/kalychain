@@ -16,6 +16,7 @@ package org.hyperledger.besu.evm.account;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.evm.internal.CodeCache;
 
 /**
  * A world state account.
@@ -26,8 +27,13 @@ import org.hyperledger.besu.datatypes.Wei;
  */
 public interface Account extends AccountState {
 
+  /** The constant DEFAULT_NONCE. */
   long DEFAULT_NONCE = 0L;
+
+  /** The constant MAX_NONCE. */
   long MAX_NONCE = -1; // per twos compliment rules -1 will be the unsigned max number
+
+  /** The constant DEFAULT_BALANCE. */
   Wei DEFAULT_BALANCE = Wei.ZERO;
 
   /**
@@ -36,4 +42,21 @@ public interface Account extends AccountState {
    * @return the account address
    */
   Address getAddress();
+
+  /**
+   * Does this account have any storage slots that are set to non-zero values?
+   *
+   * @return true if the account has no storage values set to non-zero values. False if any storage
+   *     is set.
+   */
+  boolean isStorageEmpty();
+
+  /**
+   * Gets the code cache.
+   *
+   * @return the code cache, or null if not supported
+   */
+  default CodeCache getCodeCache() {
+    return null;
+  }
 }

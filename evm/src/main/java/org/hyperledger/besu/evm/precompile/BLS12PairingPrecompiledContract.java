@@ -11,28 +11,44 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evm.precompile;
 
-import org.hyperledger.besu.nativelib.bls12_381.LibEthPairings;
+import org.hyperledger.besu.nativelib.gnark.LibGnarkEIP2537;
 
+import java.util.concurrent.TimeUnit;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.apache.tuweni.bytes.Bytes;
 
+/** The BLS12Pairing precompiled contract. */
 public class BLS12PairingPrecompiledContract extends AbstractBLS12PrecompiledContract {
 
   private static final int PARAMETER_LENGTH = 384;
+  private static final Cache<Integer, PrecompileInputResultTuple> pairingCache =
+      Caffeine.newBuilder()
+          .maximumWeight(16_000_000)
+          .weigher((k, v) -> ((PrecompileInputResultTuple) v).cachedInput().size())
+          .expireAfterWrite(15, TimeUnit.MINUTES) // Evict 15 minutes after each entry is written
+          .build();
 
-  public BLS12PairingPrecompiledContract() {
+  /** Instantiates a new BLS12Pairing precompiled contract. */
+  BLS12PairingPrecompiledContract() {
     super(
-        "BLS12_PAIRING",
-        LibEthPairings.BLS12_PAIR_OPERATION_RAW_VALUE,
+        "BLS12_PAIRING_CHECK",
+        LibGnarkEIP2537.BLS12_PAIR_OPERATION_SHIM_VALUE,
         Integer.MAX_VALUE / PARAMETER_LENGTH * PARAMETER_LENGTH);
   }
 
   @Override
   public long gasRequirement(final Bytes input) {
     final int k = input.size() / PARAMETER_LENGTH;
-    return 23_000L * k + 115_000L;
+    return 32_600L * k + 37_700L;
+  }
+
+  @Override
+  protected Cache<Integer, PrecompileInputResultTuple> getCache() {
+    return pairingCache;
   }
 }

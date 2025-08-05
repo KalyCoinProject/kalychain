@@ -14,52 +14,90 @@
  */
 package org.hyperledger.besu.ethereum.mainnet;
 
-import org.hyperledger.besu.config.GenesisConfigFile;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.ARROW_GLACIER;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.BERLIN;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.BYZANTIUM;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.CONSTANTINOPLE;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.DAO_RECOVERY_INIT;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.DAO_RECOVERY_TRANSITION;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.FRONTIER;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.GRAY_GLACIER;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.HOMESTEAD;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.ISTANBUL;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.LONDON;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.MUIR_GLACIER;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.PETERSBURG;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.SPURIOUS_DRAGON;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.TANGERINE_WHISTLE;
+
+import org.hyperledger.besu.config.GenesisConfig;
+import org.hyperledger.besu.ethereum.chain.BadBlockManager;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.ProtocolScheduleFixture;
 import org.hyperledger.besu.evm.internal.EvmConfiguration;
+import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 
-import java.nio.charset.StandardCharsets;
-
-import com.google.common.io.Resources;
 import org.assertj.core.api.Assertions;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class MainnetProtocolScheduleTest {
 
   @Test
-  public void shouldReturnDefaultProtocolSpecsWhenCustomNumbersAreNotUsed() {
+  public void shouldReturnMainnetDefaultProtocolSpecsWhenCustomNumbersAreNotUsed() {
     final ProtocolSchedule sched = ProtocolScheduleFixture.MAINNET;
-    Assertions.assertThat(sched.getByBlockNumber(1L).getName()).isEqualTo("Frontier");
-    Assertions.assertThat(sched.getByBlockNumber(1_150_000L).getName()).isEqualTo("Homestead");
-    Assertions.assertThat(sched.getByBlockNumber(1_920_000L).getName())
-        .isEqualTo("DaoRecoveryInit");
-    Assertions.assertThat(sched.getByBlockNumber(1_920_001L).getName())
-        .isEqualTo("DaoRecoveryTransition");
-    Assertions.assertThat(sched.getByBlockNumber(1_920_010L).getName()).isEqualTo("Homestead");
-    Assertions.assertThat(sched.getByBlockNumber(2_463_000L).getName())
-        .isEqualTo("TangerineWhistle");
-    Assertions.assertThat(sched.getByBlockNumber(2_675_000L).getName()).isEqualTo("SpuriousDragon");
-    Assertions.assertThat(sched.getByBlockNumber(4_730_000L).getName()).isEqualTo("Byzantium");
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(1L)).getHardforkId())
+        .isEqualTo(FRONTIER);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(1_150_000L)).getHardforkId())
+        .isEqualTo(HOMESTEAD);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(1_920_000L)).getHardforkId())
+        .isEqualTo(DAO_RECOVERY_INIT);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(1_920_001L)).getHardforkId())
+        .isEqualTo(DAO_RECOVERY_TRANSITION);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(1_920_010L)).getHardforkId())
+        .isEqualTo(HOMESTEAD);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(2_463_000L)).getHardforkId())
+        .isEqualTo(TANGERINE_WHISTLE);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(2_675_000L)).getHardforkId())
+        .isEqualTo(SPURIOUS_DRAGON);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(4_730_000L)).getHardforkId())
+        .isEqualTo(BYZANTIUM);
     // Constantinople was originally scheduled for 7_080_000, but postponed
-    Assertions.assertThat(sched.getByBlockNumber(7_080_000L).getName()).isEqualTo("Byzantium");
-    Assertions.assertThat(sched.getByBlockNumber(7_280_000L).getName()).isEqualTo("Petersburg");
-    Assertions.assertThat(sched.getByBlockNumber(9_069_000L).getName()).isEqualTo("Istanbul");
-    Assertions.assertThat(sched.getByBlockNumber(9_200_000L).getName()).isEqualTo("MuirGlacier");
-    Assertions.assertThat(sched.getByBlockNumber(12_244_000L).getName()).isEqualTo("Berlin");
-    Assertions.assertThat(sched.getByBlockNumber(12_965_000L).getName()).isEqualTo("London");
-    Assertions.assertThat(sched.getByBlockNumber(13_773_000L).getName()).isEqualTo("ArrowGlacier");
-    Assertions.assertThat(sched.getByBlockNumber(15_050_000L).getName()).isEqualTo("GrayGlacier");
-    Assertions.assertThat(sched.getByBlockNumber(Long.MAX_VALUE).getName())
-        .isEqualTo("GrayGlacier");
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(7_080_000L)).getHardforkId())
+        .isEqualTo(BYZANTIUM);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(7_280_000L)).getHardforkId())
+        .isEqualTo(PETERSBURG);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(9_069_000L)).getHardforkId())
+        .isEqualTo(ISTANBUL);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(9_200_000L)).getHardforkId())
+        .isEqualTo(MUIR_GLACIER);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(12_244_000L)).getHardforkId())
+        .isEqualTo(BERLIN);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(12_965_000L)).getHardforkId())
+        .isEqualTo(LONDON);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(13_773_000L)).getHardforkId())
+        .isEqualTo(ARROW_GLACIER);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(15_050_000L)).getHardforkId())
+        .isEqualTo(GRAY_GLACIER);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(Long.MAX_VALUE)).getHardforkId())
+        .isEqualTo(GRAY_GLACIER);
   }
 
   @Test
   public void shouldOnlyUseFrontierWhenEmptyJsonConfigIsUsed() {
     final ProtocolSchedule sched =
         MainnetProtocolSchedule.fromConfig(
-            GenesisConfigFile.fromConfig("{}").getConfigOptions(), EvmConfiguration.DEFAULT);
-    Assertions.assertThat(sched.getByBlockNumber(1L).getName()).isEqualTo("Frontier");
-    Assertions.assertThat(sched.getByBlockNumber(Long.MAX_VALUE).getName()).isEqualTo("Frontier");
+            GenesisConfig.fromConfig("{}").getConfigOptions(),
+            EvmConfiguration.DEFAULT,
+            MiningConfiguration.MINING_DISABLED,
+            new BadBlockManager(),
+            false,
+            new NoOpMetricsSystem());
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(1L)).getHardforkId())
+        .isEqualTo(FRONTIER);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(Long.MAX_VALUE)).getHardforkId())
+        .isEqualTo(FRONTIER);
   }
 
   @Test
@@ -68,17 +106,32 @@ public class MainnetProtocolScheduleTest {
         "{\"config\": {\"homesteadBlock\": 2, \"daoForkBlock\": 3, \"eip150Block\": 14, \"eip158Block\": 15, \"byzantiumBlock\": 16, \"constantinopleBlock\": 18, \"petersburgBlock\": 19, \"chainId\":1234}}";
     final ProtocolSchedule sched =
         MainnetProtocolSchedule.fromConfig(
-            GenesisConfigFile.fromConfig(json).getConfigOptions(), EvmConfiguration.DEFAULT);
-    Assertions.assertThat(sched.getByBlockNumber(1).getName()).isEqualTo("Frontier");
-    Assertions.assertThat(sched.getByBlockNumber(2).getName()).isEqualTo("Homestead");
-    Assertions.assertThat(sched.getByBlockNumber(3).getName()).isEqualTo("DaoRecoveryInit");
-    Assertions.assertThat(sched.getByBlockNumber(4).getName()).isEqualTo("DaoRecoveryTransition");
-    Assertions.assertThat(sched.getByBlockNumber(13).getName()).isEqualTo("Homestead");
-    Assertions.assertThat(sched.getByBlockNumber(14).getName()).isEqualTo("TangerineWhistle");
-    Assertions.assertThat(sched.getByBlockNumber(15).getName()).isEqualTo("SpuriousDragon");
-    Assertions.assertThat(sched.getByBlockNumber(16).getName()).isEqualTo("Byzantium");
-    Assertions.assertThat(sched.getByBlockNumber(18).getName()).isEqualTo("Constantinople");
-    Assertions.assertThat(sched.getByBlockNumber(19).getName()).isEqualTo("Petersburg");
+            GenesisConfig.fromConfig(json).getConfigOptions(),
+            EvmConfiguration.DEFAULT,
+            MiningConfiguration.MINING_DISABLED,
+            new BadBlockManager(),
+            false,
+            new NoOpMetricsSystem());
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(1)).getHardforkId())
+        .isEqualTo(FRONTIER);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(2)).getHardforkId())
+        .isEqualTo(HOMESTEAD);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(3)).getHardforkId())
+        .isEqualTo(DAO_RECOVERY_INIT);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(4)).getHardforkId())
+        .isEqualTo(DAO_RECOVERY_TRANSITION);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(13)).getHardforkId())
+        .isEqualTo(HOMESTEAD);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(14)).getHardforkId())
+        .isEqualTo(TANGERINE_WHISTLE);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(15)).getHardforkId())
+        .isEqualTo(SPURIOUS_DRAGON);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(16)).getHardforkId())
+        .isEqualTo(BYZANTIUM);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(18)).getHardforkId())
+        .isEqualTo(CONSTANTINOPLE);
+    Assertions.assertThat(sched.getByBlockHeader(blockHeader(19)).getHardforkId())
+        .isEqualTo(PETERSBURG);
   }
 
   @Test
@@ -91,80 +144,15 @@ public class MainnetProtocolScheduleTest {
         .isThrownBy(
             () ->
                 MainnetProtocolSchedule.fromConfig(
-                    GenesisConfigFile.fromConfig(json).getConfigOptions(),
-                    EvmConfiguration.DEFAULT));
+                    GenesisConfig.fromConfig(json).getConfigOptions(),
+                    EvmConfiguration.DEFAULT,
+                    MiningConfiguration.MINING_DISABLED,
+                    new BadBlockManager(),
+                    false,
+                    new NoOpMetricsSystem()));
   }
 
-  @Test
-  public void shouldCreateRopstenConfig() throws Exception {
-    final ProtocolSchedule sched =
-        MainnetProtocolSchedule.fromConfig(
-            GenesisConfigFile.fromConfig(
-                    Resources.toString(
-                        this.getClass().getResource("/ropsten.json"), StandardCharsets.UTF_8))
-                .getConfigOptions(),
-            EvmConfiguration.DEFAULT);
-    Assertions.assertThat(sched.getByBlockNumber(0L).getName()).isEqualTo("TangerineWhistle");
-    Assertions.assertThat(sched.getByBlockNumber(1L).getName()).isEqualTo("TangerineWhistle");
-    Assertions.assertThat(sched.getByBlockNumber(10L).getName()).isEqualTo("SpuriousDragon");
-    Assertions.assertThat(sched.getByBlockNumber(1_700_000L).getName()).isEqualTo("Byzantium");
-    Assertions.assertThat(sched.getByBlockNumber(4_230_000L).getName()).isEqualTo("Constantinople");
-    Assertions.assertThat(sched.getByBlockNumber(4_939_394L).getName()).isEqualTo("Petersburg");
-    Assertions.assertThat(sched.getByBlockNumber(6_485_846L).getName()).isEqualTo("Istanbul");
-    Assertions.assertThat(sched.getByBlockNumber(7_117_117L).getName()).isEqualTo("MuirGlacier");
-    Assertions.assertThat(sched.getByBlockNumber(9_812_189L).getName()).isEqualTo("Berlin");
-    Assertions.assertThat(sched.getByBlockNumber(10_499_401L).getName()).isEqualTo("London");
-    Assertions.assertThat(sched.getByBlockNumber(Long.MAX_VALUE).getName()).isEqualTo("London");
-  }
-
-  @Test
-  public void shouldCreateGoerliConfig() throws Exception {
-    final ProtocolSchedule sched =
-        MainnetProtocolSchedule.fromConfig(
-            GenesisConfigFile.fromConfig(
-                    Resources.toString(
-                        this.getClass().getResource("/goerli.json"), StandardCharsets.UTF_8))
-                .getConfigOptions(),
-            EvmConfiguration.DEFAULT);
-    Assertions.assertThat(sched.getByBlockNumber(0L).getName()).isEqualTo("Petersburg");
-    Assertions.assertThat(sched.getByBlockNumber(1_561_651L).getName()).isEqualTo("Istanbul");
-    Assertions.assertThat(sched.getByBlockNumber(4_460_644L).getName()).isEqualTo("Berlin");
-    Assertions.assertThat(sched.getByBlockNumber(5_062_605L).getName()).isEqualTo("London");
-    Assertions.assertThat(sched.getByBlockNumber(Long.MAX_VALUE).getName()).isEqualTo("London");
-  }
-
-  @Test
-  public void shouldCreateShandongConfig() throws Exception {
-    final ProtocolSchedule sched =
-        MainnetProtocolSchedule.fromConfig(
-            GenesisConfigFile.fromConfig(
-                    Resources.toString(
-                        this.getClass().getResource("/shandong.json"), StandardCharsets.UTF_8))
-                .getConfigOptions(),
-            EvmConfiguration.DEFAULT);
-    Assertions.assertThat(sched.getByBlockNumber(0L).getName()).isEqualTo("Shandong");
-    Assertions.assertThat(sched.getByBlockNumber(Long.MAX_VALUE).getName()).isEqualTo("Shandong");
-  }
-
-  @Test
-  public void shouldCreateRinkebyConfig() throws Exception {
-    final ProtocolSchedule sched =
-        MainnetProtocolSchedule.fromConfig(
-            GenesisConfigFile.fromConfig(
-                    Resources.toString(
-                        this.getClass().getResource("/rinkeby.json"), StandardCharsets.UTF_8))
-                .getConfigOptions(),
-            EvmConfiguration.DEFAULT);
-    Assertions.assertThat(sched.getByBlockNumber(0L).getName()).isEqualTo("Frontier");
-    Assertions.assertThat(sched.getByBlockNumber(1L).getName()).isEqualTo("Homestead");
-    Assertions.assertThat(sched.getByBlockNumber(2L).getName()).isEqualTo("TangerineWhistle");
-    Assertions.assertThat(sched.getByBlockNumber(3L).getName()).isEqualTo("SpuriousDragon");
-    Assertions.assertThat(sched.getByBlockNumber(1_035_301L).getName()).isEqualTo("Byzantium");
-    Assertions.assertThat(sched.getByBlockNumber(3_660_663L).getName()).isEqualTo("Constantinople");
-    Assertions.assertThat(sched.getByBlockNumber(4_321_234L).getName()).isEqualTo("Petersburg");
-    Assertions.assertThat(sched.getByBlockNumber(5_435_345L).getName()).isEqualTo("Istanbul");
-    Assertions.assertThat(sched.getByBlockNumber(8_290_928L).getName()).isEqualTo("Berlin");
-    Assertions.assertThat(sched.getByBlockNumber(8_897_988L).getName()).isEqualTo("London");
-    Assertions.assertThat(sched.getByBlockNumber(Long.MAX_VALUE).getName()).isEqualTo("London");
+  private BlockHeader blockHeader(final long number) {
+    return new BlockHeaderTestFixture().number(number).buildHeader();
   }
 }

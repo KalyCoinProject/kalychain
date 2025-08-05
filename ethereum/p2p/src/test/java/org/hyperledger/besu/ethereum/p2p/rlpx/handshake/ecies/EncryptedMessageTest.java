@@ -15,15 +15,15 @@
 package org.hyperledger.besu.ethereum.p2p.rlpx.handshake.ecies;
 
 import org.hyperledger.besu.crypto.KeyPair;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 
 import java.util.concurrent.ThreadLocalRandom;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.assertj.core.api.Assertions;
 import org.bouncycastle.crypto.InvalidCipherTextException;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 /** Tests for {@link EncryptedMessage}. */
 public final class EncryptedMessageTest {

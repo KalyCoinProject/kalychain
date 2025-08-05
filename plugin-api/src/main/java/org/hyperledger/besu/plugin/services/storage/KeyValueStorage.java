@@ -72,6 +72,28 @@ public interface KeyValueStorage extends Closeable {
   Stream<Pair<byte[], byte[]>> stream() throws StorageException;
 
   /**
+   * Returns a stream of key-value pairs starting from the specified key. This method is used to
+   * retrieve a stream of data from the storage, starting from the given key. If no data is
+   * available from the specified key onwards, an empty stream is returned.
+   *
+   * @param startKey The key from which the stream should start.
+   * @return A stream of key-value pairs starting from the specified key.
+   * @throws StorageException If an error occurs while accessing the storage.
+   */
+  Stream<Pair<byte[], byte[]>> streamFromKey(final byte[] startKey);
+
+  /**
+   * Returns a stream of key-value pairs starting from the specified key, ending at the specified
+   * key. This method is used to retrieve a stream of data from the storage, starting from the given
+   * key. If no data is available from the specified key onwards, an empty stream is returned.
+   *
+   * @param startKey The key from which the stream should start.
+   * @param endKey The key at which the stream should stop.
+   * @return A stream of key-value pairs starting from the specified key.
+   */
+  Stream<Pair<byte[], byte[]>> streamFromKey(final byte[] startKey, final byte[] endKey);
+
+  /**
    * Returns a stream of all keys.
    *
    * @return A stream of all keys in storage.
@@ -84,9 +106,9 @@ public interface KeyValueStorage extends Closeable {
    * the underlying storage. Do nothing otherwise.
    *
    * @param key The key to delete.
-   * @throws StorageException any problem encountered during the deletion attempt.
    * @return false if the lock on the underlying storage could not be instantly acquired, true
    *     otherwise
+   * @throws StorageException any problem encountered during the deletion attempt.
    */
   boolean tryDelete(byte[] key) throws StorageException;
 
@@ -99,13 +121,26 @@ public interface KeyValueStorage extends Closeable {
    */
   Set<byte[]> getAllKeysThat(Predicate<byte[]> returnCondition);
 
+  /**
+   * Gets all values from keys that matches the predicate.
+   *
+   * @param returnCondition the return condition
+   * @return the all values from keys that
+   */
   Set<byte[]> getAllValuesFromKeysThat(final Predicate<byte[]> returnCondition);
 
   /**
    * Begins a fresh transaction, for sequencing operations for later atomic execution.
    *
-   * @return transaciton to sequence key-value operations.
+   * @return transaction to sequence key-value operations.
    * @throws StorageException problem encountered when starting a new transaction.
    */
   KeyValueStorageTransaction startTransaction() throws StorageException;
+
+  /**
+   * Return Whether the underlying storage is closed.
+   *
+   * @return boolean indicating whether the storage is closed.
+   */
+  boolean isClosed();
 }

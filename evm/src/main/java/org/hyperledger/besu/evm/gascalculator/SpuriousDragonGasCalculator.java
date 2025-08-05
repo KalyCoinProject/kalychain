@@ -21,9 +21,13 @@ import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 
+/** The Spurious dragon gas calculator. */
 public class SpuriousDragonGasCalculator extends TangerineWhistleGasCalculator {
 
   private static final long EXP_OPERATION_BYTE_GAS_COST = 50L;
+
+  /** Default constructor. */
+  public SpuriousDragonGasCalculator() {}
 
   @Override
   public long callOperationGasCost(
@@ -35,7 +39,8 @@ public class SpuriousDragonGasCalculator extends TangerineWhistleGasCalculator {
       final long outputDataLength,
       final Wei transferValue,
       final Account recipient,
-      final Address to) {
+      final Address to,
+      final boolean accountIsWarm) {
     final long inputDataMemoryExpansionCost =
         memoryExpansionGasCost(frame, inputDataOffset, inputDataLength);
     final long outputDataMemoryExpansionCost =

@@ -26,18 +26,21 @@ import java.math.BigInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Clique difficulty validation rule. */
 public class CliqueDifficultyValidationRule implements AttachedBlockHeaderValidationRule {
 
   private static final Logger LOG = LoggerFactory.getLogger(CliqueDifficultyValidationRule.class);
+
+  /** Default constructor. */
+  public CliqueDifficultyValidationRule() {}
 
   @Override
   public boolean validate(
       final BlockHeader header, final BlockHeader parent, final ProtocolContext protocolContext) {
     final Address actualBlockCreator = CliqueHelpers.getProposerOfBlock(header);
-
     final CliqueDifficultyCalculator diffCalculator =
         new CliqueDifficultyCalculator(actualBlockCreator);
-    final BigInteger expectedDifficulty = diffCalculator.nextDifficulty(0, parent, protocolContext);
+    final BigInteger expectedDifficulty = diffCalculator.nextDifficulty(0, parent);
 
     final BigInteger actualDifficulty = header.getDifficulty().toBigInteger();
 

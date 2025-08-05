@@ -14,6 +14,10 @@
  */
 package org.hyperledger.besu.ethereum.api.graphql;
 
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.blockcreation.PoWMiningCoordinator;
 import org.hyperledger.besu.ethereum.core.Synchronizer;
@@ -22,6 +26,7 @@ import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
 
+import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -33,27 +38,25 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 import org.assertj.core.api.Assertions;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-import org.mockito.Mockito;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 public class GraphQLHttpServiceCorsTest {
-  @Rule public final TemporaryFolder folder = new TemporaryFolder();
+  @TempDir private Path folder;
 
   private final Vertx vertx = Vertx.vertx();
   private final OkHttpClient client = new OkHttpClient();
   private GraphQLHttpService graphQLHttpService;
 
-  @Before
+  @BeforeEach
   public void before() {
     final GraphQLConfiguration configuration = GraphQLConfiguration.createDefault();
     configuration.setPort(0);
   }
 
-  @After
+  @AfterEach
   public void after() {
     client.dispatcher().executorService().shutdown();
     client.connectionPool().evictAll();
@@ -208,10 +211,11 @@ public class GraphQLHttpServiceCorsTest {
       config.setCorsAllowedDomains(Lists.newArrayList(corsAllowedDomains));
     }
 
-    final BlockchainQueries blockchainQueries = Mockito.mock(BlockchainQueries.class);
-    final Synchronizer synchronizer = Mockito.mock(Synchronizer.class);
+    final BlockchainQueries blockchainQueries = mock(BlockchainQueries.class);
+    when(blockchainQueries.gasPriorityFee()).thenReturn(Wei.ONE);
+    final Synchronizer synchronizer = mock(Synchronizer.class);
 
-    final PoWMiningCoordinator miningCoordinatorMock = Mockito.mock(PoWMiningCoordinator.class);
+    final PoWMiningCoordinator miningCoordinatorMock = mock(PoWMiningCoordinator.class);
 
     // mock graphql context
     final Map<GraphQLContextType, Object> graphQLContextMap =
@@ -219,26 +223,20 @@ public class GraphQLHttpServiceCorsTest {
             GraphQLContextType.BLOCKCHAIN_QUERIES,
             blockchainQueries,
             GraphQLContextType.TRANSACTION_POOL,
-            Mockito.mock(TransactionPool.class),
+            mock(TransactionPool.class),
             GraphQLContextType.MINING_COORDINATOR,
             miningCoordinatorMock,
             GraphQLContextType.SYNCHRONIZER,
             synchronizer);
 
     final Set<Capability> supportedCapabilities = new HashSet<>();
-    supportedCapabilities.add(EthProtocol.ETH62);
-    supportedCapabilities.add(EthProtocol.ETH63);
+    supportedCapabilities.add(EthProtocol.LATEST);
     final GraphQLDataFetchers dataFetchers = new GraphQLDataFetchers(supportedCapabilities);
     final GraphQL graphQL = GraphQLProvider.buildGraphQL(dataFetchers);
 
     final GraphQLHttpService graphQLHttpService =
         new GraphQLHttpService(
-            vertx,
-            folder.newFolder().toPath(),
-            config,
-            graphQL,
-            graphQLContextMap,
-            Mockito.mock(EthScheduler.class));
+            vertx, folder, config, graphQL, graphQLContextMap, mock(EthScheduler.class));
     graphQLHttpService.start().join();
 
     return graphQLHttpService;

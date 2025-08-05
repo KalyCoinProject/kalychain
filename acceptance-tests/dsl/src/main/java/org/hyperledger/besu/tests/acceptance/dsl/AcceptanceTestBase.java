@@ -26,7 +26,6 @@ import org.hyperledger.besu.tests.acceptance.dsl.condition.eth.EthConditions;
 import org.hyperledger.besu.tests.acceptance.dsl.condition.login.LoginConditions;
 import org.hyperledger.besu.tests.acceptance.dsl.condition.net.NetConditions;
 import org.hyperledger.besu.tests.acceptance.dsl.condition.perm.PermissioningConditions;
-import org.hyperledger.besu.tests.acceptance.dsl.condition.priv.PrivConditions;
 import org.hyperledger.besu.tests.acceptance.dsl.condition.process.ExitedWithCode;
 import org.hyperledger.besu.tests.acceptance.dsl.condition.txpool.TxPoolConditions;
 import org.hyperledger.besu.tests.acceptance.dsl.condition.web3.Web3Conditions;
@@ -40,11 +39,11 @@ import org.hyperledger.besu.tests.acceptance.dsl.transaction.admin.AdminTransact
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.bft.BftTransactions;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.clique.CliqueTransactions;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.contract.ContractTransactions;
+import org.hyperledger.besu.tests.acceptance.dsl.transaction.debug.DebugTransactions;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.eth.EthTransactions;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.miner.MinerTransactions;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.net.NetTransactions;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.perm.PermissioningTransactions;
-import org.hyperledger.besu.tests.acceptance.dsl.transaction.privacy.PrivacyTransactions;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.txpool.TxPoolTransactions;
 import org.hyperledger.besu.tests.acceptance.dsl.transaction.web3.Web3Transactions;
 
@@ -52,20 +51,29 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.lang.ProcessBuilder.Redirect;
 import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
-import org.junit.After;
-import org.junit.Rule;
-import org.junit.rules.TestName;
-import org.junit.rules.TestWatcher;
-import org.junit.runner.Description;
+import org.apache.logging.log4j.ThreadContext;
+import org.awaitility.Awaitility;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 
+/**
+ * Superclass for acceptance tests. For now (transition to junit5 is ongoing) this class supports
+ * junit4 format.
+ */
+@ExtendWith(AcceptanceTestBaseTestWatcher.class)
 public class AcceptanceTestBase {
 
   private static final Logger LOG = LoggerFactory.getLogger(AcceptanceTestBase.class);
@@ -92,11 +100,10 @@ public class AcceptanceTestBase {
   protected final PermissioningTransactions permissioningTransactions;
   protected final MinerTransactions minerTransactions;
   protected final Web3Conditions web3;
-  protected final PrivConditions priv;
-  protected final PrivacyTransactions privacyTransactions;
   protected final TxPoolConditions txPoolConditions;
   protected final TxPoolTransactions txPoolTransactions;
   protected final ExitedWithCode exitedSuccessfully;
+  protected final DebugTransactions debug;
 
   private final ExecutorService outputProcessorExecutor = Executors.newCachedThreadPool();
 
@@ -108,10 +115,8 @@ public class AcceptanceTestBase {
     bftTransactions = new BftTransactions();
     accountTransactions = new AccountTransactions(accounts);
     permissioningTransactions = new PermissioningTransactions();
-    privacyTransactions = new PrivacyTransactions();
     contractTransactions = new ContractTransactions();
     minerTransactions = new MinerTransactions();
-
     blockchain = new Blockchain(ethTransactions);
     clique = new CliqueConditions(ethTransactions, cliqueTransactions);
     eth = new EthConditions(ethTransactions);
@@ -120,7 +125,6 @@ public class AcceptanceTestBase {
     net = new NetConditions(new NetTransactions());
     cluster = new Cluster(net);
     perm = new PermissioningConditions(permissioningTransactions);
-    priv = new PrivConditions(privacyTransactions);
     admin = new AdminConditions(adminTransactions);
     web3 = new Web3Conditions(new Web3Transactions());
     besu = new BesuNodeFactory();
@@ -129,11 +133,18 @@ public class AcceptanceTestBase {
     contractVerifier = new ContractVerifier(accounts.getPrimaryBenefactor());
     permissionedNodeBuilder = new PermissionedNodeBuilder();
     exitedSuccessfully = new ExitedWithCode(0);
+    debug = new DebugTransactions();
   }
 
-  @Rule public final TestName name = new TestName();
+  @BeforeEach
+  public void setUp(final TestInfo testInfo) {
+    // log4j is configured to create a file per test
+    // build/acceptanceTestLogs/${ctx:class}.${ctx:test}.log
+    ThreadContext.put("class", this.getClass().getSimpleName());
+    ThreadContext.put("test", testInfo.getTestMethod().get().getName());
+  }
 
-  @After
+  @AfterEach
   public void tearDownAcceptanceTestBase() {
     reportMemory();
     cluster.close();
@@ -151,7 +162,9 @@ public class AcceptanceTestBase {
     if (command != null) {
       LOG.info("Memory usage at end of test:");
       final ProcessBuilder processBuilder =
-          new ProcessBuilder(command).redirectErrorStream(true).redirectInput(Redirect.INHERIT);
+          new ProcessBuilder(command)
+              .redirectErrorStream(true)
+              .redirectInput(ProcessBuilder.Redirect.INHERIT);
       try {
         final Process memInfoProcess = processBuilder.start();
         outputProcessorExecutor.execute(() -> printOutput(memInfoProcess));
@@ -178,53 +191,33 @@ public class AcceptanceTestBase {
     }
   }
 
-  @Rule
-  public TestWatcher logEraser =
-      new TestWatcher() {
-
-        @Override
-        protected void starting(final Description description) {
-          MDC.put("test", description.getMethodName());
-          MDC.put("class", description.getClassName());
-
-          final String errorMessage = "Uncaught exception in thread \"{}\"";
-          Thread.currentThread()
-              .setUncaughtExceptionHandler(
-                  (thread, error) -> LOG.error(errorMessage, thread.getName(), error));
-          Thread.setDefaultUncaughtExceptionHandler(
-              (thread, error) -> LOG.error(errorMessage, thread.getName(), error));
-        }
-
-        @Override
-        protected void failed(final Throwable e, final Description description) {
-          // add the result at the end of the log so it is self-sufficient
-          LOG.error(
-              "==========================================================================================");
-          LOG.error("Test failed. Reported Throwable at the point of failure:", e);
-        }
-
-        @Override
-        protected void succeeded(final Description description) {
-          // if so configured, delete logs of successful tests
-          if (!Boolean.getBoolean("acctests.keepLogsOfPassingTests")) {
-            String pathname =
-                "build/acceptanceTestLogs/"
-                    + description.getClassName()
-                    + "."
-                    + description.getMethodName()
-                    + ".log";
-            LOG.info("Test successful, deleting log at {}", pathname);
-            File file = new File(pathname);
-            file.delete();
-          }
-        }
-      };
-
   protected void waitForBlockHeight(final Node node, final long blockchainHeight) {
     WaitUtils.waitFor(
         120,
         () ->
             assertThat(node.execute(ethTransactions.blockNumber()))
                 .isGreaterThanOrEqualTo(BigInteger.valueOf(blockchainHeight)));
+  }
+
+  protected void waitForFile(final Path path) {
+    final File file = path.toFile();
+    Awaitility.waitAtMost(30, TimeUnit.SECONDS)
+        .until(
+            () -> {
+              if (file.exists()) {
+                try (final Stream<String> s = Files.lines(path)) {
+                  return s.count() > 0;
+                }
+              } else {
+                return false;
+              }
+            });
+  }
+
+  @Test
+  public void dryRunDetector() {
+    assertThat(true)
+        .withFailMessage("This test is here so gradle --dry-run executes this class")
+        .isTrue();
   }
 }

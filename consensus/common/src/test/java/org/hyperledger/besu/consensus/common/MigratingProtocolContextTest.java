@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -19,12 +19,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.ethereum.ConsensusContext;
+import org.hyperledger.besu.ethereum.chain.BadBlockManager;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
+import org.hyperledger.besu.plugin.ServiceManager;
 
 import java.util.List;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 public class MigratingProtocolContextTest {
@@ -42,8 +44,14 @@ public class MigratingProtocolContextTest {
 
     final ForksSchedule<ConsensusContext> contextSchedule =
         new ForksSchedule<>(List.of(new ForkSpec<>(0L, context1), new ForkSpec<>(10L, context2)));
+
     final MigratingProtocolContext migratingProtocolContext =
-        new MigratingProtocolContext(blockchain, worldStateArchive, contextSchedule);
+        new MigratingProtocolContext(
+            blockchain,
+            worldStateArchive,
+            new MigratingConsensusContext(contextSchedule),
+            new BadBlockManager(),
+            new ServiceManager.SimpleServiceManager());
 
     assertThat(migratingProtocolContext.getConsensusContext(ConsensusContext.class))
         .isSameAs(context1);

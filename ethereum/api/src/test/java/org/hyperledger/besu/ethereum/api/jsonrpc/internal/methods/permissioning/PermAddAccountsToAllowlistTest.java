@@ -23,10 +23,10 @@ import static org.mockito.Mockito.when;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.permissioning.AccountLocalConfigPermissioningController;
 import org.hyperledger.besu.ethereum.permissioning.AllowlistOperationResult;
 
@@ -34,21 +34,21 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class PermAddAccountsToAllowlistTest {
 
-  @Mock private AccountLocalConfigPermissioningController accountWhitelist;
+  @Mock private AccountLocalConfigPermissioningController accountAllowlist;
   private PermAddAccountsToAllowlist method;
 
-  @Before
+  @BeforeEach
   public void before() {
-    method = new PermAddAccountsToAllowlist(java.util.Optional.of(accountWhitelist));
+    method = new PermAddAccountsToAllowlist(java.util.Optional.of(accountAllowlist));
   }
 
   @Test
@@ -57,10 +57,10 @@ public class PermAddAccountsToAllowlistTest {
   }
 
   @Test
-  public void whenAccountsAreAddedToWhitelistShouldReturnSuccess() {
+  public void whenAccountsAreAddedToAllowlistShouldReturnSuccess() {
     List<String> accounts = Arrays.asList("0x0", "0x1");
     JsonRpcResponse expectedResponse = new JsonRpcSuccessResponse(null);
-    when(accountWhitelist.addAccounts(eq(accounts))).thenReturn(AllowlistOperationResult.SUCCESS);
+    when(accountAllowlist.addAccounts(eq(accounts))).thenReturn(AllowlistOperationResult.SUCCESS);
 
     JsonRpcResponse actualResponse = method.response(request(accounts));
 
@@ -70,8 +70,8 @@ public class PermAddAccountsToAllowlistTest {
   @Test
   public void whenAccountIsInvalidShouldReturnInvalidAccountErrorResponse() {
     JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(null, JsonRpcError.ACCOUNT_ALLOWLIST_INVALID_ENTRY);
-    when(accountWhitelist.addAccounts(any()))
+        new JsonRpcErrorResponse(null, RpcErrorType.ACCOUNT_ALLOWLIST_INVALID_ENTRY);
+    when(accountAllowlist.addAccounts(any()))
         .thenReturn(AllowlistOperationResult.ERROR_INVALID_ENTRY);
 
     JsonRpcResponse actualResponse = method.response(request(new ArrayList<>()));
@@ -82,8 +82,8 @@ public class PermAddAccountsToAllowlistTest {
   @Test
   public void whenAccountExistsShouldReturnExistingEntryErrorResponse() {
     JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(null, JsonRpcError.ACCOUNT_ALLOWLIST_EXISTING_ENTRY);
-    when(accountWhitelist.addAccounts(any()))
+        new JsonRpcErrorResponse(null, RpcErrorType.ACCOUNT_ALLOWLIST_EXISTING_ENTRY);
+    when(accountAllowlist.addAccounts(any()))
         .thenReturn(AllowlistOperationResult.ERROR_EXISTING_ENTRY);
 
     JsonRpcResponse actualResponse = method.response(request(new ArrayList<>()));
@@ -94,8 +94,8 @@ public class PermAddAccountsToAllowlistTest {
   @Test
   public void whenInputHasDuplicatedAccountsShouldReturnDuplicatedEntryErrorResponse() {
     JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(null, JsonRpcError.ACCOUNT_ALLOWLIST_DUPLICATED_ENTRY);
-    when(accountWhitelist.addAccounts(any()))
+        new JsonRpcErrorResponse(null, RpcErrorType.ACCOUNT_ALLOWLIST_DUPLICATED_ENTRY);
+    when(accountAllowlist.addAccounts(any()))
         .thenReturn(AllowlistOperationResult.ERROR_DUPLICATED_ENTRY);
 
     JsonRpcResponse actualResponse = method.response(request(new ArrayList<>()));
@@ -106,9 +106,9 @@ public class PermAddAccountsToAllowlistTest {
   @Test
   public void whenEmptyListOnRequestShouldReturnEmptyEntryErrorResponse() {
     JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(null, JsonRpcError.ACCOUNT_ALLOWLIST_EMPTY_ENTRY);
+        new JsonRpcErrorResponse(null, RpcErrorType.ACCOUNT_ALLOWLIST_EMPTY_ENTRY);
 
-    when(accountWhitelist.addAccounts(eq(new ArrayList<>())))
+    when(accountAllowlist.addAccounts(eq(new ArrayList<>())))
         .thenReturn(AllowlistOperationResult.ERROR_EMPTY_ENTRY);
 
     JsonRpcResponse actualResponse = method.response(request(new ArrayList<>()));
@@ -124,9 +124,8 @@ public class PermAddAccountsToAllowlistTest {
 
     final Throwable thrown = catchThrowable(() -> method.response(request));
     assertThat(thrown)
-        .hasNoCause()
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 0");
+        .hasMessage("Invalid accounts list parameter (index 0)");
   }
 
   private JsonRpcRequestContext request(final List<String> accounts) {

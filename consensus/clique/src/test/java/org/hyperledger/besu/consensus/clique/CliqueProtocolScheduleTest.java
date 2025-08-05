@@ -14,28 +14,36 @@
  */
 package org.hyperledger.besu.consensus.clique;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Java6Assertions.assertThat;
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.FRONTIER;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.config.CliqueConfigOptions;
-import org.hyperledger.besu.config.GenesisConfigFile;
+import org.hyperledger.besu.config.GenesisConfig;
 import org.hyperledger.besu.config.GenesisConfigOptions;
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
+import org.hyperledger.besu.config.JsonCliqueConfigOptions;
+import org.hyperledger.besu.consensus.common.ForkSpec;
+import org.hyperledger.besu.consensus.common.ForksSchedule;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.ethereum.chain.BadBlockManager;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.mainnet.HeaderValidationMode;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
 import org.hyperledger.besu.evm.internal.EvmConfiguration;
+import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 
 import java.time.Instant;
+import java.util.List;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class CliqueProtocolScheduleTest {
 
@@ -53,14 +61,23 @@ public class CliqueProtocolScheduleTest {
             + "\"byzantiumBlock\": 1035301}"
             + "}";
 
-    final GenesisConfigOptions config = GenesisConfigFile.fromConfig(jsonInput).getConfigOptions();
+    final GenesisConfigOptions config = GenesisConfig.fromConfig(jsonInput).getConfigOptions();
     final ProtocolSchedule protocolSchedule =
-        CliqueProtocolSchedule.create(config, NODE_KEY, false, EvmConfiguration.DEFAULT);
+        CliqueProtocolSchedule.create(
+            config,
+            new ForksSchedule<>(List.of()),
+            NODE_KEY,
+            false,
+            EvmConfiguration.DEFAULT,
+            MiningConfiguration.MINING_DISABLED,
+            new BadBlockManager(),
+            false,
+            new NoOpMetricsSystem());
 
-    final ProtocolSpec homesteadSpec = protocolSchedule.getByBlockNumber(1);
-    final ProtocolSpec tangerineWhistleSpec = protocolSchedule.getByBlockNumber(2);
-    final ProtocolSpec spuriousDragonSpec = protocolSchedule.getByBlockNumber(3);
-    final ProtocolSpec byzantiumSpec = protocolSchedule.getByBlockNumber(1035301);
+    final ProtocolSpec homesteadSpec = protocolSchedule.getByBlockHeader(blockHeader(1));
+    final ProtocolSpec tangerineWhistleSpec = protocolSchedule.getByBlockHeader(blockHeader(2));
+    final ProtocolSpec spuriousDragonSpec = protocolSchedule.getByBlockHeader(blockHeader(3));
+    final ProtocolSpec byzantiumSpec = protocolSchedule.getByBlockHeader(blockHeader(1035301));
 
     assertThat(homesteadSpec.equals(tangerineWhistleSpec)).isFalse();
     assertThat(tangerineWhistleSpec.equals(spuriousDragonSpec)).isFalse();
@@ -69,15 +86,22 @@ public class CliqueProtocolScheduleTest {
 
   @Test
   public void parametersAlignWithMainnetWithAdjustments() {
+    final ForksSchedule<CliqueConfigOptions> forksSchedule =
+        new ForksSchedule<>(List.of(new ForkSpec<>(0, JsonCliqueConfigOptions.DEFAULT)));
     final ProtocolSpec homestead =
         CliqueProtocolSchedule.create(
-                GenesisConfigFile.DEFAULT.getConfigOptions(),
+                GenesisConfig.DEFAULT.getConfigOptions(),
+                forksSchedule,
                 NODE_KEY,
                 false,
-                EvmConfiguration.DEFAULT)
-            .getByBlockNumber(0);
+                EvmConfiguration.DEFAULT,
+                MiningConfiguration.MINING_DISABLED,
+                new BadBlockManager(),
+                false,
+                new NoOpMetricsSystem())
+            .getByBlockHeader(blockHeader(0));
 
-    assertThat(homestead.getName()).isEqualTo("Frontier");
+    assertThat(homestead.getHardforkId()).isEqualTo(FRONTIER);
     assertThat(homestead.getBlockReward()).isEqualTo(Wei.ZERO);
     assertThat(homestead.isSkipZeroBlockRewards()).isEqualTo(true);
     assertThat(homestead.getDifficultyCalculator()).isInstanceOf(CliqueDifficultyCalculator.class);
@@ -85,28 +109,44 @@ public class CliqueProtocolScheduleTest {
 
   @Test
   public void zeroEpochLengthThrowsException() {
-    final CliqueConfigOptions cliqueOptions = mock(CliqueConfigOptions.class);
+    final CliqueConfigOptions cliqueOptions = mock(JsonCliqueConfigOptions.class);
     when(cliqueOptions.getEpochLength()).thenReturn(0L);
     when(genesisConfig.getCliqueConfigOptions()).thenReturn(cliqueOptions);
 
     assertThatThrownBy(
             () ->
                 CliqueProtocolSchedule.create(
-                    genesisConfig, NODE_KEY, false, EvmConfiguration.DEFAULT))
+                    genesisConfig,
+                    new ForksSchedule<>(List.of()),
+                    NODE_KEY,
+                    false,
+                    EvmConfiguration.DEFAULT,
+                    MiningConfiguration.MINING_DISABLED,
+                    new BadBlockManager(),
+                    false,
+                    new NoOpMetricsSystem()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Epoch length in config must be greater than zero");
   }
 
   @Test
   public void negativeEpochLengthThrowsException() {
-    final CliqueConfigOptions cliqueOptions = mock(CliqueConfigOptions.class);
+    final CliqueConfigOptions cliqueOptions = mock(JsonCliqueConfigOptions.class);
     when(cliqueOptions.getEpochLength()).thenReturn(-3000L);
     when(genesisConfig.getCliqueConfigOptions()).thenReturn(cliqueOptions);
 
     assertThatThrownBy(
             () ->
                 CliqueProtocolSchedule.create(
-                    genesisConfig, NODE_KEY, false, EvmConfiguration.DEFAULT))
+                    genesisConfig,
+                    new ForksSchedule<>(List.of()),
+                    NODE_KEY,
+                    false,
+                    EvmConfiguration.DEFAULT,
+                    MiningConfiguration.MINING_DISABLED,
+                    new BadBlockManager(),
+                    false,
+                    new NoOpMetricsSystem()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Epoch length in config must be greater than zero");
   }
@@ -119,9 +159,20 @@ public class CliqueProtocolScheduleTest {
     final String jsonInput =
         "{\"config\": " + "\t{\"chainId\": 1337,\n" + "\t\"londonBlock\": 2}\n" + "}";
 
-    final GenesisConfigOptions config = GenesisConfigFile.fromConfig(jsonInput).getConfigOptions();
+    final GenesisConfigOptions config = GenesisConfig.fromConfig(jsonInput).getConfigOptions();
+    final ForksSchedule<CliqueConfigOptions> forksSchedule =
+        new ForksSchedule<>(List.of(new ForkSpec<>(0, JsonCliqueConfigOptions.DEFAULT)));
     final ProtocolSchedule protocolSchedule =
-        CliqueProtocolSchedule.create(config, NODE_KEY, false, EvmConfiguration.DEFAULT);
+        CliqueProtocolSchedule.create(
+            config,
+            forksSchedule,
+            NODE_KEY,
+            false,
+            EvmConfiguration.DEFAULT,
+            MiningConfiguration.MINING_DISABLED,
+            new BadBlockManager(),
+            false,
+            new NoOpMetricsSystem());
 
     BlockHeader emptyFrontierParent =
         headerBuilder
@@ -176,8 +227,12 @@ public class CliqueProtocolScheduleTest {
       final BlockHeader parentBlockHeader) {
 
     return schedule
-        .getByBlockNumber(blockHeader.getNumber())
+        .getByBlockHeader(blockHeader)
         .getBlockHeaderValidator()
         .validateHeader(blockHeader, parentBlockHeader, null, HeaderValidationMode.LIGHT);
+  }
+
+  private BlockHeader blockHeader(final long number) {
+    return new BlockHeaderTestFixture().number(number).buildHeader();
   }
 }

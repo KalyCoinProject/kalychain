@@ -20,108 +20,167 @@ import org.hyperledger.besu.ethereum.api.graphql.GraphQLContextType;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.api.query.TransactionWithMetadata;
 import org.hyperledger.besu.ethereum.eth.transactions.PendingTransaction;
-import org.hyperledger.besu.ethereum.eth.transactions.sorter.AbstractPendingTransactionsSorter;
+import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
+import org.hyperledger.besu.ethereum.mainnet.TransactionValidationParams;
 import org.hyperledger.besu.ethereum.transaction.CallParameter;
+import org.hyperledger.besu.ethereum.transaction.ImmutableCallParameter;
 import org.hyperledger.besu.ethereum.transaction.TransactionSimulator;
-import org.hyperledger.besu.ethereum.transaction.TransactionSimulatorResult;
+import org.hyperledger.besu.evm.tracing.OperationTracer;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.OptionalLong;
 
 import graphql.schema.DataFetchingEnvironment;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.units.bigints.UInt256;
 
+/**
+ * This class represents the pending state of transactions in the Ethereum network.
+ *
+ * <p>It extends the AdapterBase class and provides methods to interact with the transaction pool.
+ */
 @SuppressWarnings("unused") // reflected by GraphQL
 public class PendingStateAdapter extends AdapterBase {
 
-  private final AbstractPendingTransactionsSorter pendingTransactions;
+  private final TransactionPool transactionPool;
 
-  public PendingStateAdapter(final AbstractPendingTransactionsSorter pendingTransactions) {
-    this.pendingTransactions = pendingTransactions;
+  /**
+   * Constructor for PendingStateAdapter.
+   *
+   * <p>It initializes the transactionPool field with the provided argument.
+   *
+   * @param transactionPool the transaction pool to be used.
+   */
+  public PendingStateAdapter(final TransactionPool transactionPool) {
+    this.transactionPool = transactionPool;
   }
 
+  /**
+   * Returns the count of transactions in the transaction pool.
+   *
+   * @return the count of transactions in the transaction pool.
+   */
   public Integer getTransactionCount() {
-    return pendingTransactions.size();
+    return transactionPool.count();
   }
 
+  /**
+   * Returns a list of TransactionAdapter objects for the transactions in the transaction pool.
+   *
+   * @return a list of TransactionAdapter objects for the transactions in the transaction pool.
+   */
   public List<TransactionAdapter> getTransactions() {
-    return pendingTransactions.getPendingTransactions().stream()
+    return transactionPool.getPendingTransactions().stream()
         .map(PendingTransaction::getTransaction)
         .map(TransactionWithMetadata::new)
-        .map(TransactionAdapter::new)
-        .collect(Collectors.toList());
+        .map(tx -> new TransactionAdapter(tx, null))
+        .toList();
   }
 
-  // until the miner can expose the current "proposed block" we have no
-  // speculative environment, so estimate against latest.
-  public Optional<AccountAdapter> getAccount(
-      final DataFetchingEnvironment dataFetchingEnvironment) {
+  /**
+   * Returns an AccountAdapter object for the account associated with the provided address.
+   *
+   * <p>The account state is estimated against the latest block.
+   *
+   * @param dataFetchingEnvironment the data fetching environment.
+   * @return an AccountAdapter object for the account associated with the provided address.
+   */
+  public AccountAdapter getAccount(final DataFetchingEnvironment dataFetchingEnvironment) {
+    // until the miner can expose the current "proposed block" we have no
+    // speculative environment, so estimate against latest.
     final BlockchainQueries blockchainQuery =
         dataFetchingEnvironment.getGraphQlContext().get(GraphQLContextType.BLOCKCHAIN_QUERIES);
     final Address addr = dataFetchingEnvironment.getArgument("address");
     final Long blockNumber = dataFetchingEnvironment.getArgument("blockNumber");
     final long latestBlockNumber = blockchainQuery.latestBlock().get().getHeader().getNumber();
     return blockchainQuery
-        .getAndMapWorldState(latestBlockNumber, ws -> ws.get(addr))
-        .map(AccountAdapter::new);
+        .getAndMapWorldState(latestBlockNumber, ws -> Optional.ofNullable(ws.get(addr)))
+        .map(AccountAdapter::new)
+        .orElseGet(() -> new AccountAdapter(null));
   }
 
-  // until the miner can expose the current "proposed block" we have no
-  // speculative environment, so estimate against latest.
+  /**
+   * Estimates the gas required for a transaction.
+   *
+   * <p>This method calls the getCall method to simulate the transaction and then retrieves the gas
+   * used by the transaction. The gas estimation is done against the latest block as there is
+   * currently no way to expose the current "proposed block" for a speculative environment.
+   *
+   * @param environment the data fetching environment.
+   * @return an Optional containing the estimated gas for the transaction, or an empty Optional if
+   *     the transaction simulation was not successful.
+   */
   public Optional<Long> getEstimateGas(final DataFetchingEnvironment environment) {
+    // until the miner can expose the current "proposed block" we have no
+    // speculative environment, so estimate against latest.
     final Optional<CallResult> result = getCall(environment);
     return result.map(CallResult::getGasUsed);
   }
 
-  // until the miner can expose the current "proposed block" we have no
-  // speculative environment, so estimate against latest.
+  /**
+   * Simulates the execution of a transaction.
+   *
+   * <p>This method retrieves the transaction parameters from the data fetching environment, creates
+   * a CallParameter object, and then uses a TransactionSimulator to simulate the execution of the
+   * transaction. The simulation is done against the latest block as there is currently no way to
+   * expose the current "proposed block" for a speculative environment.
+   *
+   * @param environment the data fetching environment.
+   * @return an Optional containing the result of the transaction simulation, or an empty Optional
+   *     if the transaction simulation was not successful.
+   */
   public Optional<CallResult> getCall(final DataFetchingEnvironment environment) {
+    // until the miner can expose the current "proposed block" we have no
+    // speculative environment, so estimate against latest.
     final Map<String, Object> callData = environment.getArgument("data");
-    final Address from = (Address) callData.get("from");
-    final Address to = (Address) callData.get("to");
-    final Long gas = (Long) callData.get("gas");
-    final UInt256 gasPrice = (UInt256) callData.get("gasPrice");
-    final UInt256 value = (UInt256) callData.get("value");
-    final Bytes data = (Bytes) callData.get("data");
+    final Optional<Address> from = Optional.ofNullable((Address) callData.get("from"));
+    final Optional<Address> to = Optional.ofNullable((Address) callData.get("to"));
+    final var gasParam = callData.get("gas");
+    final OptionalLong gas =
+        gasParam != null ? OptionalLong.of((Long) gasParam) : OptionalLong.empty();
+    final Optional<Wei> gasPrice =
+        Optional.ofNullable((UInt256) callData.get("gasPrice")).map(Wei::of);
+    final Optional<Wei> value = Optional.ofNullable((UInt256) callData.get("value")).map(Wei::of);
+    final Optional<Bytes> data = Optional.ofNullable((Bytes) callData.get("data"));
+    final Optional<Wei> maxFeePerGas =
+        Optional.ofNullable((UInt256) callData.get("maxFeePerGas")).map(Wei::of);
+    final Optional<Wei> maxPriorityFeePerGas =
+        Optional.ofNullable((UInt256) callData.get("maxPriorityFeePerGas")).map(Wei::of);
 
     final BlockchainQueries query = getBlockchainQueries(environment);
     final ProtocolSchedule protocolSchedule =
         environment.getGraphQlContext().get(GraphQLContextType.PROTOCOL_SCHEDULE);
-
     final TransactionSimulator transactionSimulator =
-        new TransactionSimulator(
-            query.getBlockchain(), query.getWorldStateArchive(), protocolSchedule);
+        environment.getGraphQlContext().get(GraphQLContextType.TRANSACTION_SIMULATOR);
 
-    long gasParam = -1;
-    Wei gasPriceParam = null;
-    Wei valueParam = null;
-    if (gas != null) {
-      gasParam = gas;
-    }
-    if (gasPrice != null) {
-      gasPriceParam = Wei.of(gasPrice);
-    }
-    if (value != null) {
-      valueParam = Wei.of(value);
-    }
-    final CallParameter param =
-        new CallParameter(from, to, gasParam, gasPriceParam, valueParam, data);
+    final CallParameter callParameters =
+        ImmutableCallParameter.builder()
+            .sender(from)
+            .to(to)
+            .gas(gas)
+            .gasPrice(gasPrice)
+            .value(value)
+            .maxPriorityFeePerGas(maxPriorityFeePerGas)
+            .maxFeePerGas(maxFeePerGas)
+            .input(data)
+            .build();
 
-    final Optional<TransactionSimulatorResult> opt = transactionSimulator.processAtHead(param);
-    if (opt.isPresent()) {
-      final TransactionSimulatorResult result = opt.get();
-      long status = 0;
-      if (result.isSuccessful()) {
-        status = 1;
-      }
-      final CallResult callResult =
-          new CallResult(status, result.getGasEstimate(), result.getOutput());
-      return Optional.of(callResult);
-    }
-    return Optional.empty();
+    return transactionSimulator.process(
+        callParameters,
+        TransactionValidationParams.transactionSimulatorAllowExceedingBalanceAndFutureNonce(),
+        OperationTracer.NO_TRACING,
+        (mutableWorldState, transactionSimulatorResult) ->
+            transactionSimulatorResult.map(
+                result -> {
+                  long status = 0;
+                  if (result.isSuccessful()) {
+                    status = 1;
+                  }
+                  return new CallResult(status, result.getGasEstimate(), result.getOutput());
+                }),
+        query.getBlockchain().getChainHeadHeader());
   }
 }

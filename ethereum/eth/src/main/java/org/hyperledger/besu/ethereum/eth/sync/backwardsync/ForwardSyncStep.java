@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,10 +14,11 @@
  */
 package org.hyperledger.besu.ethereum.eth.sync.backwardsync;
 
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.debugLambda;
-
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutorResponseCode;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutorResult;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.task.GetBodiesFromPeerTask;
 import org.hyperledger.besu.ethereum.eth.manager.task.AbstractPeerTask;
 import org.hyperledger.besu.ethereum.eth.manager.task.RetryingGetBlocksFromPeersTask;
 
@@ -52,24 +53,25 @@ public class ForwardSyncStep {
     if (blockHeaders.isEmpty()) {
       return CompletableFuture.completedFuture(null);
     } else {
-      debugLambda(
-          LOG,
-          "Requesting {} blocks {}->{} ({})",
-          blockHeaders::size,
-          () -> blockHeaders.get(0).getNumber(),
-          () -> blockHeaders.get(blockHeaders.size() - 1).getNumber(),
-          () -> blockHeaders.get(0).getHash().toHexString());
+      LOG.atDebug()
+          .setMessage("Requesting {} blocks {}->{} ({})")
+          .addArgument(blockHeaders::size)
+          .addArgument(() -> blockHeaders.getFirst().getNumber())
+          .addArgument(() -> blockHeaders.getLast().getNumber())
+          .addArgument(() -> blockHeaders.getFirst().getHash().toHexString())
+          .log();
       return requestBodies(blockHeaders)
           .thenApply(this::saveBlocks)
           .exceptionally(
               throwable -> {
                 context.halveBatchSize();
-                debugLambda(
-                    LOG,
-                    "Getting {} blocks from peers failed with reason {}, reducing batch size to {}",
-                    blockHeaders::size,
-                    throwable::getMessage,
-                    context::getBatchSize);
+                LOG.atDebug()
+                    .setMessage(
+                        "Getting {} blocks from peers failed with reason {}, reducing batch size to {}")
+                    .addArgument(blockHeaders::size)
+                    .addArgument(throwable::getMessage)
+                    .addArgument(context::getBatchSize)
+                    .log();
                 return null;
               });
     }
@@ -77,23 +79,47 @@ public class ForwardSyncStep {
 
   @VisibleForTesting
   protected CompletableFuture<List<Block>> requestBodies(final List<BlockHeader> blockHeaders) {
-    final RetryingGetBlocksFromPeersTask getBodiesFromPeerTask =
-        RetryingGetBlocksFromPeersTask.forHeaders(
-            context.getProtocolSchedule(),
-            context.getEthContext(),
-            context.getMetricsSystem(),
-            context.getEthContext().getEthPeers().peerCount(),
-            blockHeaders);
+    CompletableFuture<List<Block>> blocksFuture;
+    if (context.getSynchronizerConfiguration().isPeerTaskSystemEnabled()) {
+      blocksFuture =
+          context
+              .getEthContext()
+              .getScheduler()
+              .scheduleServiceTask(
+                  () -> {
+                    GetBodiesFromPeerTask task =
+                        new GetBodiesFromPeerTask(
+                            blockHeaders,
+                            context.getProtocolSchedule(),
+                            context.getEthContext().getEthPeers().peerCount());
+                    PeerTaskExecutorResult<List<Block>> taskResult =
+                        context.getEthContext().getPeerTaskExecutor().execute(task);
+                    if (taskResult.responseCode() == PeerTaskExecutorResponseCode.SUCCESS
+                        && taskResult.result().isPresent()) {
+                      return CompletableFuture.completedFuture(taskResult.result().get());
+                    } else {
+                      return CompletableFuture.failedFuture(
+                          new RuntimeException(taskResult.responseCode().toString()));
+                    }
+                  });
+    } else {
+      final RetryingGetBlocksFromPeersTask getBodiesFromPeerTask =
+          RetryingGetBlocksFromPeersTask.forHeaders(
+              context.getProtocolSchedule(),
+              context.getEthContext(),
+              context.getMetricsSystem(),
+              context.getEthContext().getEthPeers().peerCount(),
+              blockHeaders);
 
-    final CompletableFuture<AbstractPeerTask.PeerTaskResult<List<Block>>> run =
-        getBodiesFromPeerTask.run();
-    return run.thenApply(AbstractPeerTask.PeerTaskResult::getResult)
-        .thenApply(
-            blocks -> {
-              LOG.debug("Got {} blocks from peers", blocks.size());
-              blocks.sort(Comparator.comparing(block -> block.getHeader().getNumber()));
-              return blocks;
-            });
+      blocksFuture =
+          getBodiesFromPeerTask.run().thenApply(AbstractPeerTask.PeerTaskResult::getResult);
+    }
+    return blocksFuture.thenApply(
+        blocks -> {
+          LOG.debug("Got {} blocks from peers", blocks.size());
+          blocks.sort(Comparator.comparing(block -> block.getHeader().getNumber()));
+          return blocks;
+        });
   }
 
   @VisibleForTesting
@@ -105,20 +131,21 @@ public class ForwardSyncStep {
     }
 
     for (Block block : blocks) {
-      final Optional<Block> parent =
+      final Optional<BlockHeader> parent =
           context
               .getProtocolContext()
               .getBlockchain()
-              .getBlockByHash(block.getHeader().getParentHash());
+              .getBlockHeader(block.getHeader().getParentHash());
 
       if (parent.isEmpty()) {
         context.halveBatchSize();
-        debugLambda(
-            LOG,
-            "Parent block {} not found, while saving block {}, reducing batch size to {}",
-            block.getHeader().getParentHash()::toString,
-            block::toLogString,
-            context::getBatchSize);
+        LOG.atDebug()
+            .setMessage(
+                "Parent block {} not found, while saving block {}, reducing batch size to {}")
+            .addArgument(block.getHeader().getParentHash())
+            .addArgument(block::toLogString)
+            .addArgument(context::getBatchSize)
+            .log();
         return null;
       } else {
         context.saveBlock(block);

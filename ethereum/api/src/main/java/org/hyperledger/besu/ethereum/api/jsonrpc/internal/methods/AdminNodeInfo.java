@@ -17,12 +17,13 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 import org.hyperledger.besu.config.GenesisConfigOptions;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.chain.ChainHead;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.p2p.network.P2PNetwork;
 import org.hyperledger.besu.nat.NatService;
 import org.hyperledger.besu.nat.core.domain.NatPortMapping;
@@ -47,6 +48,7 @@ public class AdminNodeInfo implements JsonRpcMethod {
   private final P2PNetwork peerNetwork;
   private final BlockchainQueries blockchainQueries;
   private final NatService natService;
+  private final ProtocolSchedule protocolSchedule;
 
   public AdminNodeInfo(
       final String clientVersion,
@@ -54,13 +56,15 @@ public class AdminNodeInfo implements JsonRpcMethod {
       final GenesisConfigOptions genesisConfigOptions,
       final P2PNetwork peerNetwork,
       final BlockchainQueries blockchainQueries,
-      final NatService natService) {
+      final NatService natService,
+      final ProtocolSchedule protocolSchedule) {
     this.peerNetwork = peerNetwork;
     this.clientVersion = clientVersion;
     this.genesisConfigOptions = genesisConfigOptions;
     this.blockchainQueries = blockchainQueries;
     this.networkId = networkId;
     this.natService = natService;
+    this.protocolSchedule = protocolSchedule;
   }
 
   @Override
@@ -75,12 +79,12 @@ public class AdminNodeInfo implements JsonRpcMethod {
 
     if (!peerNetwork.isP2pEnabled()) {
       return new JsonRpcErrorResponse(
-          requestContext.getRequest().getId(), JsonRpcError.P2P_DISABLED);
+          requestContext.getRequest().getId(), RpcErrorType.P2P_DISABLED);
     }
     final Optional<EnodeURL> maybeEnode = peerNetwork.getLocalEnode();
     if (maybeEnode.isEmpty()) {
       return new JsonRpcErrorResponse(
-          requestContext.getRequest().getId(), JsonRpcError.P2P_NETWORK_NOT_RUNNING);
+          requestContext.getRequest().getId(), RpcErrorType.P2P_NETWORK_NOT_RUNNING);
     }
     final EnodeURL enode = maybeEnode.get();
 
@@ -125,6 +129,13 @@ public class AdminNodeInfo implements JsonRpcMethod {
                 chainHead.getHash().toString(),
                 "network",
                 networkId)));
+
+    response.put(
+        "activeFork",
+        protocolSchedule
+            .getByBlockHeader(chainHead.getBlockHeader())
+            .getHardforkId()
+            .description());
 
     return new JsonRpcSuccessResponse(requestContext.getRequest().getId(), response);
   }

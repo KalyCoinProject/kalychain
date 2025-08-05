@@ -17,7 +17,7 @@ package org.hyperledger.besu.ethereum.core;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.hyperledger.besu.datatypes.Wei;
-import org.hyperledger.besu.ethereum.mainnet.MainnetTransactionValidator;
+import org.hyperledger.besu.ethereum.mainnet.TransactionValidator;
 import org.hyperledger.besu.ethereum.mainnet.TransactionValidationParams;
 import org.hyperledger.besu.ethereum.mainnet.ValidationResult;
 import org.hyperledger.besu.ethereum.referencetests.ReferenceTestProtocolSchedules;
@@ -26,6 +26,7 @@ import org.hyperledger.besu.ethereum.rlp.RLP;
 import org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason;
 import org.hyperledger.besu.evm.gascalculator.BerlinGasCalculator;
 import org.hyperledger.besu.evm.gascalculator.ByzantiumGasCalculator;
+import org.hyperledger.besu.evm.gascalculator.CancunGasCalculator;
 import org.hyperledger.besu.evm.gascalculator.ConstantinopleGasCalculator;
 import org.hyperledger.besu.evm.gascalculator.FrontierGasCalculator;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
@@ -33,6 +34,8 @@ import org.hyperledger.besu.evm.gascalculator.HomesteadGasCalculator;
 import org.hyperledger.besu.evm.gascalculator.IstanbulGasCalculator;
 import org.hyperledger.besu.evm.gascalculator.LondonGasCalculator;
 import org.hyperledger.besu.evm.gascalculator.PetersburgGasCalculator;
+import org.hyperledger.besu.evm.gascalculator.PragueGasCalculator;
+import org.hyperledger.besu.evm.gascalculator.ShanghaiGasCalculator;
 import org.hyperledger.besu.evm.gascalculator.SpuriousDragonGasCalculator;
 import org.hyperledger.besu.evm.gascalculator.TangerineWhistleGasCalculator;
 import org.hyperledger.besu.testutil.JsonTestParameters;
@@ -47,22 +50,22 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 public class TransactionTest {
 
-  private static final ReferenceTestProtocolSchedules REFERENCE_TEST_PROTOCOL_SCHEDULES =
-      ReferenceTestProtocolSchedules.create();
-
-  private static MainnetTransactionValidator transactionValidator(final String name) {
-    return REFERENCE_TEST_PROTOCOL_SCHEDULES
+  private static TransactionValidator transactionValidator(final String name) {
+    return ReferenceTestProtocolSchedules.getInstance()
         .getByName(name)
-        .getByBlockNumber(0)
-        .getTransactionValidator();
+        .getByBlockHeader(BlockHeaderBuilder.createDefault().buildBlockHeader())
+        .getTransactionValidatorFactory()
+        .get();
   }
 
   private static final String TEST_CONFIG_FILE_DIR_PATH = "TransactionTests/";
 
   public static Stream<Arguments> getTestParametersForConfig() {
     return JsonTestParameters.create(TransactionTestCaseSpec.class)
-        .generator((name, spec, collector) -> collector.add(name, spec, true))
-        .generate(TEST_CONFIG_FILE_DIR_PATH).stream().map(params -> Arguments.of(params[0], params[1]));
+        .generator((name, fullPath, spec, collector) -> collector.add(name, fullPath, spec, true))
+        .generate(TEST_CONFIG_FILE_DIR_PATH)
+        .stream()
+        .map(params -> Arguments.of(params[0], params[1]));
   }
 
   @ParameterizedTest(name = "Name: {0}")
@@ -125,8 +128,36 @@ public class TransactionTest {
     milestone(spec, name, "London", new LondonGasCalculator(), Optional.of(Wei.of(0)));
   }
 
+  @ParameterizedTest(name = "Name: {0}")
+  @MethodSource("getTestParametersForConfig")
+  public void merge(final String name, final TransactionTestCaseSpec spec) {
+    milestone(spec, name, "Merge", new LondonGasCalculator(), Optional.of(Wei.of(0)));
+  }
+
+  @ParameterizedTest(name = "Name: {0}")
+  @MethodSource("getTestParametersForConfig")
+  public void shanghai(final String name, final TransactionTestCaseSpec spec) {
+    milestone(spec, name, "Shanghai", new ShanghaiGasCalculator(), Optional.of(Wei.of(0)));
+  }
+
+  @ParameterizedTest(name = "Name: {0}")
+  @MethodSource("getTestParametersForConfig")
+  public void cancun(final String name, final TransactionTestCaseSpec spec) {
+    milestone(spec, name, "Cancun", new CancunGasCalculator(), Optional.of(Wei.of(0)));
+  }
+
+  @ParameterizedTest(name = "Name: {0}")
+  @MethodSource("getTestParametersForConfig")
+  public void prague(final String name, final TransactionTestCaseSpec spec) {
+    milestone(spec, name, "Prague", new PragueGasCalculator(), Optional.of(Wei.of(0)));
+  }
+
   public void milestone(
-      final TransactionTestCaseSpec spec, final String name, final String milestone, final GasCalculator gasCalculator, final Optional<Wei> baseFee) {
+      final TransactionTestCaseSpec spec,
+      final String name,
+      final String milestone,
+      final GasCalculator gasCalculator,
+      final Optional<Wei> baseFee) {
 
     final TransactionTestCaseSpec.Expectation expected = spec.expectation(milestone);
 
@@ -144,7 +175,7 @@ public class TransactionTest {
       final Transaction transaction = Transaction.readFrom(RLP.input(rlp));
       final ValidationResult<TransactionInvalidReason> validation =
           transactionValidator(milestone)
-              .validate(transaction, baseFee, TransactionValidationParams.processingBlock());
+              .validate(transaction, baseFee, Optional.empty(), TransactionValidationParams.processingBlock());
       if (!validation.isValid()) {
         throw new RuntimeException(
             String.format(
@@ -161,10 +192,10 @@ public class TransactionTest {
 
       assertThat(transaction.getSender()).isEqualTo(expected.getSender());
       assertThat(transaction.getHash()).isEqualTo(expected.getHash());
-      final long intrinsicGasCost =
-          gasCalculator.transactionIntrinsicGasCost(
-                  transaction.getPayload(), transaction.isContractCreation())
-              + (transaction.getAccessList().map(gasCalculator::accessListGasCost).orElse(0L));
+      final long baselineGas =
+        transaction.getAccessList().map(gasCalculator::accessListGasCost).orElse(0L) +
+          gasCalculator.delegateCodeGasCost(transaction.codeDelegationListSize());
+      final long intrinsicGasCost = gasCalculator.transactionIntrinsicGasCost(transaction, baselineGas);
       assertThat(intrinsicGasCost).isEqualTo(expected.getIntrinsicGas());
     } catch (final Exception e) {
       if (expected.isSucceeds()) {

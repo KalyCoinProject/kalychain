@@ -11,12 +11,11 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.tests.acceptance.crypto;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assumptions.assumeThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import org.hyperledger.besu.crypto.KeyPair;
 import org.hyperledger.besu.crypto.SECP256R1;
@@ -32,8 +31,9 @@ import org.hyperledger.besu.tests.acceptance.dsl.node.cluster.ClusterConfigurati
 import java.util.List;
 
 import org.apache.tuweni.bytes.Bytes32;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class SECP256R1AcceptanceTest extends AcceptanceTestBase {
   private Node minerNode;
@@ -49,7 +49,7 @@ public class SECP256R1AcceptanceTest extends AcceptanceTestBase {
 
   private static final SECP256R1 SECP256R1_SIGNATURE_ALGORITHM = new SECP256R1();
 
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
     KeyPair minerNodeKeyPair = createKeyPair(MINER_NODE_PRIVATE_KEY);
     KeyPair otherNodeKeyPair = createKeyPair(OTHER_NODE_PRIVATE_KEY);
@@ -60,13 +60,19 @@ public class SECP256R1AcceptanceTest extends AcceptanceTestBase {
 
     minerNode =
         besu.createNodeWithNonDefaultSignatureAlgorithm(
-            "minerNode", GENESIS_FILE, minerNodeKeyPair);
+            "minerNode", GENESIS_FILE, minerNodeKeyPair, List.of());
     noDiscoveryCluster.start(minerNode);
 
     otherNode =
         besu.createNodeWithNonDefaultSignatureAlgorithm(
             "otherNode", GENESIS_FILE, otherNodeKeyPair, List.of(minerNode));
     noDiscoveryCluster.addNode(otherNode);
+
+    minerNode.verify(net.awaitPeerCount(1));
+    otherNode.verify(net.awaitPeerCount(1));
+
+    final var minerChainHead = minerNode.execute(ethTransactions.block());
+    otherNode.verify(blockchain.minimumHeight(minerChainHead.getNumber().longValue()));
   }
 
   @Test
@@ -75,7 +81,7 @@ public class SECP256R1AcceptanceTest extends AcceptanceTestBase {
     // the signature algorithm instance to SECP256R1 as it could influence other tests running at
     // the same time. So we only execute the test when ProcessBesuNodeRunner is used, as there is
     // not conflict because we use separate processes.
-    assumeThat(BesuNodeRunner.isProcessBesuNodeRunner()).isTrue();
+    assumeTrue(BesuNodeRunner.isProcessBesuNodeRunner());
 
     minerNode.verify(net.awaitPeerCount(1));
     otherNode.verify(net.awaitPeerCount(1));
@@ -88,6 +94,7 @@ public class SECP256R1AcceptanceTest extends AcceptanceTestBase {
     noDiscoveryCluster.verify(recipient.balanceEquals(5));
   }
 
+  @AfterEach
   @Override
   public void tearDownAcceptanceTestBase() {
     super.tearDownAcceptanceTestBase();

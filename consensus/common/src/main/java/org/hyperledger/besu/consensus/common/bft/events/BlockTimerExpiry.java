@@ -38,7 +38,12 @@ public final class BlockTimerExpiry implements BftEvent {
     return BftEvents.Type.BLOCK_TIMER_EXPIRY;
   }
 
-  public ConsensusRoundIdentifier getRoundIndentifier() {
+  /**
+   * Gets round identifier.
+   *
+   * @return the round Identifier
+   */
+  public ConsensusRoundIdentifier getRoundIdentifier() {
     return roundIdentifier;
   }
 

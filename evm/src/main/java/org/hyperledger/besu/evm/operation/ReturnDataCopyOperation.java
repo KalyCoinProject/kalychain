@@ -23,15 +23,24 @@ import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
 import org.apache.tuweni.bytes.Bytes;
 
+/** The Return data copy operation. */
 public class ReturnDataCopyOperation extends AbstractOperation {
 
+  /** The constant INVALID_RETURN_DATA_BUFFER_ACCESS. */
   protected static final OperationResult INVALID_RETURN_DATA_BUFFER_ACCESS =
       new OperationResult(0L, ExceptionalHaltReason.INVALID_RETURN_DATA_BUFFER_ACCESS);
+
+  /** The constant OUT_OF_BOUNDS. */
   protected static final OperationResult OUT_OF_BOUNDS =
       new OperationResult(0L, ExceptionalHaltReason.OUT_OF_BOUNDS);
 
+  /**
+   * Instantiates a new Return data copy operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public ReturnDataCopyOperation(final GasCalculator gasCalculator) {
-    super(0x3E, "RETURNDATACOPY", 3, 0, 1, gasCalculator);
+    super(0x3E, "RETURNDATACOPY", 3, 0, gasCalculator);
   }
 
   @Override
@@ -42,13 +51,15 @@ public class ReturnDataCopyOperation extends AbstractOperation {
     final Bytes returnData = frame.getReturnData();
     final int returnDataLength = returnData.size();
 
-    try {
-      final long end = Math.addExact(sourceOffset, numBytes);
-      if (end > returnDataLength) {
-        return INVALID_RETURN_DATA_BUFFER_ACCESS;
+    if (frame.getCode().getEofVersion() < 1) {
+      try {
+        final long end = Math.addExact(sourceOffset, numBytes);
+        if (end > returnDataLength) {
+          return INVALID_RETURN_DATA_BUFFER_ACCESS;
+        }
+      } catch (final ArithmeticException ae) {
+        return OUT_OF_BOUNDS;
       }
-    } catch (final ArithmeticException ae) {
-      return OUT_OF_BOUNDS;
     }
 
     final long cost = gasCalculator().dataCopyOperationGasCost(frame, memOffset, numBytes);

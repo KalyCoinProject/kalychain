@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,12 +18,16 @@ import static java.util.Collections.emptyMap;
 import static org.slf4j.LoggerFactory.getLogger;
 
 import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.eth.SnapProtocol;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
+import org.hyperledger.besu.ethereum.eth.manager.PeerRequest;
 import org.hyperledger.besu.ethereum.eth.manager.PendingPeerRequest;
+import org.hyperledger.besu.ethereum.eth.manager.RequestManager;
 import org.hyperledger.besu.ethereum.eth.manager.task.AbstractPeerRequestTask;
 import org.hyperledger.besu.ethereum.eth.messages.snap.SnapV1;
 import org.hyperledger.besu.ethereum.eth.messages.snap.TrieNodesMessage;
+import org.hyperledger.besu.ethereum.p2p.rlpx.connections.PeerConnection;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MessageData;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 
@@ -50,7 +54,7 @@ public class GetTrieNodeFromPeerTask extends AbstractPeerRequestTask<Map<Bytes, 
       final List<List<Bytes>> paths,
       final BlockHeader blockHeader,
       final MetricsSystem metricsSystem) {
-    super(ethContext, SnapV1.TRIE_NODES, metricsSystem);
+    super(ethContext, SnapProtocol.NAME, SnapV1.TRIE_NODES, metricsSystem);
     this.paths = paths;
     this.blockHeader = blockHeader;
   }
@@ -72,9 +76,31 @@ public class GetTrieNodeFromPeerTask extends AbstractPeerRequestTask<Map<Bytes, 
   @Override
   protected PendingPeerRequest sendRequest() {
     return sendRequestToPeer(
-        peer -> {
-          LOG.trace("Requesting {} trie nodes from peer {}", paths.size(), peer);
-          return peer.getSnapTrieNode(blockHeader.getStateRoot(), paths);
+        new PeerRequest() {
+          @Override
+          public RequestManager.ResponseStream sendRequest(final EthPeer peer)
+              throws PeerConnection.PeerNotConnected {
+            LOG.atTrace()
+                .setMessage("Requesting {} trie nodes from peer {}")
+                .addArgument(paths.size())
+                .addArgument(peer)
+                .log();
+            if (!peer.isServingSnap()) {
+              LOG.debug(
+                  "EthPeer that is not serving snap called in {}, {}",
+                  GetAccountRangeFromPeerTask.class,
+                  peer);
+              throw new RuntimeException(
+                  "EthPeer that is not serving snap called in "
+                      + GetAccountRangeFromPeerTask.class);
+            }
+            return peer.getSnapTrieNode(blockHeader.getStateRoot(), paths);
+          }
+
+          @Override
+          public boolean isEthPeerSuitable(final EthPeer ethPeer) {
+            return ethPeer.isServingSnap();
+          }
         },
         blockHeader.getNumber());
   }

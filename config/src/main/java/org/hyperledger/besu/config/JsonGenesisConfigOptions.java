@@ -17,27 +17,28 @@ package org.hyperledger.besu.config;
 import static java.util.Collections.emptyMap;
 import static java.util.Objects.isNull;
 
+import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
 
 import java.math.BigInteger;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.TreeMap;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.ImmutableMap;
 import org.apache.tuweni.units.bigints.UInt256;
 
+/** The Json genesis config options. */
 public class JsonGenesisConfigOptions implements GenesisConfigOptions {
 
   private static final String ETHASH_CONFIG_KEY = "ethash";
-  private static final String KECCAK256_CONFIG_KEY = "keccak256";
   private static final String IBFT_LEGACY_CONFIG_KEY = "ibft";
   private static final String IBFT2_CONFIG_KEY = "ibft2";
   private static final String QBFT_CONFIG_KEY = "qbft";
@@ -46,16 +47,36 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   private static final String TRANSITIONS_CONFIG_KEY = "transitions";
   private static final String DISCOVERY_CONFIG_KEY = "discovery";
   private static final String CHECKPOINT_CONFIG_KEY = "checkpoint";
+  private static final String BLOB_SCHEDULE_CONFIG_KEY = "blobschedule";
   private static final String ZERO_BASE_FEE_KEY = "zerobasefee";
+  private static final String FIXED_BASE_FEE_KEY = "fixedbasefee";
+  private static final String WITHDRAWAL_REQUEST_CONTRACT_ADDRESS_KEY =
+      "withdrawalrequestcontractaddress";
+  private static final String DEPOSIT_CONTRACT_ADDRESS_KEY = "depositcontractaddress";
+  private static final String CONSOLIDATION_REQUEST_CONTRACT_ADDRESS_KEY =
+      "consolidationrequestcontractaddress";
 
   private final ObjectNode configRoot;
   private final Map<String, String> configOverrides = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
   private final TransitionsConfigOptions transitions;
 
+  /**
+   * From json object json genesis config options.
+   *
+   * @param configRoot the config root
+   * @return the json genesis config options
+   */
   public static JsonGenesisConfigOptions fromJsonObject(final ObjectNode configRoot) {
     return fromJsonObjectWithOverrides(configRoot, emptyMap());
   }
 
+  /**
+   * From json object with overrides json genesis config options.
+   *
+   * @param configRoot the config root
+   * @param configOverrides the config overrides
+   * @return the json genesis config options
+   */
   static JsonGenesisConfigOptions fromJsonObjectWithOverrides(
       final ObjectNode configRoot, final Map<String, String> configOverrides) {
     final TransitionsConfigOptions transitionsConfigOptions;
@@ -73,6 +94,13 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
     return new TransitionsConfigOptions(transitionsNode.get());
   }
 
+  /**
+   * Instantiates a new Json genesis config options.
+   *
+   * @param maybeConfig the optional config
+   * @param configOverrides the config overrides map
+   * @param transitionsConfig the transitions configuration
+   */
   JsonGenesisConfigOptions(
       final ObjectNode maybeConfig,
       final Map<String, String> configOverrides,
@@ -88,8 +116,6 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   public String getConsensusEngine() {
     if (isEthHash()) {
       return ETHASH_CONFIG_KEY;
-    } else if (isKeccak256()) {
-      return KECCAK256_CONFIG_KEY;
     } else if (isIbft2()) {
       return IBFT2_CONFIG_KEY;
     } else if (isIbftLegacy()) {
@@ -106,11 +132,6 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   @Override
   public boolean isEthHash() {
     return configRoot.has(ETHASH_CONFIG_KEY);
-  }
-
-  @Override
-  public boolean isKeccak256() {
-    return configRoot.has(KECCAK256_CONFIG_KEY);
   }
 
   @Override
@@ -131,6 +152,11 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   @Override
   public boolean isQbft() {
     return configRoot.has(QBFT_CONFIG_KEY);
+  }
+
+  @Override
+  public boolean isPoa() {
+    return isQbft() || isClique() || isIbft2() || isIbftLegacy();
   }
 
   @Override
@@ -170,10 +196,10 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   }
 
   @Override
-  public CliqueConfigOptions getCliqueConfigOptions() {
+  public JsonCliqueConfigOptions getCliqueConfigOptions() {
     return JsonUtil.getObjectNode(configRoot, CLIQUE_CONFIG_KEY)
-        .map(CliqueConfigOptions::new)
-        .orElse(CliqueConfigOptions.DEFAULT);
+        .map(JsonCliqueConfigOptions::new)
+        .orElse(JsonCliqueConfigOptions.DEFAULT);
   }
 
   @Override
@@ -184,10 +210,9 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   }
 
   @Override
-  public Keccak256ConfigOptions getKeccak256ConfigOptions() {
-    return JsonUtil.getObjectNode(configRoot, KECCAK256_CONFIG_KEY)
-        .map(Keccak256ConfigOptions::new)
-        .orElse(Keccak256ConfigOptions.DEFAULT);
+  public Optional<BlobScheduleOptions> getBlobScheduleOptions() {
+    return JsonUtil.getObjectNode(configRoot, BLOB_SCHEDULE_CONFIG_KEY)
+        .map(BlobScheduleOptions::new);
   }
 
   @Override
@@ -279,16 +304,68 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   }
 
   @Override
-  public OptionalLong getShandongBlockNumber() {
-    return getOptionalLong("shandongblock");
+  public OptionalLong getShanghaiTime() {
+    return getOptionalLong("shanghaitime");
+  }
+
+  @Override
+  public OptionalLong getCancunEOFTime() {
+    return getOptionalLong("cancuneoftime");
+  }
+
+  @Override
+  public OptionalLong getCancunTime() {
+    return getOptionalLong("cancuntime");
+  }
+
+  @Override
+  public OptionalLong getPragueTime() {
+    return getOptionalLong("praguetime");
+  }
+
+  @Override
+  public OptionalLong getOsakaTime() {
+    return getOptionalLong("osakatime");
+  }
+
+  @Override
+  public OptionalLong getBpo1Time() {
+    return getOptionalLong("bpo1time");
+  }
+
+  @Override
+  public OptionalLong getBpo2Time() {
+    return getOptionalLong("bpo2time");
+  }
+
+  @Override
+  public OptionalLong getBpo3Time() {
+    return getOptionalLong("bpo3time");
+  }
+
+  @Override
+  public OptionalLong getBpo4Time() {
+    return getOptionalLong("bpo4time");
+  }
+
+  @Override
+  public OptionalLong getBpo5Time() {
+    return getOptionalLong("bpo5time");
+  }
+
+  @Override
+  public OptionalLong getFutureEipsTime() {
+    return getOptionalLong("futureeipstime");
+  }
+
+  @Override
+  public OptionalLong getExperimentalEipsTime() {
+    return getOptionalLong("experimentaleipstime");
   }
 
   @Override
   public Optional<Wei> getBaseFeePerGas() {
-    return Optional.ofNullable(configOverrides.get("baseFeePerGas"))
-        .map(Wei::fromHexString)
-        .map(Optional::of)
-        .orElse(Optional.empty());
+    return Optional.ofNullable(configOverrides.get("baseFeePerGas")).map(Wei::fromHexString);
   }
 
   @Override
@@ -362,8 +439,8 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   }
 
   @Override
-  public OptionalLong getEcip1049BlockNumber() {
-    return getOptionalLong("ecip1049block");
+  public OptionalLong getSpiralBlockNumber() {
+    return getOptionalLong("spiralblock");
   }
 
   @Override
@@ -387,20 +464,8 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   }
 
   @Override
-  public boolean isQuorum() {
-    return getOptionalBoolean("isquorum").orElse(false);
-  }
-
-  @Override
-  public OptionalLong getQip714BlockNumber() {
-    return getOptionalLong("qip714block");
-  }
-
-  @Override
   public PowAlgorithm getPowAlgorithm() {
-    return isEthHash()
-        ? PowAlgorithm.ETHASH
-        : isKeccak256() ? PowAlgorithm.KECCAK256 : PowAlgorithm.UNSUPPORTED;
+    return isEthHash() ? PowAlgorithm.ETHASH : PowAlgorithm.UNSUPPORTED;
   }
 
   @Override
@@ -411,6 +476,31 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   @Override
   public boolean isZeroBaseFee() {
     return getOptionalBoolean(ZERO_BASE_FEE_KEY).orElse(false);
+  }
+
+  @Override
+  public boolean isFixedBaseFee() {
+    return getOptionalBoolean(FIXED_BASE_FEE_KEY).orElse(false);
+  }
+
+  @Override
+  public Optional<Address> getWithdrawalRequestContractAddress() {
+    Optional<String> inputAddress =
+        JsonUtil.getString(configRoot, WITHDRAWAL_REQUEST_CONTRACT_ADDRESS_KEY);
+    return inputAddress.map(Address::fromHexString);
+  }
+
+  @Override
+  public Optional<Address> getDepositContractAddress() {
+    Optional<String> inputAddress = JsonUtil.getString(configRoot, DEPOSIT_CONTRACT_ADDRESS_KEY);
+    return inputAddress.map(Address::fromHexString);
+  }
+
+  @Override
+  public Optional<Address> getConsolidationRequestContractAddress() {
+    Optional<String> inputAddress =
+        JsonUtil.getString(configRoot, CONSOLIDATION_REQUEST_CONTRACT_ADDRESS_KEY);
+    return inputAddress.map(Address::fromHexString);
   }
 
   @Override
@@ -433,9 +523,20 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
     getArrowGlacierBlockNumber().ifPresent(l -> builder.put("arrowGlacierBlock", l));
     getGrayGlacierBlockNumber().ifPresent(l -> builder.put("grayGlacierBlock", l));
     getMergeNetSplitBlockNumber().ifPresent(l -> builder.put("mergeNetSplitBlock", l));
-    getShandongBlockNumber().ifPresent(l -> builder.put("shandongBlock", l));
+    getShanghaiTime().ifPresent(l -> builder.put("shanghaiTime", l));
+    getCancunTime().ifPresent(l -> builder.put("cancunTime", l));
+    getCancunEOFTime().ifPresent(l -> builder.put("cancunEOFTime", l));
+    getPragueTime().ifPresent(l -> builder.put("pragueTime", l));
+    getOsakaTime().ifPresent(l -> builder.put("osakaTime", l));
+    getBpo1Time().ifPresent(l -> builder.put("bpo1Time", l));
+    getBpo2Time().ifPresent(l -> builder.put("bpo2Time", l));
+    getBpo3Time().ifPresent(l -> builder.put("bpo3Time", l));
+    getBpo4Time().ifPresent(l -> builder.put("bpo4Time", l));
+    getBpo5Time().ifPresent(l -> builder.put("bpo5Time", l));
     getTerminalBlockNumber().ifPresent(l -> builder.put("terminalBlockNumber", l));
     getTerminalBlockHash().ifPresent(h -> builder.put("terminalBlockHash", h.toHexString()));
+    getFutureEipsTime().ifPresent(l -> builder.put("futureEipsTime", l));
+    getExperimentalEipsTime().ifPresent(l -> builder.put("experimentalEipsTime", l));
 
     // classic fork blocks
     getClassicForkBlock().ifPresent(l -> builder.put("classicForkBlock", l));
@@ -449,20 +550,23 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
     getThanosBlockNumber().ifPresent(l -> builder.put("thanosBlock", l));
     getMagnetoBlockNumber().ifPresent(l -> builder.put("magnetoBlock", l));
     getMystiqueBlockNumber().ifPresent(l -> builder.put("mystiqueBlock", l));
-    getEcip1049BlockNumber().ifPresent(l -> builder.put("ecip1049Block", l));
+    getSpiralBlockNumber().ifPresent(l -> builder.put("spiralBlock", l));
 
     getContractSizeLimit().ifPresent(l -> builder.put("contractSizeLimit", l));
     getEvmStackSize().ifPresent(l -> builder.put("evmstacksize", l));
     getEcip1017EraRounds().ifPresent(l -> builder.put("ecip1017EraRounds", l));
+
+    getWithdrawalRequestContractAddress()
+        .ifPresent(l -> builder.put("withdrawalRequestContractAddress", l));
+    getDepositContractAddress().ifPresent(l -> builder.put("depositContractAddress", l));
+    getConsolidationRequestContractAddress()
+        .ifPresent(l -> builder.put("consolidationRequestContractAddress", l));
 
     if (isClique()) {
       builder.put("clique", getCliqueConfigOptions().asMap());
     }
     if (isEthHash()) {
       builder.put("ethash", getEthashConfigOptions().asMap());
-    }
-    if (isKeccak256()) {
-      builder.put("keccak256", getKeccak256ConfigOptions().asMap());
     }
     if (isIbftLegacy()) {
       builder.put("ibft", getIbftLegacyConfigOptions().asMap());
@@ -474,13 +578,16 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
       builder.put("qbft", getQbftConfigOptions().asMap());
     }
 
-    if (isQuorum()) {
-      builder.put("isQuorum", true);
-      getQip714BlockNumber().ifPresent(blockNumber -> builder.put("qip714block", blockNumber));
-    }
-
     if (isZeroBaseFee()) {
       builder.put("zeroBaseFee", true);
+    }
+
+    if (isFixedBaseFee()) {
+      builder.put("fixedBaseFee", true);
+    }
+
+    if (getBlobScheduleOptions().isPresent()) {
+      builder.put("blobSchedule", getBlobScheduleOptions().get().asMap());
     }
 
     return builder.build();
@@ -540,7 +647,7 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   }
 
   @Override
-  public List<Long> getForks() {
+  public List<Long> getForkBlockNumbers() {
     Stream<OptionalLong> forkBlockNumbers =
         Stream.of(
             getHomesteadBlockNumber(),
@@ -557,7 +664,6 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
             getArrowGlacierBlockNumber(),
             getGrayGlacierBlockNumber(),
             getMergeNetSplitBlockNumber(),
-            getShandongBlockNumber(),
             getEcip1015BlockNumber(),
             getDieHardBlockNumber(),
             getGothamBlockNumber(),
@@ -568,7 +674,7 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
             getThanosBlockNumber(),
             getMagnetoBlockNumber(),
             getMystiqueBlockNumber(),
-            getEcip1049BlockNumber());
+            getSpiralBlockNumber());
     // when adding forks add an entry to ${REPO_ROOT}/config/src/test/resources/all_forks.json
 
     return forkBlockNumbers
@@ -576,6 +682,46 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
         .map(OptionalLong::getAsLong)
         .distinct()
         .sorted()
-        .collect(Collectors.toList());
+        .toList();
+  }
+
+  @Override
+  public List<Long> getForkBlockTimestamps() {
+    Stream<OptionalLong> forkBlockTimestamps =
+        Stream.of(
+            getShanghaiTime(),
+            getCancunTime(),
+            getCancunEOFTime(),
+            getPragueTime(),
+            getOsakaTime(),
+            getBpo1Time(),
+            getBpo2Time(),
+            getBpo3Time(),
+            getBpo4Time(),
+            getBpo5Time(),
+            getFutureEipsTime(),
+            getExperimentalEipsTime());
+    // when adding forks add an entry to ${REPO_ROOT}/config/src/test/resources/all_forks.json
+
+    return forkBlockTimestamps
+        .filter(OptionalLong::isPresent)
+        .map(OptionalLong::getAsLong)
+        .distinct()
+        .sorted()
+        .toList();
+  }
+
+  @Override
+  public boolean equals(final Object o) {
+    if (this == o) return true;
+    if (o == null || getClass() != o.getClass()) return false;
+    final JsonGenesisConfigOptions that = (JsonGenesisConfigOptions) o;
+    return Objects.equals(configRoot, that.configRoot)
+        && Objects.equals(configOverrides, that.configOverrides);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(configRoot, configOverrides);
   }
 }

@@ -11,29 +11,63 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.ethereum.worldstate;
+
+import org.hyperledger.besu.ethereum.worldstate.PathBasedExtraStorageConfiguration.PathBasedUnstable;
+import org.hyperledger.besu.plugin.services.storage.DataStorageFormat;
 
 import org.immutables.value.Value;
 
 @Value.Immutable
+@Value.Enclosing
 public interface DataStorageConfiguration {
 
-  long DEFAULT_BONSAI_MAX_LAYERS_TO_LOAD = 512;
-  boolean DEFAULT_BONSAI_USE_SNAPSHOTS = false;
+  boolean DEFAULT_RECEIPT_COMPACTION_ENABLED = true;
+  boolean DEFAULT_HISTORY_EXPIRY_PRUNE_ENABLED = false;
 
   DataStorageConfiguration DEFAULT_CONFIG =
       ImmutableDataStorageConfiguration.builder()
+          .dataStorageFormat(DataStorageFormat.BONSAI)
+          .pathBasedExtraStorageConfiguration(PathBasedExtraStorageConfiguration.DEFAULT)
+          .build();
+
+  DataStorageConfiguration DEFAULT_BONSAI_CONFIG = DEFAULT_CONFIG;
+
+  DataStorageConfiguration DEFAULT_BONSAI_ARCHIVE_CONFIG =
+      ImmutableDataStorageConfiguration.builder()
+          .dataStorageFormat(DataStorageFormat.X_BONSAI_ARCHIVE)
+          .build();
+
+  DataStorageConfiguration DEFAULT_BONSAI_PARTIAL_DB_CONFIG =
+      ImmutableDataStorageConfiguration.builder()
+          .dataStorageFormat(DataStorageFormat.BONSAI)
+          .pathBasedExtraStorageConfiguration(
+              ImmutablePathBasedExtraStorageConfiguration.builder()
+                  .unstable(PathBasedUnstable.PARTIAL_MODE)
+                  .build())
+          .build();
+
+  DataStorageConfiguration DEFAULT_FOREST_CONFIG =
+      ImmutableDataStorageConfiguration.builder()
           .dataStorageFormat(DataStorageFormat.FOREST)
-          .bonsaiMaxLayersToLoad(DEFAULT_BONSAI_MAX_LAYERS_TO_LOAD)
-          .useBonsaiSnapshots(DEFAULT_BONSAI_USE_SNAPSHOTS)
+          .pathBasedExtraStorageConfiguration(PathBasedExtraStorageConfiguration.DISABLED)
           .build();
 
   DataStorageFormat getDataStorageFormat();
 
-  Long getBonsaiMaxLayersToLoad();
+  @Value.Default
+  default PathBasedExtraStorageConfiguration getPathBasedExtraStorageConfiguration() {
+    return PathBasedExtraStorageConfiguration.DEFAULT;
+  }
 
-  Boolean useBonsaiSnapshots();
+  @Value.Default
+  default boolean getReceiptCompactionEnabled() {
+    return DEFAULT_RECEIPT_COMPACTION_ENABLED;
+  }
+
+  @Value.Default
+  default boolean getHistoryExpiryPruneEnabled() {
+    return DEFAULT_HISTORY_EXPIRY_PRUNE_ENABLED;
+  }
 }

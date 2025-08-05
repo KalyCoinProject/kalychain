@@ -11,9 +11,7 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.tests.acceptance;
 
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
@@ -29,13 +27,13 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import com.google.common.base.Charsets;
 import com.google.common.io.Resources;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
@@ -43,21 +41,14 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 import org.apache.commons.compress.utils.IOUtils;
 
 public class AbstractPreexistingNodeTest extends AcceptanceTestBase {
-  protected final String testName;
-  protected final String dataPath;
   protected Path hostDataPath;
-
-  public AbstractPreexistingNodeTest(final String testName, final String dataPath) {
-    this.testName = testName;
-    this.dataPath = dataPath;
-  }
 
   protected static void extract(final Path path, final String destDirectory) throws IOException {
     try (final TarArchiveInputStream fin =
         new TarArchiveInputStream(
             new GzipCompressorInputStream(new FileInputStream(path.toAbsolutePath().toString())))) {
       TarArchiveEntry entry;
-      while ((entry = fin.getNextTarEntry()) != null) {
+      while ((entry = fin.getNextEntry()) != null) {
         if (entry.isDirectory()) {
           continue;
         }
@@ -84,7 +75,7 @@ public class AbstractPreexistingNodeTest extends AcceptanceTestBase {
   private String getGenesisConfiguration() {
     try {
       return Resources.toString(
-          hostDataPath.resolve("genesis.json").toUri().toURL(), Charsets.UTF_8);
+          hostDataPath.resolve("genesis.json").toUri().toURL(), StandardCharsets.UTF_8);
     } catch (final IOException e) {
       throw new RuntimeException(e);
     }

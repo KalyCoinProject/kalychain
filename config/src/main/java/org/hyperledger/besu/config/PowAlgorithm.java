@@ -16,10 +16,17 @@ package org.hyperledger.besu.config;
 
 /** An enumeration of supported Proof-of-work algorithms. */
 public enum PowAlgorithm {
+  /** Unsupported pow algorithm. */
   UNSUPPORTED,
-  ETHASH,
-  KECCAK256;
+  /** Ethash pow algorithm. */
+  ETHASH;
 
+  /**
+   * From string pow algorithm.
+   *
+   * @param str pow algorithm as string
+   * @return the pow algorithm interface. null if not valid enum.
+   */
   public static PowAlgorithm fromString(final String str) {
     for (final PowAlgorithm powAlgorithm : PowAlgorithm.values()) {
       if (powAlgorithm.name().equalsIgnoreCase(str)) {

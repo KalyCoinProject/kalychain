@@ -1,5 +1,4 @@
 /*
- *
  * Copyright ConsenSys AG.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
@@ -12,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.ethereum.api.tls;
 
@@ -22,17 +20,16 @@ import java.nio.file.Path;
 import java.util.List;
 
 import org.assertj.core.api.Assertions;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 public class FileBasedPasswordProviderTest {
 
-  @Rule public final TemporaryFolder folder = new TemporaryFolder();
+  @TempDir private Path folder;
 
   @Test
   public void passwordCanBeReadFromFile() throws IOException {
-    final Path passwordFile = folder.newFile().toPath();
+    final Path passwordFile = folder.resolve("pass1");
     Files.write(passwordFile, List.of("line1", "line2"));
 
     final String password = new FileBasedPasswordProvider(passwordFile).get();
@@ -41,7 +38,7 @@ public class FileBasedPasswordProviderTest {
 
   @Test
   public void exceptionRaisedFromReadingEmptyFile() throws IOException {
-    final Path passwordFile = folder.newFile().toPath();
+    final Path passwordFile = folder.resolve("pass2");
     Files.write(passwordFile, new byte[0]);
 
     Assertions.assertThatExceptionOfType(TlsConfigurationException.class)

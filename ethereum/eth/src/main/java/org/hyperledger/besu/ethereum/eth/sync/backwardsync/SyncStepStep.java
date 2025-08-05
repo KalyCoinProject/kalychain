@@ -1,6 +1,5 @@
 /*
- *
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -12,12 +11,9 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.ethereum.eth.sync.backwardsync;
 
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.debugLambda;
 import static org.slf4j.LoggerFactory.getLogger;
 
 import org.hyperledger.besu.datatypes.Hash;
@@ -49,11 +45,12 @@ public class SyncStepStep {
   }
 
   private CompletableFuture<Block> requestBlock(final Hash targetHash) {
-    debugLambda(LOG, "Fetching block by hash {} from peers", targetHash::toString);
+    LOG.atDebug().setMessage("Fetching block by hash {} from peers").addArgument(targetHash).log();
     final RetryingGetBlockFromPeersTask getBlockTask =
         RetryingGetBlockFromPeersTask.create(
             context.getProtocolSchedule(),
             context.getEthContext(),
+            context.getSynchronizerConfiguration(),
             context.getMetricsSystem(),
             context.getEthContext().getEthPeers().peerCount(),
             Optional.of(targetHash),
@@ -66,7 +63,7 @@ public class SyncStepStep {
   }
 
   private Block saveBlock(final Block block) {
-    debugLambda(LOG, "Appending fetched block {}", block::toLogString);
+    LOG.atDebug().setMessage("Appending fetched block {}").addArgument(block::toLogString).log();
     backwardChain.appendTrustedBlock(block);
     return block;
   }

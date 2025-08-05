@@ -27,12 +27,12 @@ import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeers;
 import org.hyperledger.besu.ethereum.p2p.rlpx.connections.PeerConnection;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class EthSynchronizerUpdaterTest {
 
   @Mock private EthPeers ethPeers;
@@ -42,7 +42,7 @@ public class EthSynchronizerUpdaterTest {
 
   @Test
   public void ethPeerIsMissingResultInNoUpdate() {
-    when(ethPeers.peer(any())).thenReturn(null);
+    when(ethPeers.peer(any(PeerConnection.class))).thenReturn(null);
 
     final EthSynchronizerUpdater updater = new EthSynchronizerUpdater(ethPeers);
 
@@ -53,7 +53,7 @@ public class EthSynchronizerUpdaterTest {
 
   @Test
   public void chainStateUpdateIsAttemptedIfEthPeerExists() {
-    when(ethPeers.peer(any())).thenReturn(ethPeer);
+    when(ethPeers.peer(any(PeerConnection.class))).thenReturn(ethPeer);
     when(ethPeer.chainState()).thenReturn(chainState);
 
     final EthSynchronizerUpdater updater = new EthSynchronizerUpdater(ethPeers);

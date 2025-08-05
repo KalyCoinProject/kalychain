@@ -14,15 +14,16 @@
  */
 package org.hyperledger.besu.consensus.ibftlegacy;
 
-import static org.hyperledger.besu.consensus.ibftlegacy.IbftBlockHeaderValidationRulesetFactory.ibftBlockHeaderValidator;
+import static org.hyperledger.besu.consensus.ibftlegacy.IbftBlockHeaderValidationRulesetFactory.ibftBlockHeaderValidatorBuilder;
 
 import org.hyperledger.besu.config.GenesisConfigOptions;
 import org.hyperledger.besu.config.IbftLegacyConfigOptions;
+import org.hyperledger.besu.consensus.common.bft.BftBlockHeaderFunctions;
 import org.hyperledger.besu.datatypes.Wei;
-import org.hyperledger.besu.ethereum.core.PrivacyParameters;
+import org.hyperledger.besu.ethereum.MainnetBlockValidatorBuilder;
+import org.hyperledger.besu.ethereum.chain.BadBlockManager;
 import org.hyperledger.besu.ethereum.mainnet.MainnetBlockBodyValidator;
 import org.hyperledger.besu.ethereum.mainnet.MainnetBlockImporter;
-import org.hyperledger.besu.ethereum.mainnet.MainnetProtocolSpecs;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolScheduleBuilder;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSpecAdapters;
@@ -30,15 +31,28 @@ import org.hyperledger.besu.ethereum.mainnet.ProtocolSpecBuilder;
 import org.hyperledger.besu.evm.internal.EvmConfiguration;
 
 import java.math.BigInteger;
+import java.util.Optional;
 
 /** Defines the protocol behaviours for a blockchain using IBFT. */
 public class IbftProtocolSchedule {
 
-  private static final BigInteger DEFAULT_CHAIN_ID = BigInteger.ONE;
+  // Default constructor
+  /** Default constructor */
+  public IbftProtocolSchedule() {}
 
+  private static final BigInteger DEFAULT_CHAIN_ID = BigInteger.ONE;
+  private static final IbftExtraDataCodec ibftExtraDataCodec = new IbftExtraDataCodec();
+
+  /**
+   * Create protocol schedule.
+   *
+   * @param config the config
+   * @param isRevertReasonEnabled the is revert reason enabled
+   * @param evmConfiguration the evm configuration
+   * @return the protocol schedule
+   */
   public static ProtocolSchedule create(
       final GenesisConfigOptions config,
-      final PrivacyParameters privacyParameters,
       final boolean isRevertReasonEnabled,
       final EvmConfiguration evmConfiguration) {
     final IbftLegacyConfigOptions ibftConfig = config.getIbftLegacyConfigOptions();
@@ -46,42 +60,34 @@ public class IbftProtocolSchedule {
 
     return new ProtocolScheduleBuilder(
             config,
-            DEFAULT_CHAIN_ID,
-            ProtocolSpecAdapters.create(
-                0,
-                builder ->
-                    applyIbftChanges(
-                        blockPeriod, builder, config.isQuorum(), ibftConfig.getCeil2Nby3Block())),
-            privacyParameters,
+            Optional.of(DEFAULT_CHAIN_ID),
+            ProtocolSpecAdapters.create(0, builder -> applyIbftChanges(blockPeriod, builder)),
             isRevertReasonEnabled,
-            config.isQuorum(),
-            evmConfiguration)
+            evmConfiguration,
+            null,
+            new BadBlockManager(),
+            false,
+            null)
         .createProtocolSchedule();
   }
 
-  public static ProtocolSchedule create(
-      final GenesisConfigOptions config,
-      final boolean isRevertReasonEnabled,
-      final EvmConfiguration evmConfiguration) {
-    return create(config, PrivacyParameters.DEFAULT, isRevertReasonEnabled, evmConfiguration);
-  }
-
   private static ProtocolSpecBuilder applyIbftChanges(
-      final long secondsBetweenBlocks,
-      final ProtocolSpecBuilder builder,
-      final boolean goQuorumMode,
-      final long ceil2nBy3Block) {
+      final long secondsBetweenBlocks, final ProtocolSpecBuilder builder) {
     return builder
         .blockHeaderValidatorBuilder(
-            feeMarket -> ibftBlockHeaderValidator(secondsBetweenBlocks, ceil2nBy3Block))
+            (feeMarket, gasCalculator, gasLimitCalculator) ->
+                ibftBlockHeaderValidatorBuilder(secondsBetweenBlocks))
         .ommerHeaderValidatorBuilder(
-            feeMarket -> ibftBlockHeaderValidator(secondsBetweenBlocks, ceil2nBy3Block))
+            (feeMarket, gasCalculator, gasLimitCalculator) ->
+                ibftBlockHeaderValidatorBuilder(secondsBetweenBlocks))
         .blockBodyValidatorBuilder(MainnetBlockBodyValidator::new)
-        .blockValidatorBuilder(MainnetProtocolSpecs.blockValidatorBuilder(goQuorumMode))
+        .blockValidatorBuilder(MainnetBlockValidatorBuilder::frontier)
         .blockImporterBuilder(MainnetBlockImporter::new)
-        .difficultyCalculator((time, parent, protocolContext) -> BigInteger.ONE)
+        .difficultyCalculator((time, parent) -> BigInteger.ONE)
         .blockReward(Wei.ZERO)
         .skipZeroBlockRewards(true)
-        .blockHeaderFunctions(new LegacyIbftBlockHeaderFunctions());
+        .blockHeaderFunctions(
+            new BftBlockHeaderFunctions(
+                IbftBlockHashing::calculateHashOfIbftBlockOnchain, ibftExtraDataCodec));
   }
 }

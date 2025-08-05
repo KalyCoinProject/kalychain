@@ -23,6 +23,7 @@ import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParameter;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 
@@ -30,13 +31,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class QbftGetValidatorsByBlockNumberTest {
 
   @Mock private BlockchainQueries blockchainQueries;
@@ -46,7 +47,7 @@ public class QbftGetValidatorsByBlockNumberTest {
 
   private QbftGetValidatorsByBlockNumber method;
 
-  @Before
+  @BeforeEach
   public void setUp() {
     method = new QbftGetValidatorsByBlockNumber(blockchainQueries, validatorProvider);
   }
@@ -72,5 +73,34 @@ public class QbftGetValidatorsByBlockNumberTest {
     when(validatorProvider.getValidatorsForBlock(any())).thenReturn(addresses);
     Object result = method.resultByBlockNumber(request, 12);
     assertThat(result).isEqualTo(expectedOutput);
+  }
+
+  @Test
+  public void shouldReturnListOfValidatorsFromLatestBlock() {
+    request =
+        new JsonRpcRequestContext(
+            new JsonRpcRequest("2.0", "qbft_getValidatorsByBlockNumber", new String[] {"latest"}));
+    when(blockchainQueries.headBlockNumber()).thenReturn(12L);
+    when(blockchainQueries.getBlockHeaderByNumber(12)).thenReturn(Optional.of(blockHeader));
+    final List<Address> addresses = Collections.singletonList(Address.ID);
+    final List<String> expectedOutput = Collections.singletonList(Address.ID.toString());
+    when(validatorProvider.getValidatorsForBlock(any())).thenReturn(addresses);
+    Object result = method.response(request);
+    assertThat(result).isInstanceOf(JsonRpcSuccessResponse.class);
+    assertThat(((JsonRpcSuccessResponse) result).getResult()).isEqualTo(expectedOutput);
+  }
+
+  @Test
+  public void shouldReturnListOfValidatorsFromPendingBlock() {
+    request =
+        new JsonRpcRequestContext(
+            new JsonRpcRequest("2.0", "qbft_getValidatorsByBlockNumber", new String[] {"pending"}));
+    when(blockchainQueries.headBlockHeader()).thenReturn(blockHeader);
+    final List<Address> addresses = Collections.singletonList(Address.ID);
+    final List<String> expectedOutput = Collections.singletonList(Address.ID.toString());
+    when(validatorProvider.getValidatorsAfterBlock(any())).thenReturn(addresses);
+    Object result = method.response(request);
+    assertThat(result).isInstanceOf(JsonRpcSuccessResponse.class);
+    assertThat(((JsonRpcSuccessResponse) result).getResult()).isEqualTo(expectedOutput);
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -35,9 +35,9 @@ public interface TransactionPriceCalculator {
       }
       final Wei maxPriorityFeePerGas = transaction.getMaxPriorityFeePerGas().orElseThrow();
       final Wei maxFeePerGas = transaction.getMaxFeePerGas().orElseThrow();
-      Wei price = maxPriorityFeePerGas.add(baseFee);
+      final Wei price = maxPriorityFeePerGas.add(baseFee);
       if (price.compareTo(maxFeePerGas) > 0) {
-        price = maxFeePerGas;
+        return maxFeePerGas;
       }
       return price;
     };

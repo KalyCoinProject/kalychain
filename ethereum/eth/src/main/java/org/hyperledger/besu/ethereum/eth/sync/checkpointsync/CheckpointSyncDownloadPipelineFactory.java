@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -61,18 +61,23 @@ public class CheckpointSyncDownloadPipelineFactory extends FastSyncDownloadPipel
 
     final Checkpoint checkpoint = syncState.getCheckpoint().orElseThrow();
 
+    final BlockHeader checkpointBlockHeader = target.peer().getCheckpointHeader().orElseThrow();
     final CheckpointSource checkPointSource =
         new CheckpointSource(
             syncState,
-            target.peer(),
-            protocolSchedule.getByBlockNumber(checkpoint.blockNumber()).getBlockHeaderFunctions());
+            checkpointBlockHeader,
+            protocolSchedule
+                .getByBlockHeader(checkpointBlockHeader)
+                .getBlockHeaderFunctions()
+                .getCheckPointWindowSize(checkpointBlockHeader));
 
     final CheckpointBlockImportStep checkPointBlockImportStep =
         new CheckpointBlockImportStep(
             checkPointSource, checkpoint, protocolContext.getBlockchain());
 
     final CheckpointDownloadBlockStep checkPointDownloadBlockStep =
-        new CheckpointDownloadBlockStep(protocolSchedule, ethContext, checkpoint, metricsSystem);
+        new CheckpointDownloadBlockStep(
+            protocolSchedule, ethContext, checkpoint, syncConfig, metricsSystem);
 
     return PipelineBuilder.createPipelineFrom(
             "fetchCheckpoints",

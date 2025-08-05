@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -11,15 +11,19 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.evm.internal;
 
 import org.apache.tuweni.bytes.Bytes;
 
-public class OperandStack extends FixedStack<Bytes> {
+/** The Operand stack. */
+public class OperandStack extends FlexStack<Bytes> {
 
+  /**
+   * Instantiates a new Operand stack.
+   *
+   * @param maxSize the max size
+   */
   public OperandStack(final int maxSize) {
     super(maxSize, Bytes.class);
   }

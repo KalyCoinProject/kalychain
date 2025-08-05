@@ -19,6 +19,7 @@ import static org.hyperledger.besu.ethereum.permissioning.AllowlistPersistor.ALL
 import org.hyperledger.besu.tests.acceptance.dsl.AcceptanceTestBase;
 import org.hyperledger.besu.tests.acceptance.dsl.account.Account;
 import org.hyperledger.besu.tests.acceptance.dsl.node.Node;
+import org.hyperledger.besu.tests.acceptance.dsl.node.configuration.genesis.GenesisConfigurationFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,8 +27,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 
 import org.assertj.core.api.Assertions;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class AllowlistPersistorAcceptanceTest extends AcceptanceTestBase {
 
@@ -45,7 +46,7 @@ public class AllowlistPersistorAcceptanceTest extends AcceptanceTestBase {
   private Account senderB;
   private Path tempFile;
 
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
     senderA = accounts.getPrimaryBenefactor();
     senderB = accounts.getSecondaryBenefactor();
@@ -58,6 +59,7 @@ public class AllowlistPersistorAcceptanceTest extends AcceptanceTestBase {
             .nodesPermittedInConfig(new ArrayList<>())
             .accountsConfigFile(tempFile)
             .accountsPermittedInConfig(Collections.singletonList(senderA.getAddress()))
+            .genesisConfigProvider(GenesisConfigurationFactory::createQbftLondonGenesisConfig)
             .build();
 
     cluster.start(this.node);

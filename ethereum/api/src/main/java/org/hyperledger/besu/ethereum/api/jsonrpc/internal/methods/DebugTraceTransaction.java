@@ -17,10 +17,14 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.TransactionTraceParams;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.Tracer;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.TransactionTracer;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.DebugTraceTransactionResult;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.api.query.TransactionWithMetadata;
@@ -47,20 +51,40 @@ public class DebugTraceTransaction implements JsonRpcMethod {
 
   @Override
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
-    final Hash hash = requestContext.getRequiredParameter(0, Hash.class);
+    final Hash hash;
+    try {
+      hash = requestContext.getRequiredParameter(0, Hash.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid transaction hash parameter (index 0)",
+          RpcErrorType.INVALID_TRANSACTION_HASH_PARAMS,
+          e);
+    }
     final Optional<TransactionWithMetadata> transactionWithMetadata =
         blockchain.transactionByHash(hash);
     if (transactionWithMetadata.isPresent()) {
-      final TraceOptions traceOptions =
-          requestContext
-              .getOptionalParameter(1, TransactionTraceParams.class)
-              .map(TransactionTraceParams::traceOptions)
-              .orElse(TraceOptions.DEFAULT);
-      final DebugTraceTransactionResult debugTraceTransactionResult =
+      final TraceOptions traceOptions;
+      try {
+        traceOptions =
+            requestContext
+                .getOptionalParameter(1, TransactionTraceParams.class)
+                .map(TransactionTraceParams::traceOptions)
+                .orElse(TraceOptions.DEFAULT);
+      } catch (JsonRpcParameterException e) {
+        throw new InvalidJsonRpcParameters(
+            "Invalid transaction trace parameter (index 1)",
+            RpcErrorType.INVALID_TRANSACTION_TRACE_PARAMS,
+            e);
+      } catch (IllegalArgumentException e) {
+        // Handle invalid tracer type from TracerType.fromString()
+        throw new InvalidJsonRpcParameters(
+            e.getMessage(), RpcErrorType.INVALID_TRANSACTION_TRACE_PARAMS, e);
+      }
+      final DebugTraceTransactionResult debugResult =
           debugTraceTransactionResult(hash, transactionWithMetadata.get(), traceOptions);
 
       return new JsonRpcSuccessResponse(
-          requestContext.getRequest().getId(), debugTraceTransactionResult);
+          requestContext.getRequest().getId(), debugResult.getResult());
     } else {
       return new JsonRpcSuccessResponse(requestContext.getRequest().getId(), null);
     }
@@ -72,11 +96,16 @@ public class DebugTraceTransaction implements JsonRpcMethod {
       final TraceOptions traceOptions) {
     final Hash blockHash = transactionWithMetadata.getBlockHash().get();
 
-    final DebugOperationTracer execTracer = new DebugOperationTracer(traceOptions);
+    final DebugOperationTracer execTracer =
+        new DebugOperationTracer(traceOptions.opCodeTracerConfig(), true);
 
-    return transactionTracer
-        .traceTransaction(blockHash, hash, execTracer)
-        .map(DebugTraceTransactionResult::new)
+    return Tracer.processTracing(
+            blockchain,
+            blockHash,
+            mutableWorldState ->
+                transactionTracer
+                    .traceTransaction(mutableWorldState, blockHash, hash, execTracer)
+                    .map(DebugTraceTransactionStepFactory.create(traceOptions.tracerType())))
         .orElse(null);
   }
 }

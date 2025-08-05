@@ -1,5 +1,4 @@
 /*
- *
  * Copyright ConsenSys AG.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
@@ -12,26 +11,26 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.ethereum.api.util;
 
 import org.hyperledger.besu.crypto.SECPSignature;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.datatypes.AccessListEntry;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.BlockDataGenerator;
 import org.hyperledger.besu.ethereum.core.Transaction;
+import org.hyperledger.besu.ethereum.core.encoding.EncodingContext;
 import org.hyperledger.besu.ethereum.core.encoding.TransactionEncoder;
 import org.hyperledger.besu.ethereum.rlp.BytesValueRLPOutput;
-import org.hyperledger.besu.evm.AccessListEntry;
 
 import java.math.BigInteger;
 import java.util.List;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.assertj.core.api.Assertions;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class DomainObjectDecodeUtilsTest {
 
@@ -59,7 +58,7 @@ public class DomainObjectDecodeUtilsTest {
   @Test
   public void testAccessListRLPSerDes() {
     final BytesValueRLPOutput encoded = new BytesValueRLPOutput();
-    TransactionEncoder.encodeForWire(accessListTxn, encoded);
+    TransactionEncoder.encodeRLP(accessListTxn, encoded, EncodingContext.POOLED_TRANSACTION);
     Transaction decoded =
         DomainObjectDecodeUtils.decodeRawTransaction(encoded.encoded().toHexString());
     Assertions.assertThat(decoded.getAccessList().isPresent()).isTrue();
@@ -68,7 +67,8 @@ public class DomainObjectDecodeUtilsTest {
 
   @Test
   public void testAccessList2718OpaqueSerDes() {
-    final Bytes encoded = TransactionEncoder.encodeOpaqueBytes(accessListTxn);
+    final Bytes encoded =
+        TransactionEncoder.encodeOpaqueBytes(accessListTxn, EncodingContext.POOLED_TRANSACTION);
     Transaction decoded = DomainObjectDecodeUtils.decodeRawTransaction(encoded.toString());
     Assertions.assertThat(decoded.getAccessList().isPresent()).isTrue();
     Assertions.assertThat(decoded.getAccessList().map(List::size).get()).isEqualTo(1);

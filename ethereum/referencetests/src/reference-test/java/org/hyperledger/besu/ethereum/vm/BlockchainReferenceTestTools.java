@@ -15,6 +15,7 @@
 package org.hyperledger.besu.ethereum.vm;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
@@ -23,23 +24,27 @@ import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockImporter;
 import org.hyperledger.besu.ethereum.core.MutableWorldState;
 import org.hyperledger.besu.ethereum.mainnet.BlockImportResult;
-import org.hyperledger.besu.ethereum.mainnet.HeaderValidationMode;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
+import org.hyperledger.besu.ethereum.mainnet.HeaderValidationMode;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
 import org.hyperledger.besu.ethereum.referencetests.BlockchainReferenceTestCaseSpec;
 import org.hyperledger.besu.ethereum.referencetests.ReferenceTestProtocolSchedules;
 import org.hyperledger.besu.ethereum.rlp.RLPException;
+import org.hyperledger.besu.ethereum.trie.pathbased.common.provider.WorldStateQueryParams;
+import org.hyperledger.besu.evm.EVM;
+import org.hyperledger.besu.evm.EvmSpecVersion;
+import org.hyperledger.besu.evm.account.AccountState;
+import org.hyperledger.besu.evm.internal.EvmConfiguration.WorldUpdaterMode;
 import org.hyperledger.besu.testutil.JsonTestParameters;
 
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
+import org.apache.tuweni.bytes.Bytes32;
 import org.assertj.core.api.Assertions;
 
 public class BlockchainReferenceTestTools {
-  private static final ReferenceTestProtocolSchedules REFERENCE_TEST_PROTOCOL_SCHEDULES =
-      ReferenceTestProtocolSchedules.create();
 
   private static final List<String> NETWORKS_TO_RUN;
 
@@ -47,19 +52,19 @@ public class BlockchainReferenceTestTools {
     final String networks =
         System.getProperty(
             "test.ethereum.blockchain.eips",
-            "FrontierToHomesteadAt5,HomesteadToEIP150At5,HomesteadToDaoAt5,EIP158ToByzantiumAt5,"
+            "FrontierToHomesteadAt5,HomesteadToEIP150At5,HomesteadToDaoAt5,EIP158ToByzantiumAt5,CancunToPragueAtTime15k"
                 + "Frontier,Homestead,EIP150,EIP158,Byzantium,Constantinople,ConstantinopleFix,Istanbul,Berlin,"
-                + "Shandong,"
-                + "London,Merge,Shanghai,Cancun,Prague,Osaka,Bogota");
+                + "London,Merge,Paris,Shanghai,Cancun,Prague,Osaka,Amsterdam,Bogota,Polis,Bangkok");
     NETWORKS_TO_RUN = Arrays.asList(networks.split(","));
   }
 
   private static final JsonTestParameters<?, ?> params =
       JsonTestParameters.create(BlockchainReferenceTestCaseSpec.class)
           .generator(
-              (testName, spec, collector) -> {
+              (testName, fullPath, spec, collector) -> {
                 final String eip = spec.getNetwork();
-                collector.add(testName + "[" + eip + "]", spec, NETWORKS_TO_RUN.contains(eip));
+                collector.add(
+                    testName + "[" + eip + "]", fullPath, spec, NETWORKS_TO_RUN.contains(eip));
               });
 
   static {
@@ -67,25 +72,28 @@ public class BlockchainReferenceTestTools {
       params.ignoreAll();
     }
 
-    // Known bad test.
-    params.ignore(
-        "RevertPrecompiledTouch(_storage)?_d(0|3)g0v0_(EIP158|Byzantium|Constantinople|ConstantinopleFix)");
-
     // Consumes a huge amount of memory
     params.ignore("static_Call1MB1024Calldepth_d1g0v0_\\w+");
-    params.ignore("ShanghaiLove_.*");
+    params.ignore("ShanghaiLove_");
 
     // Absurd amount of gas, doesn't run in parallel
     params.ignore("randomStatetest94_\\w+");
 
-    // Don't do time consuming tests
-    params.ignore("CALLBlake2f_MaxRounds.*");
-    params.ignore("loopMul_*");
+    // Don't do time-consuming tests
+    params.ignore("CALLBlake2f_MaxRounds");
+    params.ignore("loopMul_");
 
     // Inconclusive fork choice rule, since in merge CL should be choosing forks and setting the
     // chain head.
     // Perfectly valid test pre-merge.
-    params.ignore("UncleFromSideChain_Merge");
+    params.ignore(
+        "UncleFromSideChain_(Merge|Paris|Shanghai|Cancun|Prague|Osaka|Amsterdam|Bogota|Polis|Bangkok)");
+
+    // EOF tests don't have Prague stuff like deposits right now
+    params.ignore("/stEOF/");
+
+    // These are for the older reference tests but EIP-2537 is covered by eip2537_bls_12_381_precompiles in the execution-spec-tests
+    params.ignore("/stEIP2537/");
   }
 
   private BlockchainReferenceTestTools() {
@@ -96,16 +104,16 @@ public class BlockchainReferenceTestTools {
     return params.generate(filePath);
   }
 
+  @SuppressWarnings("java:S5960") // this is actually test code
   public static void executeTest(final BlockchainReferenceTestCaseSpec spec) {
     final BlockHeader genesisBlockHeader = spec.getGenesisBlockHeader();
     final MutableWorldState worldState =
         spec.getWorldStateArchive()
-            .getMutable(genesisBlockHeader.getStateRoot(), genesisBlockHeader.getHash())
-            .get();
-    assertThat(worldState.rootHash()).isEqualTo(genesisBlockHeader.getStateRoot());
+            .getWorldState(WorldStateQueryParams.withStateRootAndBlockHashAndUpdateNodeHead(genesisBlockHeader.getStateRoot(), genesisBlockHeader.getHash()))
+            .orElseThrow();
 
     final ProtocolSchedule schedule =
-        REFERENCE_TEST_PROTOCOL_SCHEDULES.getByName(spec.getNetwork());
+        ReferenceTestProtocolSchedules.getInstance().getByName(spec.getNetwork());
 
     final MutableBlockchain blockchain = spec.getBlockchain();
     final ProtocolContext context = spec.getProtocolContext();
@@ -119,8 +127,11 @@ public class BlockchainReferenceTestTools {
       try {
         final Block block = candidateBlock.getBlock();
 
-        final ProtocolSpec protocolSpec = schedule.getByBlockNumber(block.getHeader().getNumber());
+        final ProtocolSpec protocolSpec = schedule.getByBlockHeader(block.getHeader());
         final BlockImporter blockImporter = protocolSpec.getBlockImporter();
+
+        verifyJournaledEVMAccountCompatability(worldState, protocolSpec);
+
         final HeaderValidationMode validationMode =
             "NoProof".equalsIgnoreCase(spec.getSealEngine())
                 ? HeaderValidationMode.LIGHT
@@ -135,5 +146,18 @@ public class BlockchainReferenceTestTools {
     }
 
     Assertions.assertThat(blockchain.getChainHeadHash()).isEqualTo(spec.getLastBlockHash());
+  }
+
+  static void verifyJournaledEVMAccountCompatability(
+          final MutableWorldState worldState, final ProtocolSpec protocolSpec) {
+    EVM evm = protocolSpec.getEvm();
+    if (evm.getEvmConfiguration().worldUpdaterMode() == WorldUpdaterMode.JOURNALED) {
+      assumeFalse(
+              worldState
+                      .streamAccounts(Bytes32.ZERO, Integer.MAX_VALUE).anyMatch(AccountState::isEmpty),
+              "Journaled account configured and empty account detected");
+      assumeFalse(EvmSpecVersion.SPURIOUS_DRAGON.compareTo(evm.getEvmVersion()) > 0,
+              "Journaled account configured and fork prior to the merge specified");
+    }
   }
 }

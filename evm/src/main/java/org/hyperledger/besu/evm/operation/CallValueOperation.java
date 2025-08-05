@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -19,17 +19,23 @@ import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
+/** The Call value operation. */
 public class CallValueOperation extends AbstractFixedCostOperation {
 
+  /**
+   * Instantiates a new Call value operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public CallValueOperation(final GasCalculator gasCalculator) {
-    super(0x34, "CALLVALUE", 0, 1, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
+    super(0x34, "CALLVALUE", 0, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
   }
 
   @Override
   public Operation.OperationResult executeFixedCostOperation(
       final MessageFrame frame, final EVM evm) {
     final Wei value = frame.getApparentValue();
-    frame.pushStackItem(value.toUInt256());
+    frame.pushStackItem(value.toBytes());
 
     return successResponse;
   }

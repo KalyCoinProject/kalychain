@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -12,7 +12,6 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.ethereum.eth.manager.task;
 
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -39,6 +38,7 @@ public class RetryingGetHeadersEndingAtFromPeerByHashTask
 
   private final Hash referenceHash;
   private final ProtocolSchedule protocolSchedule;
+  private final long minimumRequiredBlockNumber;
   private final int count;
 
   @VisibleForTesting
@@ -46,11 +46,13 @@ public class RetryingGetHeadersEndingAtFromPeerByHashTask
       final ProtocolSchedule protocolSchedule,
       final EthContext ethContext,
       final Hash referenceHash,
+      final long minimumRequiredBlockNumber,
       final int count,
       final MetricsSystem metricsSystem,
       final int maxRetries) {
     super(ethContext, metricsSystem, List::isEmpty, maxRetries);
     this.protocolSchedule = protocolSchedule;
+    this.minimumRequiredBlockNumber = minimumRequiredBlockNumber;
     this.count = count;
     checkNotNull(referenceHash);
     this.referenceHash = referenceHash;
@@ -60,11 +62,18 @@ public class RetryingGetHeadersEndingAtFromPeerByHashTask
       final ProtocolSchedule protocolSchedule,
       final EthContext ethContext,
       final Hash referenceHash,
+      final long minimumRequiredBlockNumber,
       final int count,
       final MetricsSystem metricsSystem,
       final int maxRetries) {
     return new RetryingGetHeadersEndingAtFromPeerByHashTask(
-        protocolSchedule, ethContext, referenceHash, count, metricsSystem, maxRetries);
+        protocolSchedule,
+        ethContext,
+        referenceHash,
+        minimumRequiredBlockNumber,
+        count,
+        metricsSystem,
+        maxRetries);
   }
 
   @Override
@@ -72,13 +81,18 @@ public class RetryingGetHeadersEndingAtFromPeerByHashTask
       final EthPeer currentPeer) {
     final AbstractGetHeadersFromPeerTask task =
         GetHeadersFromPeerByHashTask.endingAtHash(
-            protocolSchedule, getEthContext(), referenceHash, count, getMetricsSystem());
+            protocolSchedule,
+            getEthContext(),
+            referenceHash,
+            minimumRequiredBlockNumber,
+            count,
+            getMetricsSystem());
     task.assignPeer(currentPeer);
     return executeSubTask(task::run)
         .thenApply(
             peerResult -> {
-              LOG.debug(
-                  "Get {} block headers by hash {} from peer {} has result {}",
+              LOG.trace(
+                  "Got {} block headers by hash {} from peer {} has result {}",
                   count,
                   referenceHash,
                   currentPeer,
@@ -89,7 +103,7 @@ public class RetryingGetHeadersEndingAtFromPeerByHashTask
                     "No block headers for hash "
                         + referenceHash
                         + " returned by peer "
-                        + currentPeer.getShortNodeId());
+                        + currentPeer.getLoggableId());
               }
               result.complete(peerResult.getResult());
               return peerResult.getResult();

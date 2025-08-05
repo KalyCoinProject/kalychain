@@ -23,12 +23,17 @@ import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.apache.tuweni.units.bigints.UInt256;
 
+/** The Keccak256 operation. */
 public class Keccak256Operation extends AbstractOperation {
 
+  /**
+   * Instantiates a new Keccak256 operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public Keccak256Operation(final GasCalculator gasCalculator) {
-    super(0x20, "KECCAK256", 2, 1, 1, gasCalculator);
+    super(0x20, "KECCAK256", 2, 1, gasCalculator);
   }
 
   @Override
@@ -42,7 +47,7 @@ public class Keccak256Operation extends AbstractOperation {
     }
 
     final Bytes bytes = frame.readMutableMemory(from, length);
-    frame.pushStackItem(UInt256.fromBytes(keccak256(bytes)));
+    frame.pushStackItem(keccak256(bytes));
     return new OperationResult(cost, null);
   }
 }

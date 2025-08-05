@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,136 +14,148 @@
  */
 package org.hyperledger.besu.ethereum.transaction;
 
+import org.hyperledger.besu.datatypes.AccessListEntry;
 import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.VersionedHash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.Transaction;
+import org.hyperledger.besu.ethereum.core.json.ChainIdDeserializer;
+import org.hyperledger.besu.ethereum.core.json.HexStringDeserializer;
+import org.hyperledger.besu.ethereum.core.json.OptionalUnsignedLongDeserializer;
 
-import java.util.Objects;
+import java.math.BigInteger;
+import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import org.apache.tuweni.bytes.Bytes;
+import org.immutables.value.Value;
 
-// Represents parameters for a eth_call or eth_estimateGas JSON-RPC methods.
-public class CallParameter {
-
-  private final Address from;
-
-  private final Address to;
-
-  private final long gasLimit;
-
-  private final Optional<Wei> maxPriorityFeePerGas;
-
-  private final Optional<Wei> maxFeePerGas;
-
-  private final Wei gasPrice;
-
-  private final Wei value;
-
-  private final Bytes payload;
-
-  public CallParameter(
-      final Address from,
-      final Address to,
-      final long gasLimit,
-      final Wei gasPrice,
-      final Wei value,
-      final Bytes payload) {
-    this.from = from;
-    this.to = to;
-    this.gasLimit = gasLimit;
-    this.maxPriorityFeePerGas = Optional.empty();
-    this.maxFeePerGas = Optional.empty();
-    this.gasPrice = gasPrice;
-    this.value = value;
-    this.payload = payload;
-  }
-
-  public CallParameter(
-      final Address from,
-      final Address to,
-      final long gasLimit,
-      final Wei gasPrice,
-      final Optional<Wei> maxPriorityFeePerGas,
-      final Optional<Wei> maxFeePerGas,
-      final Wei value,
-      final Bytes payload) {
-    this.from = from;
-    this.to = to;
-    this.gasLimit = gasLimit;
-    this.maxPriorityFeePerGas = maxPriorityFeePerGas;
-    this.maxFeePerGas = maxFeePerGas;
-    this.gasPrice = gasPrice;
-    this.value = value;
-    this.payload = payload;
-  }
-
-  public Address getFrom() {
-    return from;
-  }
-
-  public Address getTo() {
-    return to;
-  }
-
-  public long getGasLimit() {
-    return gasLimit;
-  }
-
-  public Wei getGasPrice() {
-    return gasPrice;
-  }
-
-  public Optional<Wei> getMaxPriorityFeePerGas() {
-    return maxPriorityFeePerGas;
-  }
-
-  public Optional<Wei> getMaxFeePerGas() {
-    return maxFeePerGas;
-  }
-
-  public Wei getValue() {
-    return value;
-  }
-
-  public Bytes getPayload() {
-    return payload;
-  }
+// Represents parameters for eth_call and eth_estimateGas JSON-RPC methods.
+@Value.Immutable
+@JsonDeserialize(as = ImmutableCallParameter.class)
+@JsonIgnoreProperties(ignoreUnknown = true)
+public abstract class CallParameter implements org.hyperledger.besu.datatypes.CallParameter {
+  @Override
+  @JsonDeserialize(contentUsing = ChainIdDeserializer.class)
+  public abstract Optional<BigInteger> getChainId();
 
   @Override
-  public boolean equals(final Object o) {
-    if (this == o) {
-      return true;
-    }
-    if (o == null || getClass() != o.getClass()) {
-      return false;
-    }
-    final CallParameter that = (CallParameter) o;
-    return gasLimit == that.gasLimit
-        && Objects.equals(from, that.from)
-        && Objects.equals(to, that.to)
-        && Objects.equals(gasPrice, that.gasPrice)
-        && Objects.equals(maxPriorityFeePerGas, that.maxPriorityFeePerGas)
-        && Objects.equals(maxFeePerGas, that.maxFeePerGas)
-        && Objects.equals(value, that.value)
-        && Objects.equals(payload, that.payload);
-  }
+  @JsonProperty("from")
+  public abstract Optional<Address> getSender();
 
   @Override
-  public int hashCode() {
-    return Objects.hash(
-        from, to, gasLimit, gasPrice, maxPriorityFeePerGas, maxFeePerGas, value, payload);
+  public abstract Optional<Address> getTo();
+
+  @Override
+  @JsonDeserialize(using = OptionalUnsignedLongDeserializer.class)
+  public abstract OptionalLong getGas();
+
+  @Override
+  public abstract Optional<Wei> getMaxPriorityFeePerGas();
+
+  @Override
+  public abstract Optional<Wei> getMaxFeePerGas();
+
+  @Override
+  public abstract Optional<Wei> getMaxFeePerBlobGas();
+
+  @Override
+  public abstract Optional<Wei> getGasPrice();
+
+  @Override
+  public abstract Optional<Wei> getValue();
+
+  @Override
+  public abstract Optional<List<AccessListEntry>> getAccessList();
+
+  @Override
+  public abstract Optional<List<VersionedHash>> getBlobVersionedHashes();
+
+  @Override
+  @JsonDeserialize(using = OptionalUnsignedLongDeserializer.class)
+  public abstract OptionalLong getNonce();
+
+  @Override
+  public abstract Optional<Boolean> getStrict();
+
+  /**
+   * 'input' is mutually exclusive with 'data', so it needs special handling. This method is only
+   * used to deserialize the 'input' field, always use getPayload() to get the value.
+   */
+  @JsonDeserialize(contentUsing = HexStringDeserializer.class)
+  protected abstract Optional<Bytes> getInput();
+
+  /**
+   * 'data' is mutually exclusive with 'input', so it needs special handling. This method is only
+   * used to deserialize the 'data' field, always use getPayload() to get the value.
+   */
+  @JsonDeserialize(contentUsing = HexStringDeserializer.class)
+  protected abstract Optional<Bytes> getData();
+
+  @Value.Check
+  protected void check() {
+    if (getInput().isPresent() && getData().isPresent() && !getInput().equals(getData())) {
+      throw new IllegalArgumentException("Only one of 'input' or 'data' should be provided");
+    }
+  }
+
+  /**
+   * Returns either the 'input' or 'data' field, depending on which is present, or empty if neither
+   * is present.
+   *
+   * @return the payload, or empty if none is present.
+   */
+  @Override
+  @Value.Derived
+  public Optional<Bytes> getPayload() {
+    return getInput().or(this::getData);
   }
 
   public static CallParameter fromTransaction(final Transaction tx) {
-    return new CallParameter(
-        tx.getSender(),
-        tx.getTo().orElseGet(() -> null),
-        tx.getGasLimit(),
-        Wei.fromQuantity(tx.getGasPrice().orElseGet(() -> Wei.ZERO)),
-        Optional.of(Wei.fromQuantity(tx.getMaxPriorityFeePerGas().orElseGet(() -> Wei.ZERO))),
-        tx.getMaxFeePerGas(),
-        Wei.fromQuantity(tx.getValue()),
-        tx.getPayload());
+    final var builder =
+        ImmutableCallParameter.builder()
+            .chainId(tx.getChainId())
+            .sender(tx.getSender())
+            .gas(tx.getGasLimit())
+            .value(tx.getValue())
+            .input(tx.getPayload())
+            .nonce(tx.getNonce());
+
+    tx.getTo().ifPresent(builder::to);
+    tx.getGasPrice().ifPresent(builder::gasPrice);
+    tx.getMaxPriorityFeePerGas().ifPresent(builder::maxPriorityFeePerGas);
+    tx.getMaxFeePerGas().ifPresent(builder::maxFeePerGas);
+
+    tx.getAccessList().ifPresent(builder::accessList);
+
+    tx.getMaxFeePerBlobGas().ifPresent(builder::maxFeePerBlobGas);
+    tx.getVersionedHashes().ifPresent(builder::blobVersionedHashes);
+    return builder.build();
+  }
+
+  public static CallParameter fromTransaction(final org.hyperledger.besu.datatypes.Transaction tx) {
+    final var builder =
+        ImmutableCallParameter.builder()
+            .chainId(tx.getChainId())
+            .sender(tx.getSender())
+            .gas(tx.getGasLimit())
+            .value(Wei.fromQuantity(tx.getValue()))
+            .input(tx.getPayload())
+            .nonce(tx.getNonce());
+
+    tx.getTo().ifPresent(builder::to);
+    tx.getGasPrice().map(Wei::fromQuantity).ifPresent(builder::gasPrice);
+
+    tx.getMaxPriorityFeePerGas().map(Wei::fromQuantity).ifPresent(builder::maxPriorityFeePerGas);
+    tx.getMaxFeePerGas().map(Wei::fromQuantity).ifPresent(builder::maxFeePerGas);
+
+    tx.getAccessList().ifPresent(builder::accessList);
+    tx.getMaxFeePerBlobGas().map(Wei::fromQuantity).ifPresent(builder::maxFeePerBlobGas);
+    tx.getVersionedHashes().ifPresent(builder::blobVersionedHashes);
+    return builder.build();
   }
 }

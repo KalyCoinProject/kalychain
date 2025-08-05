@@ -18,29 +18,29 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
-import org.hyperledger.besu.util.Log4j2ConfiguratorUtil;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
+import org.hyperledger.besu.util.LogConfigurator;
 
 import org.apache.logging.log4j.Level;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class AdminChangeLogLevelTest {
 
   private AdminChangeLogLevel adminChangeLogLevel;
 
-  @Before
+  @BeforeEach
   public void before() {
     adminChangeLogLevel = new AdminChangeLogLevel();
-    Log4j2ConfiguratorUtil.setAllLevels("", Level.INFO);
+    LogConfigurator.setLevel("", "INFO");
   }
 
   @Test
@@ -117,7 +117,8 @@ public class AdminChangeLogLevelTest {
         new JsonRpcRequestContext(
             new JsonRpcRequest("2.0", "admin_changeLogLevel", new Object[] {null}));
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(request.getRequest().getId(), JsonRpcError.INVALID_PARAMS);
+        new JsonRpcErrorResponse(
+            request.getRequest().getId(), RpcErrorType.INVALID_LOG_LEVEL_PARAMS);
 
     final JsonRpcResponse actualResponse = adminChangeLogLevel.response(request);
     assertThat(actualResponse).usingRecursiveComparison().isEqualTo(expectedResponse);
@@ -129,7 +130,8 @@ public class AdminChangeLogLevelTest {
         new JsonRpcRequestContext(
             new JsonRpcRequest("2.0", "admin_changeLogLevel", new String[] {"INVALID"}));
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(request.getRequest().getId(), JsonRpcError.INVALID_PARAMS);
+        new JsonRpcErrorResponse(
+            request.getRequest().getId(), RpcErrorType.INVALID_LOG_LEVEL_PARAMS);
 
     final JsonRpcResponse actualResponse = adminChangeLogLevel.response(request);
     assertThat(actualResponse).usingRecursiveComparison().isEqualTo(expectedResponse);
@@ -141,7 +143,8 @@ public class AdminChangeLogLevelTest {
         new JsonRpcRequestContext(
             new JsonRpcRequest("2.0", "admin_changeLogLevel", new Object[] {"DEBUG", "INVALID"}));
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(request.getRequest().getId(), JsonRpcError.INVALID_PARAMS);
+        new JsonRpcErrorResponse(
+            request.getRequest().getId(), RpcErrorType.INVALID_LOG_FILTER_PARAMS);
 
     final JsonRpcResponse actualResponse = adminChangeLogLevel.response(request);
     assertThat(actualResponse).usingRecursiveComparison().isEqualTo(expectedResponse);

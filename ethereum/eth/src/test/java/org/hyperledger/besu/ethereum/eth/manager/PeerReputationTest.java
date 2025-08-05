@@ -16,75 +16,120 @@ package org.hyperledger.besu.ethereum.eth.manager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage.DisconnectReason.TIMEOUT;
-import static org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage.DisconnectReason.USELESS_PEER;
+import static org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage.DisconnectReason.USELESS_PEER_USELESS_RESPONSES;
+import static org.mockito.Mockito.mock;
 
-import org.hyperledger.besu.ethereum.eth.messages.EthPV62;
+import org.hyperledger.besu.ethereum.eth.EthProtocol;
+import org.hyperledger.besu.ethereum.eth.SnapProtocol;
+import org.hyperledger.besu.ethereum.eth.messages.EthProtocolMessages;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 public class PeerReputationTest {
 
   private static final int INITIAL_SCORE = 25;
   private static final int MAX_SCORE = 50;
   private final PeerReputation reputation = new PeerReputation(INITIAL_SCORE, MAX_SCORE);
+  private final EthPeer mockEthPeer = mock(EthPeer.class);
 
-  @Test(expected = java.lang.IllegalArgumentException.class)
+  @Test
   public void shouldThrowOnInvalidInitialScore() {
-    new PeerReputation(2, 1);
+    Assertions.assertThrows(IllegalArgumentException.class, () -> new PeerReputation(2, 1));
   }
 
   @Test
   public void shouldOnlyDisconnectWhenTimeoutLimitReached() {
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_HEADERS)).isEmpty();
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_HEADERS)).isEmpty();
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_HEADERS)).contains(TIMEOUT);
+    sendRequestTimeouts(
+        EthProtocol.NAME,
+        EthProtocolMessages.GET_BLOCK_HEADERS,
+        PeerReputation.TIMEOUT_THRESHOLD - 1);
+    assertThat(
+            reputation.recordRequestTimeout(
+                EthProtocol.NAME, EthProtocolMessages.GET_BLOCK_HEADERS, mockEthPeer))
+        .contains(TIMEOUT);
   }
 
   @Test
   public void shouldTrackTimeoutsSeparatelyForDifferentRequestTypes() {
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_HEADERS)).isEmpty();
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_HEADERS)).isEmpty();
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_BODIES)).isEmpty();
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_BODIES)).isEmpty();
+    sendRequestTimeouts(
+        EthProtocol.NAME,
+        EthProtocolMessages.GET_BLOCK_HEADERS,
+        PeerReputation.TIMEOUT_THRESHOLD - 1);
+    sendRequestTimeouts(
+        EthProtocol.NAME,
+        EthProtocolMessages.GET_BLOCK_BODIES,
+        PeerReputation.TIMEOUT_THRESHOLD - 1);
 
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_HEADERS)).contains(TIMEOUT);
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_BODIES)).contains(TIMEOUT);
+    assertThat(
+            reputation.recordRequestTimeout(
+                EthProtocol.NAME, EthProtocolMessages.GET_BLOCK_HEADERS, mockEthPeer))
+        .contains(TIMEOUT);
+    assertThat(
+            reputation.recordRequestTimeout(
+                EthProtocol.NAME, EthProtocolMessages.GET_BLOCK_BODIES, mockEthPeer))
+        .contains(TIMEOUT);
+  }
+
+  @Test
+  public void shouldTrackTimeoutsSeparatelyForDifferentProtocols() {
+    sendRequestTimeouts(
+        EthProtocol.NAME,
+        EthProtocolMessages.GET_BLOCK_HEADERS,
+        PeerReputation.TIMEOUT_THRESHOLD - 1);
+    sendRequestTimeouts(
+        SnapProtocol.NAME,
+        EthProtocolMessages.GET_BLOCK_HEADERS,
+        PeerReputation.TIMEOUT_THRESHOLD - 1);
+
+    assertThat(
+            reputation.recordRequestTimeout(
+                EthProtocol.NAME, EthProtocolMessages.GET_BLOCK_HEADERS, mockEthPeer))
+        .contains(TIMEOUT);
+    assertThat(
+            reputation.recordRequestTimeout(
+                SnapProtocol.NAME, EthProtocolMessages.GET_BLOCK_HEADERS, mockEthPeer))
+        .contains(TIMEOUT);
   }
 
   @Test
   public void shouldResetTimeoutCountForRequestType() {
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_HEADERS)).isEmpty();
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_HEADERS)).isEmpty();
+    sendRequestTimeouts(
+        EthProtocol.NAME,
+        EthProtocolMessages.GET_BLOCK_HEADERS,
+        PeerReputation.TIMEOUT_THRESHOLD - 1);
+    sendRequestTimeouts(
+        EthProtocol.NAME,
+        EthProtocolMessages.GET_BLOCK_BODIES,
+        PeerReputation.TIMEOUT_THRESHOLD - 1);
 
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_BODIES)).isEmpty();
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_BODIES)).isEmpty();
-
-    reputation.resetTimeoutCount(EthPV62.GET_BLOCK_HEADERS);
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_HEADERS)).isEmpty();
-    assertThat(reputation.recordRequestTimeout(EthPV62.GET_BLOCK_BODIES)).contains(TIMEOUT);
+    reputation.resetTimeoutCount(EthProtocol.NAME, EthProtocolMessages.GET_BLOCK_HEADERS);
+    assertThat(
+            reputation.recordRequestTimeout(
+                EthProtocol.NAME, EthProtocolMessages.GET_BLOCK_HEADERS, mockEthPeer))
+        .isEmpty();
+    assertThat(
+            reputation.recordRequestTimeout(
+                EthProtocol.NAME, EthProtocolMessages.GET_BLOCK_BODIES, mockEthPeer))
+        .contains(TIMEOUT);
   }
 
   @Test
   public void shouldOnlyDisconnectWhenEmptyResponseThresholdReached() {
-    assertThat(reputation.recordUselessResponse(1001)).isEmpty();
-    assertThat(reputation.recordUselessResponse(1002)).isEmpty();
-    assertThat(reputation.recordUselessResponse(1003)).isEmpty();
-    assertThat(reputation.recordUselessResponse(1004)).isEmpty();
-    assertThat(reputation.recordUselessResponse(1005)).contains(USELESS_PEER);
+    sendUselessResponses(1001, PeerReputation.USELESS_RESPONSE_THRESHOLD - 1);
+    assertThat(reputation.recordUselessResponse(1005, mockEthPeer))
+        .contains(USELESS_PEER_USELESS_RESPONSES);
   }
 
   @Test
   public void shouldDiscardEmptyResponseRecordsAfterTimeWindowElapses() {
     // Bring it to the brink of disconnection.
-    assertThat(reputation.recordUselessResponse(1001)).isEmpty();
-    assertThat(reputation.recordUselessResponse(1002)).isEmpty();
-    assertThat(reputation.recordUselessResponse(1003)).isEmpty();
-    assertThat(reputation.recordUselessResponse(1004)).isEmpty();
+    sendUselessResponses(1001, PeerReputation.USELESS_RESPONSE_THRESHOLD - 1);
 
     // But then the next empty response doesn't come in until after the window expires on the first
     assertThat(
             reputation.recordUselessResponse(
-                1001 + PeerReputation.USELESS_RESPONSE_WINDOW_IN_MILLIS + 1))
+                1001 + PeerReputation.USELESS_RESPONSE_WINDOW_IN_MILLIS + 1, mockEthPeer))
         .isEmpty();
   }
 
@@ -100,5 +145,18 @@ public class PeerReputationTest {
       reputation.recordUsefulResponse();
     }
     assertThat(reputation.getScore()).isEqualTo(MAX_SCORE);
+  }
+
+  private void sendRequestTimeouts(
+      final String protocolName, final int requestType, final int repeatCount) {
+    for (int i = 0; i < repeatCount; i++) {
+      assertThat(reputation.recordRequestTimeout(protocolName, requestType, mockEthPeer)).isEmpty();
+    }
+  }
+
+  private void sendUselessResponses(final long timestamp, final int repeatCount) {
+    for (int i = 0; i < repeatCount; i++) {
+      assertThat(reputation.recordUselessResponse(timestamp + i, mockEthPeer)).isEmpty();
+    }
   }
 }

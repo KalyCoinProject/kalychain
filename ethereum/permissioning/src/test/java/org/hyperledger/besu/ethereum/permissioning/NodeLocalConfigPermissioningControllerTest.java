@@ -46,16 +46,17 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import com.google.common.collect.Lists;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.StrictStubs.class)
+@ExtendWith(MockitoExtension.class)
 public class NodeLocalConfigPermissioningControllerTest {
 
   @Mock private AllowlistPersistor allowlistPersistor;
@@ -77,7 +78,7 @@ public class NodeLocalConfigPermissioningControllerTest {
   @Mock private Counter checkPermittedCounter;
   @Mock private Counter checkUnpermittedCounter;
 
-  @Before
+  @BeforeEach
   public void setUp() {
     bootnodesList.clear();
 
@@ -314,6 +315,56 @@ public class NodeLocalConfigPermissioningControllerTest {
 
     assertThat(controller.isConnectionPermitted(selfEnode, EnodeURLImpl.fromString(enode1)))
         .isTrue();
+  }
+
+  @Test
+  public void whenCallingIsPermittedAndRemovingEntryInAnotherThreadShouldNotThrowException()
+      throws InterruptedException {
+    // Add a node to the allowlist
+    controller.addNodes(Lists.newArrayList(enode1));
+
+    // Atomic flag to detect exceptions
+    AtomicBoolean exceptionOccurred = new AtomicBoolean(false);
+
+    // Create a thread to call isPermitted
+    Thread isPermittedThread =
+        new Thread(
+            () -> {
+              try {
+                for (int i = 0; i < 1000; i++) {
+                  controller.isPermitted(enode1);
+                }
+              } catch (Exception e) {
+                exceptionOccurred.set(true);
+                e.printStackTrace();
+              }
+            });
+
+    // Create a thread to modify the allowlist
+    Thread modifyAllowlistThread =
+        new Thread(
+            () -> {
+              try {
+                for (int i = 0; i < 1000; i++) {
+                  controller.removeNodes(Lists.newArrayList(enode1));
+                  controller.addNodes(Lists.newArrayList(enode1));
+                }
+              } catch (Exception e) {
+                exceptionOccurred.set(true);
+                e.printStackTrace();
+              }
+            });
+
+    // Start both threads
+    isPermittedThread.start();
+    modifyAllowlistThread.start();
+
+    // Wait for both threads to complete
+    isPermittedThread.join();
+    modifyAllowlistThread.join();
+
+    // Assert no exceptions were thrown
+    assert (!exceptionOccurred.get());
   }
 
   @Test

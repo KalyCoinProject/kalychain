@@ -20,6 +20,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapSyncConfiguration;
 import org.hyperledger.besu.services.tasks.CachingTaskCollection;
 
+import java.net.URI;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.collect.Range;
@@ -29,7 +30,7 @@ public class SynchronizerConfiguration {
 
   public static final int DEFAULT_PIVOT_DISTANCE_FROM_HEAD = 50;
   public static final float DEFAULT_FULL_VALIDATION_RATE = .1f;
-  public static final int DEFAULT_FAST_SYNC_MINIMUM_PEERS = 5;
+  public static final int DEFAULT_SYNC_MINIMUM_PEERS = 5;
   public static final int DEFAULT_WORLD_STATE_HASH_COUNT_PER_REQUEST = 384;
   public static final int DEFAULT_WORLD_STATE_REQUEST_PARALLELISM = 10;
   public static final int DEFAULT_WORLD_STATE_MAX_REQUESTS_WITHOUT_PROGRESS = 1000;
@@ -42,18 +43,24 @@ public class SynchronizerConfiguration {
   public static final int DEFAULT_DOWNLOADER_HEADER_REQUEST_SIZE = 200;
   public static final int DEFAULT_DOWNLOADER_CHECKPOINT_TIMEOUTS_PERMITTED = 5;
   public static final int DEFAULT_DOWNLOADER_CHAIN_SEGMENT_SIZE = 200;
-  public static final int DEFAULT_DOWNLOADER_PARALLELISM = 4;
-  public static final int DEFAULT_TRANSACTIONS_PARALLELISM = 2;
+  public static final int DEFAULT_DOWNLOADER_PARALLELISM = 8;
+  public static final int DEFAULT_TRANSACTIONS_PARALLELISM = 4;
   public static final int DEFAULT_COMPUTATION_PARALLELISM = 2;
   public static final int DEFAULT_WORLD_STATE_TASK_CACHE_SIZE =
       CachingTaskCollection.DEFAULT_CACHE_SIZE;
   public static final long DEFAULT_PROPAGATION_MANAGER_GET_BLOCK_TIMEOUT_MILLIS =
       TimeUnit.SECONDS.toMillis(60);
 
+  public static final boolean DEFAULT_CHECKPOINT_POST_MERGE_ENABLED = false;
+
+  public static final Boolean DEFAULT_ERA1_IMPORT_PREPIPELINE_ENABLED = Boolean.FALSE;
+  public static final URI DEFAULT_ERA1_DATA_URI = URI.create("https://mainnet.era1.nimbus.team/");
+  public static final Integer DEFAULT_ERA1_IMPORT_PREPIPELINE_CONCURRENCY = 1;
+
   // Fast sync config
-  private final int fastSyncPivotDistance;
+  private final int syncPivotDistance;
   private final float fastSyncFullValidationRate;
-  private final int fastSyncMinimumPeerCount;
+  private final int syncMinimumPeerCount;
   private final int worldStateHashCountPerRequest;
   private final int worldStateRequestParallelism;
   private final int worldStateMaxRequestsWithoutProgress;
@@ -68,11 +75,14 @@ public class SynchronizerConfiguration {
   // General config
   private final SyncMode syncMode;
 
+  // Near head Checkpoint sync
+  private final boolean checkpointPostMergeEnabled;
+
   // Downloader config
   private final long downloaderChangeTargetThresholdByHeight;
   private final UInt256 downloaderChangeTargetThresholdByTd;
   private final int downloaderHeaderRequestSize;
-  private final int downloaderCheckpointTimeoutsPermitted;
+  private final int downloaderCheckpointRetries;
   private final int downloaderChainSegmentSize;
   private final int downloaderParallelism;
   private final int transactionsParallelism;
@@ -80,11 +90,18 @@ public class SynchronizerConfiguration {
   private final int maxTrailingPeers;
   private final long worldStateMinMillisBeforeStalling;
   private final long propagationManagerGetBlockTimeoutMillis;
+  private final boolean isPeerTaskSystemEnabled;
+  private final boolean snapSyncSavePreCheckpointHeadersOnlyEnabled;
+
+  // ERA1 import prepipeline config
+  private final boolean era1ImportPrepipelineEnabled;
+  private final URI era1DataUri;
+  private final int era1ImportPrepipelineConcurrency;
 
   private SynchronizerConfiguration(
-      final int fastSyncPivotDistance,
+      final int syncPivotDistance,
       final float fastSyncFullValidationRate,
-      final int fastSyncMinimumPeerCount,
+      final int syncMinimumPeerCount,
       final int worldStateHashCountPerRequest,
       final int worldStateRequestParallelism,
       final int worldStateMaxRequestsWithoutProgress,
@@ -96,16 +113,22 @@ public class SynchronizerConfiguration {
       final long downloaderChangeTargetThresholdByHeight,
       final UInt256 downloaderChangeTargetThresholdByTd,
       final int downloaderHeaderRequestSize,
-      final int downloaderCheckpointTimeoutsPermitted,
+      final int downloaderCheckpointRetries,
       final int downloaderChainSegmentSize,
       final int downloaderParallelism,
       final int transactionsParallelism,
       final int computationParallelism,
       final int maxTrailingPeers,
-      final long propagationManagerGetBlockTimeoutMillis) {
-    this.fastSyncPivotDistance = fastSyncPivotDistance;
+      final long propagationManagerGetBlockTimeoutMillis,
+      final boolean checkpointPostMergeEnabled,
+      final boolean isPeerTaskSystemEnabled,
+      final boolean snapSyncSavePreCheckpointHeadersOnlyEnabled,
+      final boolean era1ImportPrepipelineEnabled,
+      final URI era1DataUri,
+      final int era1ImportPrepipelineConcurrency) {
+    this.syncPivotDistance = syncPivotDistance;
     this.fastSyncFullValidationRate = fastSyncFullValidationRate;
-    this.fastSyncMinimumPeerCount = fastSyncMinimumPeerCount;
+    this.syncMinimumPeerCount = syncMinimumPeerCount;
     this.worldStateHashCountPerRequest = worldStateHashCountPerRequest;
     this.worldStateRequestParallelism = worldStateRequestParallelism;
     this.worldStateMaxRequestsWithoutProgress = worldStateMaxRequestsWithoutProgress;
@@ -117,13 +140,19 @@ public class SynchronizerConfiguration {
     this.downloaderChangeTargetThresholdByHeight = downloaderChangeTargetThresholdByHeight;
     this.downloaderChangeTargetThresholdByTd = downloaderChangeTargetThresholdByTd;
     this.downloaderHeaderRequestSize = downloaderHeaderRequestSize;
-    this.downloaderCheckpointTimeoutsPermitted = downloaderCheckpointTimeoutsPermitted;
+    this.downloaderCheckpointRetries = downloaderCheckpointRetries;
     this.downloaderChainSegmentSize = downloaderChainSegmentSize;
     this.downloaderParallelism = downloaderParallelism;
     this.transactionsParallelism = transactionsParallelism;
     this.computationParallelism = computationParallelism;
     this.maxTrailingPeers = maxTrailingPeers;
     this.propagationManagerGetBlockTimeoutMillis = propagationManagerGetBlockTimeoutMillis;
+    this.checkpointPostMergeEnabled = checkpointPostMergeEnabled;
+    this.isPeerTaskSystemEnabled = isPeerTaskSystemEnabled;
+    this.snapSyncSavePreCheckpointHeadersOnlyEnabled = snapSyncSavePreCheckpointHeadersOnlyEnabled;
+    this.era1ImportPrepipelineEnabled = era1ImportPrepipelineEnabled;
+    this.era1DataUri = era1DataUri;
+    this.era1ImportPrepipelineConcurrency = era1ImportPrepipelineConcurrency;
   }
 
   public static Builder builder() {
@@ -137,6 +166,10 @@ public class SynchronizerConfiguration {
    */
   public SyncMode getSyncMode() {
     return syncMode;
+  }
+
+  public boolean isCheckpointPostMergeEnabled() {
+    return checkpointPostMergeEnabled;
   }
 
   /**
@@ -160,12 +193,14 @@ public class SynchronizerConfiguration {
   }
 
   /**
-   * The distance from the chain head at which we should switch from fast sync to full sync.
+   * The distance from the chain head at which we should switch from fast, snap, or checkpoint sync
+   * to full sync.
    *
-   * @return distance from the chain head at which we should switch from fast sync to full sync.
+   * @return distance from the chain head at which we should switch from fast, snap or checkpoint
+   *     sync to full sync.
    */
-  public int getFastSyncPivotDistance() {
-    return fastSyncPivotDistance;
+  public int getSyncPivotDistance() {
+    return syncPivotDistance;
   }
 
   public long getDownloaderChangeTargetThresholdByHeight() {
@@ -180,8 +215,8 @@ public class SynchronizerConfiguration {
     return downloaderHeaderRequestSize;
   }
 
-  public int getDownloaderCheckpointTimeoutsPermitted() {
-    return downloaderCheckpointTimeoutsPermitted;
+  public int getDownloaderCheckpointRetries() {
+    return downloaderCheckpointRetries;
   }
 
   public int getDownloaderChainSegmentSize() {
@@ -211,8 +246,8 @@ public class SynchronizerConfiguration {
     return fastSyncFullValidationRate;
   }
 
-  public int getFastSyncMinimumPeerCount() {
-    return fastSyncMinimumPeerCount;
+  public int getSyncMinimumPeerCount() {
+    return syncMinimumPeerCount;
   }
 
   public int getWorldStateHashCountPerRequest() {
@@ -243,9 +278,29 @@ public class SynchronizerConfiguration {
     return propagationManagerGetBlockTimeoutMillis;
   }
 
+  public boolean isPeerTaskSystemEnabled() {
+    return isPeerTaskSystemEnabled;
+  }
+
+  public boolean isSnapSyncSavePreCheckpointHeadersOnlyEnabled() {
+    return snapSyncSavePreCheckpointHeadersOnlyEnabled;
+  }
+
+  public boolean era1ImportPrepipelineEnabled() {
+    return era1ImportPrepipelineEnabled;
+  }
+
+  public URI era1DataUri() {
+    return era1DataUri;
+  }
+
+  public int era1ImportPrepipelineConcurrency() {
+    return era1ImportPrepipelineConcurrency;
+  }
+
   public static class Builder {
     private SyncMode syncMode = SyncMode.FULL;
-    private int fastSyncMinimumPeerCount = DEFAULT_FAST_SYNC_MINIMUM_PEERS;
+    private int syncMinimumPeerCount = DEFAULT_SYNC_MINIMUM_PEERS;
     private int maxTrailingPeers = Integer.MAX_VALUE;
     private Range<Long> blockPropagationRange = DEFAULT_BLOCK_PROPAGATION_RANGE;
     private long downloaderChangeTargetThresholdByHeight =
@@ -253,14 +308,13 @@ public class SynchronizerConfiguration {
     private UInt256 downloaderChangeTargetThresholdByTd =
         DEFAULT_DOWNLOADER_CHANGE_TARGET_THRESHOLD_BY_TD;
     private int downloaderHeaderRequestSize = DEFAULT_DOWNLOADER_HEADER_REQUEST_SIZE;
-    private int downloaderCheckpointTimeoutsPermitted =
-        DEFAULT_DOWNLOADER_CHECKPOINT_TIMEOUTS_PERMITTED;
+    private int downloaderCheckpointRetries = DEFAULT_DOWNLOADER_CHECKPOINT_TIMEOUTS_PERMITTED;
     private SnapSyncConfiguration snapSyncConfiguration = SnapSyncConfiguration.getDefault();
     private int downloaderChainSegmentSize = DEFAULT_DOWNLOADER_CHAIN_SEGMENT_SIZE;
     private int downloaderParallelism = DEFAULT_DOWNLOADER_PARALLELISM;
     private int transactionsParallelism = DEFAULT_TRANSACTIONS_PARALLELISM;
     private int computationParallelism = DEFAULT_COMPUTATION_PARALLELISM;
-    private int fastSyncPivotDistance = DEFAULT_PIVOT_DISTANCE_FROM_HEAD;
+    private int syncPivotDistance = DEFAULT_PIVOT_DISTANCE_FROM_HEAD;
     private float fastSyncFullValidationRate = DEFAULT_FULL_VALIDATION_RATE;
     private int worldStateHashCountPerRequest = DEFAULT_WORLD_STATE_HASH_COUNT_PER_REQUEST;
     private int worldStateRequestParallelism = DEFAULT_WORLD_STATE_REQUEST_PARALLELISM;
@@ -268,12 +322,18 @@ public class SynchronizerConfiguration {
         DEFAULT_WORLD_STATE_MAX_REQUESTS_WITHOUT_PROGRESS;
     private long worldStateMinMillisBeforeStalling = DEFAULT_WORLD_STATE_MIN_MILLIS_BEFORE_STALLING;
     private int worldStateTaskCacheSize = DEFAULT_WORLD_STATE_TASK_CACHE_SIZE;
+    private boolean isPeerTaskSystemEnabled = false;
+    private boolean snapSyncSavePreCheckpointHeadersOnlyEnabled = true;
+    private boolean era1ImportPrepipelineEnabled = DEFAULT_ERA1_IMPORT_PREPIPELINE_ENABLED;
+    private URI era1DataUri = DEFAULT_ERA1_DATA_URI;
+    private int era1ImportPrepipelineConcurrency = DEFAULT_ERA1_IMPORT_PREPIPELINE_CONCURRENCY;
 
     private long propagationManagerGetBlockTimeoutMillis =
         DEFAULT_PROPAGATION_MANAGER_GET_BLOCK_TIMEOUT_MILLIS;
+    private boolean checkpointPostMergeEnabled = DEFAULT_CHECKPOINT_POST_MERGE_ENABLED;
 
-    public Builder fastSyncPivotDistance(final int distance) {
-      fastSyncPivotDistance = distance;
+    public Builder syncPivotDistance(final int distance) {
+      syncPivotDistance = distance;
       return this;
     }
 
@@ -315,9 +375,8 @@ public class SynchronizerConfiguration {
       return this;
     }
 
-    public Builder downloaderCheckpointTimeoutsPermitted(
-        final int downloaderCheckpointTimeoutsPermitted) {
-      this.downloaderCheckpointTimeoutsPermitted = downloaderCheckpointTimeoutsPermitted;
+    public Builder downloaderCheckpointRetries(final int downloaderCheckpointRetries) {
+      this.downloaderCheckpointRetries = downloaderCheckpointRetries;
       return this;
     }
 
@@ -347,8 +406,8 @@ public class SynchronizerConfiguration {
       return this;
     }
 
-    public Builder fastSyncMinimumPeerCount(final int fastSyncMinimumPeerCount) {
-      this.fastSyncMinimumPeerCount = fastSyncMinimumPeerCount;
+    public Builder syncMinimumPeerCount(final int syncMinimumPeerCount) {
+      this.syncMinimumPeerCount = syncMinimumPeerCount;
       return this;
     }
 
@@ -389,11 +448,43 @@ public class SynchronizerConfiguration {
       return this;
     }
 
+    public Builder checkpointPostMergeEnabled(final boolean checkpointPostMergeEnabled) {
+      this.checkpointPostMergeEnabled = checkpointPostMergeEnabled;
+      return this;
+    }
+
+    public Builder isPeerTaskSystemEnabled(final boolean isPeerTaskSystemEnabled) {
+      this.isPeerTaskSystemEnabled = isPeerTaskSystemEnabled;
+      return this;
+    }
+
+    public Builder snapSyncSavePreCheckpointHeadersOnlyEnabled(
+        final boolean snapSyncSavePreCheckpointHeadersOnlyEnabled) {
+      this.snapSyncSavePreCheckpointHeadersOnlyEnabled =
+          snapSyncSavePreCheckpointHeadersOnlyEnabled;
+      return this;
+    }
+
+    public Builder era1ImportPrepipelineEnabled(final boolean era1ImportPrepipelineEnabled) {
+      this.era1ImportPrepipelineEnabled = era1ImportPrepipelineEnabled;
+      return this;
+    }
+
+    public Builder era1DataUri(final URI era1DataUri) {
+      this.era1DataUri = era1DataUri;
+      return this;
+    }
+
+    public Builder era1ImportPrepipelineConcurrency(final int era1ImportPrepipelineConcurrency) {
+      this.era1ImportPrepipelineConcurrency = era1ImportPrepipelineConcurrency;
+      return this;
+    }
+
     public SynchronizerConfiguration build() {
       return new SynchronizerConfiguration(
-          fastSyncPivotDistance,
+          syncPivotDistance,
           fastSyncFullValidationRate,
-          fastSyncMinimumPeerCount,
+          syncMinimumPeerCount,
           worldStateHashCountPerRequest,
           worldStateRequestParallelism,
           worldStateMaxRequestsWithoutProgress,
@@ -405,13 +496,19 @@ public class SynchronizerConfiguration {
           downloaderChangeTargetThresholdByHeight,
           downloaderChangeTargetThresholdByTd,
           downloaderHeaderRequestSize,
-          downloaderCheckpointTimeoutsPermitted,
+          downloaderCheckpointRetries,
           downloaderChainSegmentSize,
           downloaderParallelism,
           transactionsParallelism,
           computationParallelism,
           maxTrailingPeers,
-          propagationManagerGetBlockTimeoutMillis);
+          propagationManagerGetBlockTimeoutMillis,
+          checkpointPostMergeEnabled,
+          isPeerTaskSystemEnabled,
+          snapSyncSavePreCheckpointHeadersOnlyEnabled,
+          era1ImportPrepipelineEnabled,
+          era1DataUri,
+          era1ImportPrepipelineConcurrency);
     }
   }
 }

@@ -11,11 +11,10 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.ethereum.referencetests;
 
-import org.hyperledger.besu.evm.AccessListEntry;
+import org.hyperledger.besu.datatypes.AccessListEntry;
 
 import java.io.IOException;
 import java.util.ArrayList;

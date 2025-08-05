@@ -48,11 +48,11 @@ public interface BesuPlugin {
    *
    * @param context the context that provides access to Besu services.
    */
-  void register(BesuContext context);
+  void register(ServiceManager context);
 
   /**
    * Called once when besu has loaded configuration but before external services have been started
-   * e.g metrics and http
+   * e.g. metrics and http
    */
   default void beforeExternalServices() {}
 
@@ -63,8 +63,11 @@ public interface BesuPlugin {
    */
   void start();
 
+  /** Hook to execute plugin setup code after external services */
+  default void afterExternalServicePostMainLoop() {}
+
   /**
-   * Called when the plugin is being reloaded. This method will be called trough a dedicated JSON
+   * Called when the plugin is being reloaded. This method will be called through a dedicated JSON
    * RPC endpoint. If not overridden this method does nothing for convenience. The plugin should
    * only implement this method if it supports dynamic reloading.
    *
@@ -84,4 +87,24 @@ public interface BesuPlugin {
    * started.
    */
   void stop();
+
+  /**
+   * Retrieves the version information of the plugin. It constructs a version string using the
+   * implementation title and version from the package information. If either the title or version
+   * is not available, it defaults to the class's simple name and "Unknown Version", respectively.
+   *
+   * @return A string representing the plugin's version information, formatted as "Title/vVersion".
+   */
+  default String getVersion() {
+    Package pluginPackage = this.getClass().getPackage();
+    String implTitle =
+        Optional.ofNullable(pluginPackage.getImplementationTitle())
+            .filter(title -> !title.isBlank())
+            .orElseGet(() -> this.getClass().getSimpleName());
+    String implVersion =
+        Optional.ofNullable(pluginPackage.getImplementationVersion())
+            .filter(version -> !version.isBlank())
+            .orElse("<Unknown Version>");
+    return implTitle + "/" + implVersion;
+  }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -25,16 +25,18 @@ import org.hyperledger.besu.ethereum.eth.sync.fastsync.FastSyncDownloader;
 import org.hyperledger.besu.ethereum.eth.sync.fastsync.FastSyncState;
 import org.hyperledger.besu.ethereum.eth.sync.fastsync.FastSyncStateStorage;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapDownloaderFactory;
-import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapPersistedContext;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapSyncDownloader;
-import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapSyncState;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapSyncProcessState;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapWorldStateDownloader;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.context.SnapSyncStatePersistenceManager;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.SnapDataRequest;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncState;
 import org.hyperledger.besu.ethereum.eth.sync.worldstate.WorldStateDownloader;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ScheduleBasedBlockHeaderFunctions;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.trie.CompactEncoding;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
+import org.hyperledger.besu.metrics.SyncDurationMetrics;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.services.tasks.InMemoryTasksPriorityQueues;
 
@@ -49,8 +51,9 @@ public class CheckpointDownloaderFactory extends SnapDownloaderFactory {
 
   private static final Logger LOG = LoggerFactory.getLogger(CheckpointDownloaderFactory.class);
 
+  @SuppressWarnings("UnusedVariable")
   public static Optional<FastSyncDownloader<?>> createCheckpointDownloader(
-      final SnapPersistedContext snapContext,
+      final SnapSyncStatePersistenceManager snapContext,
       final PivotBlockSelector pivotBlockSelector,
       final SynchronizerConfiguration syncConfig,
       final Path dataDirectory,
@@ -58,9 +61,10 @@ public class CheckpointDownloaderFactory extends SnapDownloaderFactory {
       final ProtocolContext protocolContext,
       final MetricsSystem metricsSystem,
       final EthContext ethContext,
-      final WorldStateStorage worldStateStorage,
+      final WorldStateStorageCoordinator worldStateStorageCoordinator,
       final SyncState syncState,
-      final Clock clock) {
+      final Clock clock,
+      final SyncDurationMetrics syncDurationMetrics) {
 
     final Path fastSyncDataDirectory = dataDirectory.resolve(FAST_SYNC_FOLDER);
     final FastSyncStateStorage fastSyncStateStorage =
@@ -79,7 +83,16 @@ public class CheckpointDownloaderFactory extends SnapDownloaderFactory {
 
     final FastSyncState fastSyncState =
         fastSyncStateStorage.loadState(ScheduleBasedBlockHeaderFunctions.create(protocolSchedule));
-    if (fastSyncState.getPivotBlockHeader().isEmpty()
+
+    if (syncState.isResyncNeeded()) {
+      snapContext.clear();
+      syncState
+          .getAccountToRepair()
+          .ifPresent(
+              address ->
+                  snapContext.addAccountToHealingList(
+                      CompactEncoding.bytesToPath(address.addressHash())));
+    } else if (fastSyncState.getPivotBlockHeader().isEmpty()
         && protocolContext.getBlockchain().getChainHeadBlockNumber()
             != BlockHeader.GENESIS_BLOCK_NUMBER) {
       LOG.info(
@@ -93,7 +106,7 @@ public class CheckpointDownloaderFactory extends SnapDownloaderFactory {
       fastSyncActions =
           new FastSyncActions(
               syncConfig,
-              worldStateStorage,
+              worldStateStorageCoordinator,
               protocolSchedule,
               protocolContext,
               ethContext,
@@ -101,14 +114,16 @@ public class CheckpointDownloaderFactory extends SnapDownloaderFactory {
               pivotBlockSelector,
               metricsSystem);
     } else {
-      LOG.info(
-          "Checkpoint sync start with block {} and hash {}",
-          syncState.getCheckpoint().get().blockNumber(),
-          syncState.getCheckpoint().get().blockHash());
+      if (!syncState.isResyncNeeded()) {
+        LOG.info(
+            "Checkpoint sync start with block {} and hash {}",
+            syncState.getCheckpoint().get().blockNumber(),
+            syncState.getCheckpoint().get().blockHash());
+      }
       fastSyncActions =
           new CheckpointSyncActions(
               syncConfig,
-              worldStateStorage,
+              worldStateStorageCoordinator,
               protocolSchedule,
               protocolContext,
               ethContext,
@@ -117,8 +132,8 @@ public class CheckpointDownloaderFactory extends SnapDownloaderFactory {
               metricsSystem);
     }
 
-    final SnapSyncState snapSyncState =
-        new SnapSyncState(
+    final SnapSyncProcessState snapSyncState =
+        new SnapSyncProcessState(
             fastSyncStateStorage.loadState(
                 ScheduleBasedBlockHeaderFunctions.create(protocolSchedule)));
 
@@ -129,23 +144,25 @@ public class CheckpointDownloaderFactory extends SnapDownloaderFactory {
             ethContext,
             snapContext,
             protocolContext,
-            worldStateStorage,
+            worldStateStorageCoordinator,
             snapTaskCollection,
             syncConfig.getSnapSyncConfiguration(),
             syncConfig.getWorldStateRequestParallelism(),
             syncConfig.getWorldStateMaxRequestsWithoutProgress(),
             syncConfig.getWorldStateMinMillisBeforeStalling(),
             clock,
-            metricsSystem);
+            metricsSystem,
+            syncDurationMetrics);
     final FastSyncDownloader<SnapDataRequest> fastSyncDownloader =
         new SnapSyncDownloader(
             fastSyncActions,
-            worldStateStorage,
+            worldStateStorageCoordinator,
             snapWorldStateDownloader,
             fastSyncStateStorage,
             snapTaskCollection,
             fastSyncDataDirectory,
-            snapSyncState);
+            snapSyncState,
+            syncDurationMetrics);
     syncState.setWorldStateDownloadStatus(snapWorldStateDownloader);
     return Optional.of(fastSyncDownloader);
   }

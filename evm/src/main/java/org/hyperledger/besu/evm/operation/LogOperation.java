@@ -28,12 +28,19 @@ import org.hyperledger.besu.evm.log.LogTopic;
 import com.google.common.collect.ImmutableList;
 import org.apache.tuweni.bytes.Bytes;
 
+/** The Log operation. */
 public class LogOperation extends AbstractOperation {
 
   private final int numTopics;
 
+  /**
+   * Instantiates a new Log operation.
+   *
+   * @param numTopics the num topics
+   * @param gasCalculator the gas calculator
+   */
   public LogOperation(final int numTopics, final GasCalculator gasCalculator) {
-    super(0xA0 + numTopics, "LOG" + numTopics, numTopics + 2, 0, 1, gasCalculator);
+    super(0xA0 + numTopics, "LOG" + numTopics, numTopics + 2, 0, gasCalculator);
     this.numTopics = numTopics;
   }
 
@@ -42,10 +49,12 @@ public class LogOperation extends AbstractOperation {
     final long dataLocation = clampedToLong(frame.popStackItem());
     final long numBytes = clampedToLong(frame.popStackItem());
 
-    final long cost = gasCalculator().logOperationGasCost(frame, dataLocation, numBytes, numTopics);
     if (frame.isStatic()) {
-      return new OperationResult(cost, ExceptionalHaltReason.ILLEGAL_STATE_CHANGE);
-    } else if (frame.getRemainingGas() < cost) {
+      return new OperationResult(0, ExceptionalHaltReason.ILLEGAL_STATE_CHANGE);
+    }
+
+    final long cost = gasCalculator().logOperationGasCost(frame, dataLocation, numBytes, numTopics);
+    if (frame.getRemainingGas() < cost) {
       return new OperationResult(cost, ExceptionalHaltReason.INSUFFICIENT_GAS);
     }
 

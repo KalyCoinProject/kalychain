@@ -46,9 +46,17 @@ public class GenesisConfigurationFactory {
 
   public static Optional<String> createCliqueGenesisConfig(
       final Collection<? extends RunnableNode> validators) {
-    final String template = readGenesisFile("/clique/clique.json");
+    return createCliqueGenesisConfig(validators, CliqueOptions.DEFAULT);
+  }
+
+  public static Optional<String> createCliqueGenesisConfig(
+      final Collection<? extends RunnableNode> validators, final CliqueOptions cliqueOptions) {
+    final String template = readGenesisFile("/clique/clique.json.tpl");
+
     return updateGenesisExtraData(
-        validators, template, CliqueExtraData::createGenesisExtraDataString);
+        validators,
+        updateGenesisCliqueOptions(template, cliqueOptions),
+        CliqueExtraData::createGenesisExtraDataString);
   }
 
   public static Optional<String> createIbft2GenesisConfig(
@@ -74,16 +82,30 @@ public class GenesisConfigurationFactory {
         filteredList, template, IbftExtraDataCodec::createGenesisExtraDataString);
   }
 
-  public static Optional<String> createPrivacyIbft2GenesisConfig(
-      final Collection<? extends RunnableNode> validators) {
-    final String template = readGenesisFile("/ibft/privacy-ibft.json");
-    return updateGenesisExtraData(
-        validators, template, IbftExtraDataCodec::createGenesisExtraDataString);
-  }
-
   public static Optional<String> createQbftGenesisConfig(
       final Collection<? extends RunnableNode> validators) {
     final String template = readGenesisFile("/qbft/qbft.json");
+    return updateGenesisExtraData(
+        validators, template, QbftExtraDataCodec::createGenesisExtraDataString);
+  }
+
+  public static Optional<String> createQbft256r1GenesisConfig(
+      final Collection<? extends RunnableNode> validators) {
+    final String template = readGenesisFile("/crypto/secp256r1.json");
+    return updateGenesisExtraData(
+        validators, template, QbftExtraDataCodec::createGenesisExtraDataString);
+  }
+
+  public static Optional<String> createQbftLondonGenesisConfig(
+      final Collection<? extends RunnableNode> validators) {
+    final String template = readGenesisFile("/qbft/qbft-london.json");
+    return updateGenesisExtraData(
+        validators, template, QbftExtraDataCodec::createGenesisExtraDataString);
+  }
+
+  public static Optional<String> createQbftMigrationGenesisConfig(
+      final Collection<? extends RunnableNode> validators) {
+    final String template = readGenesisFile("/qbft/migration-ibft1/qbft-migration.json");
     return updateGenesisExtraData(
         validators, template, QbftExtraDataCodec::createGenesisExtraDataString);
   }
@@ -138,6 +160,14 @@ public class GenesisConfigurationFactory {
     return Optional.of(genesis);
   }
 
+  private static String updateGenesisCliqueOptions(
+      final String template, final CliqueOptions cliqueOptions) {
+    return template
+        .replace("%blockperiodseconds%", String.valueOf(cliqueOptions.blockPeriodSeconds))
+        .replace("%epochlength%", String.valueOf(cliqueOptions.epochLength))
+        .replace("%createemptyblocks%", String.valueOf(cliqueOptions.createEmptyBlocks));
+  }
+
   @SuppressWarnings("UnstableApiUsage")
   public static String readGenesisFile(final String filepath) {
     try {
@@ -146,5 +176,9 @@ public class GenesisConfigurationFactory {
     } catch (final URISyntaxException | IOException e) {
       throw new IllegalStateException("Unable to get test genesis config " + filepath);
     }
+  }
+
+  public record CliqueOptions(int blockPeriodSeconds, int epochLength, boolean createEmptyBlocks) {
+    public static final CliqueOptions DEFAULT = new CliqueOptions(10, 30000, true);
   }
 }

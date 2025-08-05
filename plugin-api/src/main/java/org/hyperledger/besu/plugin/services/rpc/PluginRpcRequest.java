@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,6 +14,12 @@
  */
 package org.hyperledger.besu.plugin.services.rpc;
 
+/** The interface Plugin rpc request. */
 public interface PluginRpcRequest {
+  /**
+   * Get params.
+   *
+   * @return the object [ ]
+   */
   Object[] getParams();
 }

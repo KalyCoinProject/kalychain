@@ -19,24 +19,27 @@ import static java.util.Collections.singletonList;
 
 import org.hyperledger.besu.cli.config.NetworkName;
 import org.hyperledger.besu.crypto.KeyPair;
-import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.ethereum.api.ApiConfiguration;
+import org.hyperledger.besu.ethereum.api.ImmutableApiConfiguration;
+import org.hyperledger.besu.ethereum.api.jsonrpc.ImmutableInProcessRpcConfiguration;
+import org.hyperledger.besu.ethereum.api.jsonrpc.InProcessRpcConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcApis;
 import org.hyperledger.besu.ethereum.api.jsonrpc.authentication.JwtAlgorithm;
 import org.hyperledger.besu.ethereum.api.jsonrpc.ipc.JsonRpcIpcConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.WebSocketConfiguration;
-import org.hyperledger.besu.ethereum.api.tls.FileBasedPasswordProvider;
 import org.hyperledger.besu.ethereum.core.AddressHelpers;
-import org.hyperledger.besu.ethereum.core.MiningParameters;
-import org.hyperledger.besu.ethereum.core.PrivacyParameters;
+import org.hyperledger.besu.ethereum.core.ImmutableMiningConfiguration;
+import org.hyperledger.besu.ethereum.core.ImmutableMiningConfiguration.MutableInitValues;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
+import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
+import org.hyperledger.besu.ethereum.eth.transactions.TransactionPoolConfiguration;
 import org.hyperledger.besu.ethereum.p2p.config.NetworkingConfiguration;
-import org.hyperledger.besu.ethereum.p2p.rlpx.connections.netty.TLSConfiguration;
 import org.hyperledger.besu.ethereum.permissioning.PermissioningConfiguration;
+import org.hyperledger.besu.ethereum.worldstate.DataStorageConfiguration;
 import org.hyperledger.besu.metrics.prometheus.MetricsConfiguration;
-import org.hyperledger.besu.pki.config.PkiKeyStoreConfiguration;
-import org.hyperledger.besu.pki.keystore.KeyStoreWrapper;
+import org.hyperledger.besu.plugin.services.storage.KeyValueStorageFactory;
 import org.hyperledger.besu.tests.acceptance.dsl.node.configuration.genesis.GenesisConfigurationProvider;
-import org.hyperledger.besu.tests.acceptance.dsl.node.configuration.pki.PKCS11Utils;
 
 import java.io.File;
 import java.net.URISyntaxException;
@@ -53,24 +56,29 @@ public class BesuNodeConfigurationBuilder {
 
   private String name;
   private Optional<Path> dataPath = Optional.empty();
-  private MiningParameters miningParameters =
-      new MiningParameters.Builder()
-          .miningEnabled(false)
-          .coinbase(AddressHelpers.ofValue(1))
-          .minTransactionGasPrice(Wei.of(1000))
+  private MiningConfiguration miningConfiguration =
+      ImmutableMiningConfiguration.builder()
+          .mutableInitValues(
+              MutableInitValues.builder().coinbase(AddressHelpers.ofValue(1)).build())
           .build();
+  private TransactionPoolConfiguration transactionPoolConfiguration =
+      TransactionPoolConfiguration.DEFAULT;
   private JsonRpcConfiguration jsonRpcConfiguration = JsonRpcConfiguration.createDefault();
   private JsonRpcConfiguration engineRpcConfiguration = JsonRpcConfiguration.createEngineDefault();
   private WebSocketConfiguration webSocketConfiguration = WebSocketConfiguration.createDefault();
   private JsonRpcIpcConfiguration jsonRpcIpcConfiguration = new JsonRpcIpcConfiguration();
+  private InProcessRpcConfiguration inProcessRpcConfiguration =
+      ImmutableInProcessRpcConfiguration.builder().build();
   private MetricsConfiguration metricsConfiguration = MetricsConfiguration.builder().build();
   private Optional<PermissioningConfiguration> permissioningConfiguration = Optional.empty();
+  private ApiConfiguration apiConfiguration = ImmutableApiConfiguration.builder().build();
+  private DataStorageConfiguration dataStorageConfiguration =
+      DataStorageConfiguration.DEFAULT_FOREST_CONFIG;
   private String keyFilePath = null;
   private boolean devMode = true;
   private GenesisConfigurationProvider genesisConfigProvider = ignore -> Optional.empty();
   private Boolean p2pEnabled = true;
   private int p2pPort = 0;
-  private Optional<TLSConfiguration> tlsConfiguration = Optional.empty();
   private final NetworkingConfiguration networkingConfiguration = NetworkingConfiguration.create();
   private boolean discoveryEnabled = true;
   private boolean bootnodeEligible = true;
@@ -79,15 +87,16 @@ public class BesuNodeConfigurationBuilder {
   private boolean secp256K1Native = true;
   private boolean altbn128Native = true;
   private final List<String> plugins = new ArrayList<>();
+  private final List<String> requestedPlugins = new ArrayList<>();
   private final List<String> extraCLIOptions = new ArrayList<>();
   private List<String> staticNodes = new ArrayList<>();
   private boolean isDnsEnabled = false;
-  private Optional<PrivacyParameters> privacyParameters = Optional.empty();
   private List<String> runCommand = new ArrayList<>();
   private Optional<KeyPair> keyPair = Optional.empty();
-  private Optional<PkiKeyStoreConfiguration> pkiKeyStoreConfiguration = Optional.empty();
   private Boolean strictTxReplayProtectionEnabled = false;
   private Map<String, String> environment = new HashMap<>();
+  private SynchronizerConfiguration synchronizerConfiguration;
+  private Optional<KeyValueStorageFactory> storageImplementation = Optional.empty();
 
   public BesuNodeConfigurationBuilder() {
     // Check connections more frequently during acceptance tests to cut down on
@@ -111,18 +120,21 @@ public class BesuNodeConfigurationBuilder {
   }
 
   public BesuNodeConfigurationBuilder miningEnabled(final boolean enabled) {
-    this.miningParameters =
-        new MiningParameters.Builder()
-            .miningEnabled(enabled)
-            .coinbase(AddressHelpers.ofValue(1))
-            .build();
+    this.miningConfiguration = miningConfiguration.setMiningEnabled(enabled);
     this.jsonRpcConfiguration.addRpcApi(RpcApis.MINER.name());
     return this;
   }
 
-  public BesuNodeConfigurationBuilder miningConfiguration(final MiningParameters miningParameters) {
-    this.miningParameters = miningParameters;
+  public BesuNodeConfigurationBuilder miningConfiguration(
+      final MiningConfiguration miningConfiguration) {
+    this.miningConfiguration = miningConfiguration;
     this.jsonRpcConfiguration.addRpcApi(RpcApis.MINER.name());
+    return this;
+  }
+
+  public BesuNodeConfigurationBuilder transactionPoolConfiguration(
+      final TransactionPoolConfiguration transactionPoolConfiguration) {
+    this.transactionPoolConfiguration = transactionPoolConfiguration;
     return this;
   }
 
@@ -163,12 +175,6 @@ public class BesuNodeConfigurationBuilder {
             .hostsAllowlist(singletonList("*"))
             .build();
 
-    return this;
-  }
-
-  public BesuNodeConfigurationBuilder enablePrivateTransactions() {
-    this.jsonRpcConfiguration.addRpcApi(RpcApis.EEA.name());
-    this.jsonRpcConfiguration.addRpcApi(RpcApis.PRIV.name());
     return this;
   }
 
@@ -244,6 +250,12 @@ public class BesuNodeConfigurationBuilder {
   public BesuNodeConfigurationBuilder jsonRpcIpcConfiguration(
       final JsonRpcIpcConfiguration jsonRpcIpcConfiguration) {
     this.jsonRpcIpcConfiguration = jsonRpcIpcConfiguration;
+    return this;
+  }
+
+  public BesuNodeConfigurationBuilder inProcessRpcConfiguration(
+      final InProcessRpcConfiguration inProcessRpcConfiguration) {
+    this.inProcessRpcConfiguration = inProcessRpcConfiguration;
     return this;
   }
 
@@ -358,71 +370,6 @@ public class BesuNodeConfigurationBuilder {
     return this;
   }
 
-  private static Path toPath(final String path) throws Exception {
-    return Path.of(BesuNodeConfigurationBuilder.class.getResource(path).toURI());
-  }
-
-  public BesuNodeConfigurationBuilder p2pTLSEnabled(final String name, final String type) {
-    final TLSConfiguration.Builder builder = TLSConfiguration.Builder.tlsConfiguration();
-    try {
-      final String nsspin = "/pki-certs/%s/nsspin.txt";
-      final String truststore = "/pki-certs/%s/truststore.jks";
-      final String crl = "/pki-certs/%s/crl.pem";
-      switch (type) {
-        case KeyStoreWrapper.KEYSTORE_TYPE_JKS:
-          builder
-              .withKeyStoreType(type)
-              .withKeyStorePath(toPath(String.format("/pki-certs/%s/keystore.jks", name)))
-              .withKeyStorePasswordSupplier(
-                  new FileBasedPasswordProvider(toPath(String.format(nsspin, name))))
-              .withKeyStorePasswordPath(toPath(String.format(nsspin, name)))
-              .withTrustStoreType(type)
-              .withTrustStorePath(toPath(String.format(truststore, name)))
-              .withTrustStorePasswordSupplier(
-                  new FileBasedPasswordProvider(toPath(String.format(nsspin, name))))
-              .withTrustStorePasswordPath(toPath(String.format(nsspin, name)))
-              .withCrlPath(toPath(String.format(crl, name)));
-          break;
-        case KeyStoreWrapper.KEYSTORE_TYPE_PKCS12:
-          builder
-              .withKeyStoreType(type)
-              .withKeyStorePath(toPath(String.format("/pki-certs/%s/keys.p12", name)))
-              .withKeyStorePasswordSupplier(
-                  new FileBasedPasswordProvider(toPath(String.format(nsspin, name))))
-              .withKeyStorePasswordPath(toPath(String.format(nsspin, name)))
-              .withTrustStoreType(KeyStoreWrapper.KEYSTORE_TYPE_JKS)
-              .withTrustStorePath(toPath(String.format(truststore, name)))
-              .withTrustStorePasswordSupplier(
-                  new FileBasedPasswordProvider(toPath(String.format(nsspin, name))))
-              .withTrustStorePasswordPath(toPath(String.format(nsspin, name)))
-              .withCrlPath(toPath(String.format(crl, name)));
-          break;
-        case KeyStoreWrapper.KEYSTORE_TYPE_PKCS11:
-          builder
-              .withKeyStoreType(type)
-              .withKeyStorePath(
-                  PKCS11Utils.initNSSConfigFile(
-                      toPath(String.format("/pki-certs/%s/nss.cfg", name))))
-              .withKeyStorePasswordSupplier(
-                  new FileBasedPasswordProvider(toPath(String.format(nsspin, name))))
-              .withKeyStorePasswordPath(toPath(String.format(nsspin, name)))
-              .withCrlPath(toPath(String.format(crl, name)));
-          break;
-      }
-    } catch (Exception e) {
-      throw new RuntimeException(e);
-    }
-    this.tlsConfiguration = Optional.of(builder.build());
-    return this;
-  }
-
-  public BesuNodeConfigurationBuilder pkiBlockCreationEnabled(
-      final PkiKeyStoreConfiguration pkiKeyStoreConfiguration) {
-    this.pkiKeyStoreConfiguration = Optional.of(pkiKeyStoreConfiguration);
-
-    return this;
-  }
-
   public BesuNodeConfigurationBuilder discoveryEnabled(final boolean discoveryEnabled) {
     this.discoveryEnabled = discoveryEnabled;
     return this;
@@ -431,6 +378,12 @@ public class BesuNodeConfigurationBuilder {
   public BesuNodeConfigurationBuilder plugins(final List<String> plugins) {
     this.plugins.clear();
     this.plugins.addAll(plugins);
+    return this;
+  }
+
+  public BesuNodeConfigurationBuilder requestedPlugins(final List<String> requestedPlugins) {
+    this.requestedPlugins.clear();
+    this.requestedPlugins.addAll(requestedPlugins);
     return this;
   }
 
@@ -465,11 +418,6 @@ public class BesuNodeConfigurationBuilder {
     return this;
   }
 
-  public BesuNodeConfigurationBuilder privacyParameters(final PrivacyParameters privacyParameters) {
-    this.privacyParameters = Optional.ofNullable(privacyParameters);
-    return this;
-  }
-
   public BesuNodeConfigurationBuilder keyPair(final KeyPair keyPair) {
     this.keyPair = Optional.of(keyPair);
     return this;
@@ -491,24 +439,54 @@ public class BesuNodeConfigurationBuilder {
     return this;
   }
 
+  public BesuNodeConfigurationBuilder apiConfiguration(final ApiConfiguration apiConfiguration) {
+    this.apiConfiguration = apiConfiguration;
+    return this;
+  }
+
+  public BesuNodeConfigurationBuilder dataStorageConfiguration(
+      final DataStorageConfiguration dataStorageConfiguration) {
+    this.dataStorageConfiguration = dataStorageConfiguration;
+    return this;
+  }
+
+  public BesuNodeConfigurationBuilder storageImplementation(
+      final KeyValueStorageFactory storageFactory) {
+    this.storageImplementation = Optional.of(storageFactory);
+    return this;
+  }
+
+  public BesuNodeConfigurationBuilder synchronizerConfiguration(
+      final SynchronizerConfiguration config) {
+    this.synchronizerConfiguration = config;
+    return this;
+  }
+
   public BesuNodeConfiguration build() {
+    if (name == null) {
+      throw new IllegalStateException("Name is required");
+    }
+
     return new BesuNodeConfiguration(
         name,
         dataPath,
-        miningParameters,
+        miningConfiguration,
+        transactionPoolConfiguration,
         jsonRpcConfiguration,
         Optional.of(engineRpcConfiguration),
         webSocketConfiguration,
         jsonRpcIpcConfiguration,
+        inProcessRpcConfiguration,
         metricsConfiguration,
         permissioningConfiguration,
+        apiConfiguration,
+        dataStorageConfiguration,
         Optional.ofNullable(keyFilePath),
         devMode,
         network,
         genesisConfigProvider,
         p2pEnabled,
         p2pPort,
-        tlsConfiguration,
         networkingConfiguration,
         discoveryEnabled,
         bootnodeEligible,
@@ -516,14 +494,15 @@ public class BesuNodeConfigurationBuilder {
         secp256K1Native,
         altbn128Native,
         plugins,
+        requestedPlugins,
         extraCLIOptions,
         staticNodes,
         isDnsEnabled,
-        privacyParameters,
         runCommand,
         keyPair,
-        pkiKeyStoreConfiguration,
         strictTxReplayProtectionEnabled,
-        environment);
+        environment,
+        synchronizerConfiguration,
+        storageImplementation);
   }
 }

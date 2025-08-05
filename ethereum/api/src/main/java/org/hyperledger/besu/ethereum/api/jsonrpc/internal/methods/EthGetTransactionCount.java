@@ -18,29 +18,31 @@ import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParameterOrBlockHash;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.Quantity;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
-import org.hyperledger.besu.ethereum.eth.transactions.sorter.AbstractPendingTransactionsSorter;
+import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 
 import java.util.function.Supplier;
 
 import com.google.common.base.Suppliers;
 
 public class EthGetTransactionCount extends AbstractBlockParameterOrBlockHashMethod {
-  private final Supplier<AbstractPendingTransactionsSorter> pendingTransactions;
+  private final Supplier<TransactionPool> transactionPoolSupplier;
 
   public EthGetTransactionCount(
-      final BlockchainQueries blockchain,
-      final AbstractPendingTransactionsSorter pendingTransactions) {
-    this(Suppliers.ofInstance(blockchain), Suppliers.ofInstance(pendingTransactions));
+      final BlockchainQueries blockchain, final TransactionPool transactionPoolSupplier) {
+    this(Suppliers.ofInstance(blockchain), Suppliers.ofInstance(transactionPoolSupplier));
   }
 
   public EthGetTransactionCount(
       final Supplier<BlockchainQueries> blockchain,
-      final Supplier<AbstractPendingTransactionsSorter> pendingTransactions) {
+      final Supplier<TransactionPool> transactionPoolSupplier) {
     super(blockchain);
-    this.pendingTransactions = pendingTransactions;
+    this.transactionPoolSupplier = transactionPoolSupplier;
   }
 
   @Override
@@ -51,13 +53,25 @@ public class EthGetTransactionCount extends AbstractBlockParameterOrBlockHashMet
   @Override
   protected BlockParameterOrBlockHash blockParameterOrBlockHash(
       final JsonRpcRequestContext request) {
-    return request.getRequiredParameter(1, BlockParameterOrBlockHash.class);
+    try {
+      return request.getRequiredParameter(1, BlockParameterOrBlockHash.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid block or block hash parameter (index 1)", RpcErrorType.INVALID_BLOCK_PARAMS, e);
+    }
   }
 
   @Override
   protected Object pendingResult(final JsonRpcRequestContext request) {
-    final Address address = request.getRequiredParameter(0, Address.class);
-    final long pendingNonce = pendingTransactions.get().getNextNonceForSender(address).orElse(0);
+    final Address address;
+    try {
+      address = request.getRequiredParameter(0, Address.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid address parameter (index 0)", RpcErrorType.INVALID_ADDRESS_PARAMS, e);
+    }
+    final long pendingNonce =
+        transactionPoolSupplier.get().getNextNonceForSender(address).orElse(0);
     final long latestNonce =
         getBlockchainQueries()
             .getTransactionCount(
@@ -72,7 +86,13 @@ public class EthGetTransactionCount extends AbstractBlockParameterOrBlockHashMet
 
   @Override
   protected String resultByBlockHash(final JsonRpcRequestContext request, final Hash blockHash) {
-    final Address address = request.getRequiredParameter(0, Address.class);
+    final Address address;
+    try {
+      address = request.getRequiredParameter(0, Address.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid address parameter (index 0)", RpcErrorType.INVALID_ADDRESS_PARAMS, e);
+    }
     final long transactionCount = getBlockchainQueries().getTransactionCount(address, blockHash);
 
     return Quantity.create(transactionCount);

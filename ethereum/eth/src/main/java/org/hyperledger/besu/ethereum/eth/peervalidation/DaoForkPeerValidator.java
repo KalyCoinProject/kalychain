@@ -16,6 +16,8 @@ package org.hyperledger.besu.ethereum.eth.peervalidation;
 
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutor;
+import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.mainnet.MainnetBlockHeaderValidator;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
@@ -28,17 +30,33 @@ public class DaoForkPeerValidator extends AbstractPeerBlockValidator {
 
   DaoForkPeerValidator(
       final ProtocolSchedule protocolSchedule,
+      final PeerTaskExecutor peerTaskExecutor,
+      final SynchronizerConfiguration synchronizerConfiguration,
       final MetricsSystem metricsSystem,
       final long daoBlockNumber,
       final long chainHeightEstimationBuffer) {
-    super(protocolSchedule, metricsSystem, daoBlockNumber, chainHeightEstimationBuffer);
+    super(
+        protocolSchedule,
+        peerTaskExecutor,
+        synchronizerConfiguration,
+        metricsSystem,
+        daoBlockNumber,
+        chainHeightEstimationBuffer);
   }
 
   public DaoForkPeerValidator(
       final ProtocolSchedule protocolSchedule,
+      final PeerTaskExecutor peerTaskExecutor,
+      final SynchronizerConfiguration synchronizerConfiguration,
       final MetricsSystem metricsSystem,
       final long daoBlockNumber) {
-    this(protocolSchedule, metricsSystem, daoBlockNumber, DEFAULT_CHAIN_HEIGHT_ESTIMATION_BUFFER);
+    this(
+        protocolSchedule,
+        peerTaskExecutor,
+        synchronizerConfiguration,
+        metricsSystem,
+        daoBlockNumber,
+        DEFAULT_CHAIN_HEIGHT_ESTIMATION_BUFFER);
   }
 
   @Override
@@ -48,5 +66,14 @@ public class DaoForkPeerValidator extends AbstractPeerBlockValidator {
       LOG.debug("Peer {} is invalid because DAO block ({}) is invalid.", ethPeer, blockNumber);
     }
     return validDaoBlock;
+  }
+
+  /**
+   * In order to support chain history pruning, clients do not need to have the dao fork block to be
+   * deemed valid.
+   */
+  @Override
+  protected boolean blockIsRequired() {
+    return false;
   }
 }

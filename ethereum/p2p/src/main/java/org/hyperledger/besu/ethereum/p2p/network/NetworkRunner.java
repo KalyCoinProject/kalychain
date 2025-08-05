@@ -14,6 +14,8 @@
  */
 package org.hyperledger.besu.ethereum.p2p.network;
 
+import org.hyperledger.besu.ethereum.p2p.peers.Peer;
+import org.hyperledger.besu.ethereum.p2p.rlpx.RlpxAgent;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.SubProtocol;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage.DisconnectReason;
@@ -30,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -46,15 +49,18 @@ public class NetworkRunner implements AutoCloseable {
   private final Map<String, SubProtocol> subProtocols;
   private final List<ProtocolManager> protocolManagers;
   private final LabelledMetric<Counter> inboundMessageCounter;
+  private final BiFunction<Peer, Boolean, Boolean> ethPeersShouldConnect;
 
   private NetworkRunner(
       final P2PNetwork network,
       final Map<String, SubProtocol> subProtocols,
       final List<ProtocolManager> protocolManagers,
-      final MetricsSystem metricsSystem) {
+      final MetricsSystem metricsSystem,
+      final BiFunction<Peer, Boolean, Boolean> ethPeersShouldConnect) {
     this.network = network;
     this.protocolManagers = protocolManagers;
     this.subProtocols = subProtocols;
+    this.ethPeersShouldConnect = ethPeersShouldConnect;
     inboundMessageCounter =
         metricsSystem.createLabelledCounter(
             BesuMetricCategory.NETWORK,
@@ -129,7 +135,10 @@ public class NetworkRunner implements AutoCloseable {
                     cap.getVersion(),
                     code,
                     message.getConnection().getPeerInfo().getNodeId());
-                message.getConnection().disconnect(DisconnectReason.BREACH_OF_PROTOCOL);
+                message
+                    .getConnection()
+                    .disconnect(
+                        DisconnectReason.BREACH_OF_PROTOCOL_INVALID_MESSAGE_CODE_FOR_PROTOCOL);
                 return;
               }
               inboundMessageCounter
@@ -154,6 +163,8 @@ public class NetworkRunner implements AutoCloseable {
             protocolManager.handleNewConnection(connection);
           });
 
+      network.subscribeConnectRequest(ethPeersShouldConnect::apply);
+
       network.subscribeDisconnect(
           (connection, disconnectReason, initiatedByPeer) -> {
             if (Collections.disjoint(
@@ -170,11 +181,16 @@ public class NetworkRunner implements AutoCloseable {
     stop();
   }
 
+  public RlpxAgent getRlpxAgent() {
+    return network.getRlpxAgent();
+  }
+
   public static class Builder {
     private NetworkBuilder networkProvider;
     List<ProtocolManager> protocolManagers = new ArrayList<>();
     List<SubProtocol> subProtocols = new ArrayList<>();
     MetricsSystem metricsSystem;
+    private BiFunction<Peer, Boolean, Boolean> ethPeersShouldConnect;
 
     public NetworkRunner build() {
       final Map<String, SubProtocol> subProtocolMap = new HashMap<>();
@@ -192,7 +208,8 @@ public class NetworkRunner implements AutoCloseable {
         }
       }
       final P2PNetwork network = networkProvider.build(caps);
-      return new NetworkRunner(network, subProtocolMap, protocolManagers, metricsSystem);
+      return new NetworkRunner(
+          network, subProtocolMap, protocolManagers, metricsSystem, ethPeersShouldConnect);
     }
 
     public Builder protocolManagers(final List<ProtocolManager> protocolManagers) {
@@ -217,6 +234,11 @@ public class NetworkRunner implements AutoCloseable {
 
     public Builder metricsSystem(final MetricsSystem metricsSystem) {
       this.metricsSystem = metricsSystem;
+      return this;
+    }
+
+    public Builder ethPeersShouldConnect(final BiFunction<Peer, Boolean, Boolean> shouldConnect) {
+      this.ethPeersShouldConnect = shouldConnect;
       return this;
     }
   }

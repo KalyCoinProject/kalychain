@@ -37,11 +37,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.hamcrest.MatcherAssert;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class GetHeadersFromPeerByNumberTaskTest extends PeerMessageTaskTest<List<BlockHeader>> {
   @Override
   protected void assertPartialResultMatchesExpectation(
@@ -57,7 +57,7 @@ public class GetHeadersFromPeerByNumberTaskTest extends PeerMessageTaskTest<List
   protected List<BlockHeader> generateDataToBeRequested() {
     final int count = 3;
     final List<BlockHeader> requestedHeaders = new ArrayList<>(count);
-    for (long i = 0; i < count; i++) {
+    for (long i = count - 1; i >= 0; i--) {
       requestedHeaders.add(blockchain.getBlockHeader(5 + i).get());
     }
     return requestedHeaders;
@@ -66,9 +66,13 @@ public class GetHeadersFromPeerByNumberTaskTest extends PeerMessageTaskTest<List
   @Override
   protected EthTask<AbstractPeerTask.PeerTaskResult<List<BlockHeader>>> createTask(
       final List<BlockHeader> requestedData) {
-    final BlockHeader firstHeader = requestedData.get(0);
-    return GetHeadersFromPeerByNumberTask.startingAtNumber(
-        protocolSchedule, ethContext, firstHeader.getNumber(), requestedData.size(), metricsSystem);
+    return GetHeadersFromPeerByNumberTask.endingAtNumber(
+        protocolSchedule,
+        ethContext,
+        requestedData.getFirst().getNumber(),
+        requestedData.size(),
+        0,
+        metricsSystem);
   }
 
   @Test
@@ -169,6 +173,6 @@ public class GetHeadersFromPeerByNumberTaskTest extends PeerMessageTaskTest<List
     assertThat(optionalBlockHeaders).isEmpty();
     assertThat(peer.isDisconnected()).isTrue();
     assertThat(((MockPeerConnection) peer.getConnection()).getDisconnectReason().get())
-        .isEqualTo(DisconnectMessage.DisconnectReason.BREACH_OF_PROTOCOL);
+        .isEqualTo(DisconnectMessage.DisconnectReason.BREACH_OF_PROTOCOL_NON_SEQUENTIAL_HEADERS);
   }
 }

@@ -11,9 +11,7 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.ethereum.api.query;
 
 import static org.hyperledger.besu.ethereum.api.query.cache.TransactionLogBloomCacher.BLOCKS_PER_BLOOM_CACHE;
@@ -30,43 +28,50 @@ import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.BlockBody;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.Difficulty;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.mainnet.MainnetBlockHeaderFunctions;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
 import org.hyperledger.besu.evm.log.Log;
 import org.hyperledger.besu.evm.log.LogsBloomFilter;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 public class BlockchainQueriesLogCacheTest {
 
-  @ClassRule public static TemporaryFolder cacheDir = new TemporaryFolder();
+  // this tempDir is deliberately static
+  @TempDir private static Path cacheDir;
 
   private static LogsQuery logsQuery;
   private Hash testHash;
   private static LogsBloomFilter testLogsBloomFilter;
 
+  @Mock ProtocolSchedule protocolSchedule;
   @Mock MutableBlockchain blockchain;
   @Mock WorldStateArchive worldStateArchive;
   @Mock EthScheduler scheduler;
   private BlockchainQueries blockchainQueries;
 
-  @BeforeClass
+  @BeforeAll
   public static void setupClass() throws IOException {
     final Address testAddress = Address.fromHexString("0x123456");
     final Bytes testMessage = Bytes.fromHexString("0x9876");
@@ -76,7 +81,7 @@ public class BlockchainQueriesLogCacheTest {
 
     for (int i = 0; i < 2; i++) {
       final RandomAccessFile file =
-          new RandomAccessFile(cacheDir.newFile("logBloom-" + i + ".cache"), "rws");
+          new RandomAccessFile(cacheDir.resolve("logBloom-" + i + ".cache").toFile(), "rws");
       writeThreeEntries(testLogsBloomFilter, file);
       file.seek((BLOCKS_PER_BLOOM_CACHE - 3) * LogsBloomFilter.BYTE_SIZE);
       writeThreeEntries(testLogsBloomFilter, file);
@@ -90,7 +95,7 @@ public class BlockchainQueriesLogCacheTest {
     file.write(filter.toArray());
   }
 
-  @Before
+  @BeforeEach
   public void setup() {
     final BlockHeader fakeHeader =
         new BlockHeader(
@@ -110,6 +115,11 @@ public class BlockchainQueriesLogCacheTest {
             null,
             Hash.EMPTY,
             0,
+            null,
+            null,
+            null,
+            null,
+            null,
             new MainnetBlockHeaderFunctions());
     testHash = fakeHeader.getHash();
     final BlockBody fakeBody = new BlockBody(Collections.emptyList(), Collections.emptyList());
@@ -120,10 +130,12 @@ public class BlockchainQueriesLogCacheTest {
     when(blockchain.getBlockBody(any())).thenReturn(Optional.of(fakeBody));
     blockchainQueries =
         new BlockchainQueries(
+            protocolSchedule,
             blockchain,
             worldStateArchive,
-            Optional.of(cacheDir.getRoot().toPath()),
-            Optional.of(scheduler));
+            Optional.of(cacheDir),
+            Optional.of(scheduler),
+            MiningConfiguration.newDefault());
   }
 
   /**

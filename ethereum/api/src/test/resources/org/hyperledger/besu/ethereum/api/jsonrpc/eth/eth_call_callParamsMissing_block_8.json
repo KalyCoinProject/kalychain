@@ -12,8 +12,8 @@
     "id": 4,
     "error":{
       "code":-32602,
-      "message":"Invalid params"
+      "message":"Invalid block param (block not found)"
     }
   },
-  "statusCode": 400
+  "statusCode": 200
 }

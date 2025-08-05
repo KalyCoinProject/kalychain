@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -39,16 +40,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.common.base.Charsets;
 import com.google.common.io.Resources;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-@RunWith(Parameterized.class)
 public abstract class AbstractJsonRpcHttpBySpecTest extends AbstractJsonRpcHttpServiceTest {
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -59,15 +57,13 @@ public abstract class AbstractJsonRpcHttpBySpecTest extends AbstractJsonRpcHttpS
   private static final Pattern GAS_MATCH_FOR_TRACE =
       Pattern.compile("\"gasUsed\":\"[x0-9a-fA-F]+\",");
 
-  private final URL specURL;
+  private URL specURL;
 
-  protected AbstractJsonRpcHttpBySpecTest(final String specName, final URL specURL) {
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("specs")
+  public void jsonRPCCallWithSpecFile(final String specName, final URL specURL) throws Exception {
     this.specURL = specURL;
-  }
-
-  @Test
-  public void jsonRPCCallWithSpecFile() throws Exception {
-    jsonRPCCall(specURL);
+    jsonRPCCall(this.specURL);
   }
 
   /**
@@ -119,11 +115,11 @@ public abstract class AbstractJsonRpcHttpBySpecTest extends AbstractJsonRpcHttpS
   }
 
   private void jsonRPCCall(final URL specFile) throws IOException {
-    final String json = Resources.toString(specFile, Charsets.UTF_8);
+    final String json = Resources.toString(specFile, StandardCharsets.UTF_8);
     final ObjectNode specNode = (ObjectNode) objectMapper.readTree(json);
     final String rawRequestBody = specNode.get("request").toString();
 
-    final RequestBody requestBody = RequestBody.create(JSON, rawRequestBody);
+    final RequestBody requestBody = RequestBody.create(rawRequestBody, JSON);
     final Request request = new Request.Builder().post(requestBody).url(baseUrl).build();
 
     try (final Response resp = client.newCall(request).execute()) {

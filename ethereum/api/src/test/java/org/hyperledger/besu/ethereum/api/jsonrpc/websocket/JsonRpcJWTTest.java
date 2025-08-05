@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,8 +18,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.Mockito.spy;
 
+import org.hyperledger.besu.ethereum.api.jsonrpc.EngineJsonRpcService;
 import org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcConfiguration;
-import org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcService;
 import org.hyperledger.besu.ethereum.api.jsonrpc.authentication.AuthenticationService;
 import org.hyperledger.besu.ethereum.api.jsonrpc.authentication.EngineAuthService;
 import org.hyperledger.besu.ethereum.api.jsonrpc.health.HealthService;
@@ -44,6 +44,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
@@ -55,24 +56,20 @@ import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketConnectOptions;
 import io.vertx.core.json.Json;
-import io.vertx.ext.unit.Async;
-import io.vertx.ext.unit.TestContext;
-import io.vertx.ext.unit.junit.VertxUnitRunner;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.ClassRule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-import org.junit.runner.RunWith;
+import io.vertx.junit5.VertxExtension;
+import io.vertx.junit5.VertxTestContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
-@RunWith(VertxUnitRunner.class)
+@ExtendWith(VertxExtension.class)
 public class JsonRpcJWTTest {
-
-  @ClassRule public static final TemporaryFolder folder = new TemporaryFolder();
+  private static final int VERTX_AWAIT_TIMEOUT_MILLIS = 10000;
   public static final String HOSTNAME = "127.0.0.1";
 
   protected static Vertx vertx;
-
+  private VertxTestContext testContext;
   private final JsonRpcConfiguration jsonRpcConfiguration =
       JsonRpcConfiguration.createEngineDefault();
   private HttpClient httpClient;
@@ -82,7 +79,7 @@ public class JsonRpcJWTTest {
   private Path bufferDir;
   private Map<String, JsonRpcMethod> websocketMethods;
 
-  @Before
+  @BeforeEach
   public void initServerAndClient() {
     jsonRpcConfiguration.setPort(0);
     jsonRpcConfiguration.setHostsAllowlist(List.of("*"));
@@ -93,6 +90,7 @@ public class JsonRpcJWTTest {
       fail("couldn't load jwt key from jwt.hex in classpath");
     }
     vertx = Vertx.vertx();
+    testContext = new VertxTestContext();
 
     websocketMethods =
         new WebSocketMethodsFactory(
@@ -125,14 +123,14 @@ public class JsonRpcJWTTest {
     scheduler = new EthScheduler(1, 1, 1, new NoOpMetricsSystem());
   }
 
-  @After
+  @AfterEach
   public void after() {}
 
   @Test
-  public void unauthenticatedWebsocketAllowedWithoutJWTAuth(final TestContext context) {
+  public void unauthenticatedWebsocketAllowedWithoutJWTAuth() throws InterruptedException {
 
-    JsonRpcService jsonRpcService =
-        new JsonRpcService(
+    EngineJsonRpcService engineJsonRpcService =
+        new EngineJsonRpcService(
             vertx,
             bufferDir,
             jsonRpcConfiguration,
@@ -145,9 +143,9 @@ public class JsonRpcJWTTest {
             healthy,
             healthy);
 
-    jsonRpcService.start().join();
+    engineJsonRpcService.start().join();
 
-    final InetSocketAddress inetSocketAddress = jsonRpcService.socketAddress();
+    final InetSocketAddress inetSocketAddress = engineJsonRpcService.socketAddress();
     int listenPort = inetSocketAddress.getPort();
 
     final HttpClientOptions httpClientOptions =
@@ -160,7 +158,6 @@ public class JsonRpcJWTTest {
     wsOpts.setHost(HOSTNAME);
     wsOpts.setURI("/");
 
-    final Async async = context.async();
     httpClient.webSocket(
         wsOpts,
         connected -> {
@@ -178,21 +175,21 @@ public class JsonRpcJWTTest {
                 MutableJsonRpcSuccessResponse messageReply =
                     Json.decodeValue(resp.textData(), MutableJsonRpcSuccessResponse.class);
                 assertThat(messageReply.getResult()).isEqualTo("0x1");
-                async.complete();
+                testContext.completeNow();
               });
           ws.writeTextMessage(Json.encode(req));
         });
 
-    async.awaitSuccess(10000);
-    jsonRpcService.stop();
+    testContext.awaitCompletion(VERTX_AWAIT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+    engineJsonRpcService.stop();
     httpClient.close();
   }
 
   @Test
-  public void httpRequestWithDefaultHeaderAndValidJWTIsAccepted(final TestContext context) {
+  public void httpRequestWithDefaultHeaderAndValidJWTIsAccepted() throws InterruptedException {
 
-    JsonRpcService jsonRpcService =
-        new JsonRpcService(
+    EngineJsonRpcService engineJsonRpcService =
+        new EngineJsonRpcService(
             vertx,
             bufferDir,
             jsonRpcConfiguration,
@@ -205,9 +202,9 @@ public class JsonRpcJWTTest {
             healthy,
             healthy);
 
-    jsonRpcService.start().join();
+    engineJsonRpcService.start().join();
 
-    final InetSocketAddress inetSocketAddress = jsonRpcService.socketAddress();
+    final InetSocketAddress inetSocketAddress = engineJsonRpcService.socketAddress();
     int listenPort = inetSocketAddress.getPort();
 
     final HttpClientOptions httpClientOptions =
@@ -223,7 +220,6 @@ public class JsonRpcJWTTest {
         "Authorization", "Bearer " + ((EngineAuthService) jwtAuth.get()).createToken());
     wsOpts.addHeader(HttpHeaders.HOST, "anything");
 
-    final Async async = context.async();
     httpClient.webSocket(
         wsOpts,
         connected -> {
@@ -242,18 +238,18 @@ public class JsonRpcJWTTest {
                 MutableJsonRpcSuccessResponse messageReply =
                     Json.decodeValue(resp.textData(), MutableJsonRpcSuccessResponse.class);
                 assertThat(messageReply.getResult()).isEqualTo("0x1");
-                async.complete();
+                testContext.completeNow();
               });
           ws.writeTextMessage(Json.encode(req));
         });
 
-    async.awaitSuccess(10000);
-    jsonRpcService.stop();
+    testContext.awaitCompletion(VERTX_AWAIT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+    engineJsonRpcService.stop();
     httpClient.close();
   }
 
   @Test
-  public void wsRequestFromBadHostAndValidJWTIsDenied(final TestContext context) {
+  public void wsRequestFromBadHostAndValidJWTIsDenied() throws InterruptedException {
 
     JsonRpcConfiguration strictHost = JsonRpcConfiguration.createEngineDefault();
     strictHost.setHostsAllowlist(List.of("localhost"));
@@ -265,9 +261,9 @@ public class JsonRpcJWTTest {
       fail("didn't parse jwt");
     }
 
-    JsonRpcService jsonRpcService =
+    EngineJsonRpcService engineJsonRpcService =
         spy(
-            new JsonRpcService(
+            new EngineJsonRpcService(
                 vertx,
                 bufferDir,
                 strictHost,
@@ -280,9 +276,9 @@ public class JsonRpcJWTTest {
                 healthy,
                 healthy));
 
-    jsonRpcService.start().join();
+    engineJsonRpcService.start().join();
 
-    final InetSocketAddress inetSocketAddress = jsonRpcService.socketAddress();
+    final InetSocketAddress inetSocketAddress = engineJsonRpcService.socketAddress();
     int listenPort = inetSocketAddress.getPort();
 
     final HttpClientOptions httpClientOptions =
@@ -298,7 +294,6 @@ public class JsonRpcJWTTest {
         "Authorization", "Bearer " + ((EngineAuthService) jwtAuth.get()).createToken());
     wsOpts.addHeader(HttpHeaders.HOST, "bogushost");
 
-    final Async async = context.async();
     httpClient.webSocket(
         wsOpts,
         connected -> {
@@ -306,17 +301,17 @@ public class JsonRpcJWTTest {
             connected.cause().printStackTrace();
           }
           assertThat(connected.succeeded()).isFalse();
-          async.complete();
+          testContext.completeNow();
         });
 
-    async.awaitSuccess(10000);
-    jsonRpcService.stop();
+    testContext.awaitCompletion(VERTX_AWAIT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+    engineJsonRpcService.stop();
 
     httpClient.close();
   }
 
   @Test
-  public void httpRequestFromBadHostAndValidJWTIsDenied(final TestContext context) {
+  public void httpRequestFromBadHostAndValidJWTIsDenied() throws InterruptedException {
 
     JsonRpcConfiguration strictHost = JsonRpcConfiguration.createEngineDefault();
     strictHost.setHostsAllowlist(List.of("localhost"));
@@ -328,9 +323,9 @@ public class JsonRpcJWTTest {
       fail("didn't parse jwt");
     }
 
-    JsonRpcService jsonRpcService =
+    EngineJsonRpcService engineJsonRpcService =
         spy(
-            new JsonRpcService(
+            new EngineJsonRpcService(
                 vertx,
                 bufferDir,
                 strictHost,
@@ -343,9 +338,9 @@ public class JsonRpcJWTTest {
                 healthy,
                 healthy));
 
-    jsonRpcService.start().join();
+    engineJsonRpcService.start().join();
 
-    final InetSocketAddress inetSocketAddress = jsonRpcService.socketAddress();
+    final InetSocketAddress inetSocketAddress = engineJsonRpcService.socketAddress();
     int listenPort = inetSocketAddress.getPort();
 
     final HttpClientOptions httpClientOptions =
@@ -358,7 +353,6 @@ public class JsonRpcJWTTest {
                 "Authorization", "Bearer " + ((EngineAuthService) jwtAuth.get()).createToken())
             .set(HttpHeaders.HOST, "bogushost");
 
-    final Async async = context.async();
     httpClient.request(
         HttpMethod.GET,
         "/",
@@ -372,21 +366,21 @@ public class JsonRpcJWTTest {
               response -> {
                 assertThat(response.result().statusCode()).isNotEqualTo(500);
                 assertThat(response.result().statusCode()).isEqualTo(403);
-                async.complete();
+                testContext.completeNow();
               });
         });
 
-    async.awaitSuccess(10000);
-    jsonRpcService.stop();
+    testContext.awaitCompletion(VERTX_AWAIT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+    engineJsonRpcService.stop();
 
     httpClient.close();
   }
 
   @Test
-  public void httpRequestWithDefaultHeaderAndInvalidJWTIsDenied(final TestContext context) {
+  public void httpRequestWithDefaultHeaderAndInvalidJWTIsDenied() throws InterruptedException {
 
-    JsonRpcService jsonRpcService =
-        new JsonRpcService(
+    EngineJsonRpcService engineJsonRpcService =
+        new EngineJsonRpcService(
             vertx,
             bufferDir,
             jsonRpcConfiguration,
@@ -399,9 +393,9 @@ public class JsonRpcJWTTest {
             healthy,
             healthy);
 
-    jsonRpcService.start().join();
+    engineJsonRpcService.start().join();
 
-    final InetSocketAddress inetSocketAddress = jsonRpcService.socketAddress();
+    final InetSocketAddress inetSocketAddress = engineJsonRpcService.socketAddress();
     int listenPort = inetSocketAddress.getPort();
 
     final HttpClientOptions httpClientOptions =
@@ -415,7 +409,6 @@ public class JsonRpcJWTTest {
     wsOpts.setURI("/");
     wsOpts.addHeader("Authorization", "Bearer totallyunparseablenonsense");
 
-    final Async async = context.async();
     httpClient.webSocket(
         wsOpts,
         connected -> {
@@ -423,11 +416,11 @@ public class JsonRpcJWTTest {
             connected.cause().printStackTrace();
           }
           assertThat(connected.succeeded()).isFalse();
-          async.complete();
+          testContext.completeNow();
         });
 
-    async.awaitSuccess(10000);
-    jsonRpcService.stop();
+    testContext.awaitCompletion(VERTX_AWAIT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+    engineJsonRpcService.stop();
     httpClient.close();
   }
 }

@@ -23,16 +23,19 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcTestMethodsFactory;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonCallParameter;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.mainnet.ValidationResult;
+import org.hyperledger.besu.ethereum.transaction.CallParameter;
+import org.hyperledger.besu.ethereum.transaction.ImmutableCallParameter;
+import org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason;
 import org.hyperledger.besu.testutil.BlockTestUtil;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
-import com.google.common.base.Charsets;
 import com.google.common.io.Resources;
 import org.apache.tuweni.bytes.Bytes;
 import org.junit.jupiter.api.BeforeAll;
@@ -48,7 +51,7 @@ public class EthCallIntegrationTest {
   @BeforeAll
   public static void setUpOnce() throws Exception {
     final String genesisJson =
-        Resources.toString(BlockTestUtil.getTestGenesisUrl(), Charsets.UTF_8);
+        Resources.toString(BlockTestUtil.getTestGenesisUrl(), StandardCharsets.UTF_8);
 
     BLOCKCHAIN =
         new JsonRpcTestMethodsFactory(
@@ -63,17 +66,13 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnExpectedResultForCallAtLatestBlock() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            null,
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
         new JsonRpcSuccessResponse(
@@ -86,17 +85,13 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnExpectedResultForCallAtSpecificBlock() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            null,
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "0x8");
     final JsonRpcResponse expectedResponse =
         new JsonRpcSuccessResponse(
@@ -109,18 +104,14 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnSuccessWhenCreatingContract() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"),
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            Bytes.fromHexString(
-                "0x608060405234801561001057600080fd5b50610157806100206000396000f30060806040526004361061004c576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff1680633bdab8bf146100515780639ae97baa14610068575b600080fd5b34801561005d57600080fd5b5061006661007f565b005b34801561007457600080fd5b5061007d6100b9565b005b7fa53887c1eed04528e23301f55ad49a91634ef5021aa83a97d07fd16ed71c039a60016040518082815260200191505060405180910390a1565b7fa53887c1eed04528e23301f55ad49a91634ef5021aa83a97d07fd16ed71c039a60026040518082815260200191505060405180910390a17fa53887c1eed04528e23301f55ad49a91634ef5021aa83a97d07fd16ed71c039a60036040518082815260200191505060405180910390a15600a165627a7a7230582010ddaa52e73a98c06dbcd22b234b97206c1d7ed64a7c048e10c2043a3d2309cb0029"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"))
+            .input(
+                Bytes.fromHexString(
+                    "0x608060405234801561001057600080fd5b50610157806100206000396000f30060806040526004361061004c576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff1680633bdab8bf146100515780639ae97baa14610068575b600080fd5b34801561005d57600080fd5b5061006661007f565b005b34801561007457600080fd5b5061007d6100b9565b005b7fa53887c1eed04528e23301f55ad49a91634ef5021aa83a97d07fd16ed71c039a60016040518082815260200191505060405180910390a1565b7fa53887c1eed04528e23301f55ad49a91634ef5021aa83a97d07fd16ed71c039a60026040518082815260200191505060405180910390a17fa53887c1eed04528e23301f55ad49a91634ef5021aa83a97d07fd16ed71c039a60036040518082815260200191505060405180910390a15600a165627a7a7230582010ddaa52e73a98c06dbcd22b234b97206c1d7ed64a7c048e10c2043a3d2309cb0029"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
         new JsonRpcSuccessResponse(
@@ -134,20 +125,22 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnErrorWithGasLimitTooLow() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            0L,
-            null,
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .gas(0L)
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(null, JsonRpcError.INTRINSIC_GAS_EXCEEDS_LIMIT);
+        new JsonRpcErrorResponse(
+            null,
+            JsonRpcError.from(
+                ValidationResult.invalid(
+                    TransactionInvalidReason.INTRINSIC_GAS_EXCEEDS_GAS_LIMIT,
+                    "intrinsic gas cost 21272 exceeds gas limit 0")));
 
     final JsonRpcResponse response = method.response(request);
 
@@ -156,20 +149,23 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnErrorWithGasPriceTooHighAndStrict() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            Wei.fromHexString("0x10000000000000"),
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            true);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .gasPrice(Wei.fromHexString("0x10000000000000"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .strict(true)
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(null, JsonRpcError.TRANSACTION_UPFRONT_COST_EXCEEDS_BALANCE);
+        new JsonRpcErrorResponse(
+            null,
+            JsonRpcError.from(
+                ValidationResult.invalid(
+                    TransactionInvalidReason.UPFRONT_COST_EXCEEDS_BALANCE,
+                    "transaction up-front cost 0x2fefd80000000000000 exceeds transaction sender account balance 0x340ab63a0215af0d")));
 
     final JsonRpcResponse response = method.response(request);
 
@@ -178,17 +174,15 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnSuccessWithGasPriceTooHighNotStrict() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            Wei.fromHexString("0x10000000000000"),
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            false);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .gasPrice(Wei.fromHexString("0x10000000000000"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .strict(false)
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
         new JsonRpcSuccessResponse(
@@ -201,20 +195,22 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnErrorWithGasPriceTooHigh() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            Wei.fromHexString("0x10000000000000"),
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .gasPrice(Wei.fromHexString("0x10000000000000"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(null, JsonRpcError.TRANSACTION_UPFRONT_COST_EXCEEDS_BALANCE);
+        new JsonRpcErrorResponse(
+            null,
+            JsonRpcError.from(
+                ValidationResult.invalid(
+                    TransactionInvalidReason.UPFRONT_COST_EXCEEDS_BALANCE,
+                    "transaction up-front cost 0x2fefd80000000000000 exceeds transaction sender account balance 0x340ab63a0215af0d")));
 
     final JsonRpcResponse response = method.response(request);
 
@@ -223,17 +219,14 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnSuccessWithValidGasPrice() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            Wei.fromHexString("0x10"),
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .gasPrice(Wei.fromHexString("0x10"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
         new JsonRpcSuccessResponse(
@@ -246,20 +239,22 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnErrorWithGasPriceAndEmptyBalance() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xdeadbeef00000000000000000000000000000000"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            Wei.fromHexString("0x10"),
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xdeadbeef00000000000000000000000000000000"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .gasPrice(Wei.fromHexString("0x10"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(null, JsonRpcError.TRANSACTION_UPFRONT_COST_EXCEEDS_BALANCE);
+        new JsonRpcErrorResponse(
+            null,
+            JsonRpcError.from(
+                ValidationResult.invalid(
+                    TransactionInvalidReason.UPFRONT_COST_EXCEEDS_BALANCE,
+                    "transaction up-front cost 0x2fefd80 exceeds transaction sender account balance 0x0")));
 
     final JsonRpcResponse response = method.response(request);
 
@@ -268,17 +263,14 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnSuccessWithZeroGasPriceAndEmptyBalance() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xdeadbeef00000000000000000000000000000000"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            Wei.fromHexString("0x0"),
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xdeadbeef00000000000000000000000000000000"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .gasPrice(Wei.fromHexString("0x0"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
         new JsonRpcSuccessResponse(
@@ -291,17 +283,13 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnSuccessWithoutGasPriceAndEmptyBalance() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xdeadbeef00000000000000000000000000000000"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            null,
-            null,
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xdeadbeef00000000000000000000000000000000"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
         new JsonRpcSuccessResponse(
@@ -314,17 +302,14 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnSuccessWithInvalidGasPricingAndEmptyBalance() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            Address.fromHexString("0xdeadbeef00000000000000000000000000000000"),
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            null,
-            Wei.fromHexString("0x0A"),
-            null,
-            null,
-            Bytes.fromHexString("0x12a7b914"),
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xdeadbeef00000000000000000000000000000000"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .maxPriorityFeePerGas(Wei.fromHexString("0x0A"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse =
         new JsonRpcSuccessResponse(
@@ -337,19 +322,32 @@ public class EthCallIntegrationTest {
 
   @Test
   public void shouldReturnEmptyHashResultForCallWithOnlyToField() {
-    final JsonCallParameter callParameter =
-        new JsonCallParameter(
-            null,
-            Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"),
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null);
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .build();
+
     final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
     final JsonRpcResponse expectedResponse = new JsonRpcSuccessResponse(null, "0x");
+
+    final JsonRpcResponse response = method.response(request);
+
+    assertThat(response).usingRecursiveComparison().isEqualTo(expectedResponse);
+  }
+
+  @Test
+  public void shouldReturnSuccessWithInputAndDataFieldSetToSameValue() {
+    final CallParameter callParameter =
+        ImmutableCallParameter.builder()
+            .sender(Address.fromHexString("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"))
+            .to(Address.fromHexString("0x6295ee1b4f6dd65047762f924ecd367c17eabf8f"))
+            .input(Bytes.fromHexString("0x12a7b914"))
+            .build();
+
+    final JsonRpcRequestContext request = requestWithParams(callParameter, "latest");
+    final JsonRpcResponse expectedResponse =
+        new JsonRpcSuccessResponse(
+            null, "0x0000000000000000000000000000000000000000000000000000000000000001");
 
     final JsonRpcResponse response = method.response(request);
 

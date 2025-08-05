@@ -14,23 +14,63 @@
  */
 package org.hyperledger.besu.plugin.data;
 
+import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.Quantity;
+import org.hyperledger.besu.datatypes.TransactionType;
+
 import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
 
+/** The interface Unsigned private marker transaction. */
 public interface UnsignedPrivateMarkerTransaction {
 
+  /**
+   * Gets type.
+   *
+   * @return the type
+   */
   TransactionType getType();
 
+  /**
+   * Gets nonce.
+   *
+   * @return the nonce
+   */
   long getNonce();
 
+  /**
+   * Gets gas price.
+   *
+   * @return the gas price
+   */
   Optional<? extends Quantity> getGasPrice();
 
+  /**
+   * Gets gas limit.
+   *
+   * @return the gas limit
+   */
   long getGasLimit();
 
+  /**
+   * Gets to address.
+   *
+   * @return the to address
+   */
   Optional<? extends Address> getTo();
 
+  /**
+   * Gets value.
+   *
+   * @return the value
+   */
   Quantity getValue();
 
+  /**
+   * Gets payload.
+   *
+   * @return the payload
+   */
   Bytes getPayload();
 }

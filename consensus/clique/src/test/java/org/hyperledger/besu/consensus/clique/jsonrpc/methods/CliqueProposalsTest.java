@@ -14,13 +14,13 @@
  */
 package org.hyperledger.besu.consensus.clique.jsonrpc.methods;
 
-import static org.assertj.core.api.Java6Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import org.hyperledger.besu.consensus.common.jsonrpc.AbstractVoteProposerMethod;
 import org.hyperledger.besu.consensus.common.jsonrpc.AbstractVoteProposerMethodTest;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class CliqueProposalsTest extends AbstractVoteProposerMethodTest {
 
@@ -36,7 +36,7 @@ public class CliqueProposalsTest extends AbstractVoteProposerMethodTest {
     return "clique_proposals";
   }
 
-  @Before
+  @BeforeEach
   public void setup() {
     method = new CliqueProposals(getValidatorProvider());
   }

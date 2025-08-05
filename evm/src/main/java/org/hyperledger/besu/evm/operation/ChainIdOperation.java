@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,16 +18,35 @@ import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
+import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
-import org.apache.tuweni.units.bigints.UInt256;
 
+/** The Chain id operation. */
 public class ChainIdOperation extends AbstractFixedCostOperation {
 
-  private final UInt256 chainId;
+  /** The CHAINID Opcode number */
+  public static final int OPCODE = 0x46;
 
+  private final Bytes32 chainId;
+
+  /**
+   * Instantiates a new Chain id operation.
+   *
+   * @param gasCalculator the gas calculator
+   * @param chainId the chain id
+   */
   public ChainIdOperation(final GasCalculator gasCalculator, final Bytes32 chainId) {
-    super(0x46, "CHAINID", 0, 1, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
-    this.chainId = UInt256.fromBytes(chainId);
+    super(OPCODE, "CHAINID", 0, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
+    this.chainId = chainId;
+  }
+
+  /**
+   * Returns the chain ID this operation uses
+   *
+   * @return then chainID;
+   */
+  public Bytes getChainId() {
+    return chainId;
   }
 
   @Override

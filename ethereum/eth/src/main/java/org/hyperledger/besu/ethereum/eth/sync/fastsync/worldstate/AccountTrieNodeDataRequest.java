@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,15 +14,16 @@
  */
 package org.hyperledger.besu.ethereum.eth.sync.fastsync.worldstate;
 
+import static org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator.applyForStrategy;
+
 import org.hyperledger.besu.datatypes.Hash;
-import org.hyperledger.besu.ethereum.bonsai.BonsaiWorldStateKeyValueStorage;
 import org.hyperledger.besu.ethereum.rlp.RLP;
 import org.hyperledger.besu.ethereum.rlp.RLPOutput;
 import org.hyperledger.besu.ethereum.trie.CompactEncoding;
-import org.hyperledger.besu.ethereum.trie.MerklePatriciaTrie;
-import org.hyperledger.besu.ethereum.worldstate.StateTrieAccountValue;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage.Updater;
+import org.hyperledger.besu.ethereum.trie.MerkleTrie;
+import org.hyperledger.besu.ethereum.trie.common.PmtStateTrieAccountValue;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -37,16 +38,24 @@ class AccountTrieNodeDataRequest extends TrieNodeDataRequest {
   }
 
   @Override
-  protected void doPersist(final Updater updater) {
-    updater.putAccountStateTrieNode(getLocation().orElse(Bytes.EMPTY), getHash(), getData());
+  protected void doPersist(final WorldStateKeyValueStorage.Updater updater) {
+    applyForStrategy(
+        updater,
+        onBonsai -> {
+          onBonsai.putAccountStateTrieNode(getLocation().orElse(Bytes.EMPTY), getHash(), getData());
+        },
+        onForest -> {
+          onForest.putAccountStateTrieNode(getHash(), getData());
+        });
   }
 
   @Override
-  public Optional<Bytes> getExistingData(final WorldStateStorage worldStateStorage) {
+  public Optional<Bytes> getExistingData(
+      final WorldStateStorageCoordinator worldStateKeyValueStorage) {
     return getLocation()
         .flatMap(
             location ->
-                worldStateStorage
+                worldStateKeyValueStorage
                     .getAccountStateTrieNode(location, getHash())
                     .filter(data -> Hash.hash(data).equals(getHash())));
   }
@@ -59,13 +68,13 @@ class AccountTrieNodeDataRequest extends TrieNodeDataRequest {
 
   @Override
   protected Stream<NodeDataRequest> getRequestsFromTrieNodeValue(
-      final WorldStateStorage worldStateStorage,
+      final WorldStateStorageCoordinator worldStateKeyValueStorage,
       final Optional<Bytes> location,
       final Bytes path,
       final Bytes value) {
     final Stream.Builder<NodeDataRequest> builder = Stream.builder();
-    final StateTrieAccountValue accountValue = StateTrieAccountValue.readFrom(RLP.input(value));
-    // Add code, if appropriate
+    final PmtStateTrieAccountValue accountValue =
+        PmtStateTrieAccountValue.readFrom(RLP.input(value));
 
     final Optional<Hash> accountHash =
         Optional.of(
@@ -73,17 +82,18 @@ class AccountTrieNodeDataRequest extends TrieNodeDataRequest {
                 Bytes32.wrap(
                     CompactEncoding.pathToBytes(
                         Bytes.concatenate(getLocation().orElse(Bytes.EMPTY), path)))));
-    if (worldStateStorage instanceof BonsaiWorldStateKeyValueStorage) {
-      ((BonsaiWorldStateKeyValueStorage.Updater) worldStateStorage.updater())
-          .putAccountInfoState(accountHash.get(), value)
-          .commit();
-    }
 
+    worldStateKeyValueStorage.applyWhenFlatModeEnabled(
+        onBonsai -> {
+          onBonsai.updater().putAccountInfoState(accountHash.get(), value).commit();
+        });
+
+    // Add code, if appropriate
     if (!accountValue.getCodeHash().equals(Hash.EMPTY)) {
       builder.add(createCodeRequest(accountValue.getCodeHash(), accountHash));
     }
     // Add storage, if appropriate
-    if (!accountValue.getStorageRoot().equals(MerklePatriciaTrie.EMPTY_TRIE_NODE_HASH)) {
+    if (!accountValue.getStorageRoot().equals(MerkleTrie.EMPTY_TRIE_NODE_HASH)) {
       // If storage is non-empty queue download
 
       final NodeDataRequest storageNode =

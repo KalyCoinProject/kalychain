@@ -15,53 +15,53 @@
 package org.hyperledger.besu.ethereum.eth.sync.fastsync;
 
 import static java.util.Collections.emptyList;
-import static java.util.stream.Collectors.toList;
 
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockWithReceipts;
 import org.hyperledger.besu.ethereum.core.TransactionReceipt;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
-import org.hyperledger.besu.ethereum.eth.sync.tasks.GetReceiptsForHeadersTask;
+import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
-import org.hyperledger.besu.util.FutureUtils;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Function;
 
-public class DownloadReceiptsStep
-    implements Function<List<Block>, CompletableFuture<List<BlockWithReceipts>>> {
-  private final EthContext ethContext;
-  private final MetricsSystem metricsSystem;
+public class DownloadReceiptsStep extends AbstractDownloadReceiptsStep<Block, BlockWithReceipts> {
 
-  public DownloadReceiptsStep(final EthContext ethContext, final MetricsSystem metricsSystem) {
-    this.ethContext = ethContext;
-    this.metricsSystem = metricsSystem;
+  public DownloadReceiptsStep(
+      final ProtocolSchedule protocolSchedule,
+      final EthContext ethContext,
+      final SynchronizerConfiguration synchronizerConfiguration,
+      final MetricsSystem metricsSystem) {
+    super(protocolSchedule, ethContext, synchronizerConfiguration, metricsSystem);
   }
 
   @Override
-  public CompletableFuture<List<BlockWithReceipts>> apply(final List<Block> blocks) {
-    final List<BlockHeader> headers = blocks.stream().map(Block::getHeader).collect(toList());
-    final CompletableFuture<Map<BlockHeader, List<TransactionReceipt>>> getReceipts =
-        GetReceiptsForHeadersTask.forHeaders(ethContext, headers, metricsSystem).run();
-    final CompletableFuture<List<BlockWithReceipts>> combineWithBlocks =
-        getReceipts.thenApply(
-            receiptsByHeader -> combineBlocksAndReceipts(blocks, receiptsByHeader));
-    FutureUtils.propagateCancellation(combineWithBlocks, getReceipts);
-    return combineWithBlocks;
+  protected BlockHeader getBlockHeader(final Block block) {
+    return block.getHeader();
   }
 
-  private List<BlockWithReceipts> combineBlocksAndReceipts(
+  @Override
+  List<BlockWithReceipts> combineBlocksAndReceipts(
       final List<Block> blocks, final Map<BlockHeader, List<TransactionReceipt>> receiptsByHeader) {
     return blocks.stream()
         .map(
             block -> {
               final List<TransactionReceipt> receipts =
                   receiptsByHeader.getOrDefault(block.getHeader(), emptyList());
+              if (block.getBody().getTransactions().size() != receipts.size()) {
+                throw new IllegalStateException(
+                    "PeerTask response code was success, but incorrect number of receipts returned. Block hash: "
+                        + block.getHeader().getHash()
+                        + ", transactions: "
+                        + block.getBody().getTransactions().size()
+                        + ", receipts: "
+                        + receipts.size());
+              }
               return new BlockWithReceipts(block, receipts);
             })
-        .collect(toList());
+        .toList();
   }
 }

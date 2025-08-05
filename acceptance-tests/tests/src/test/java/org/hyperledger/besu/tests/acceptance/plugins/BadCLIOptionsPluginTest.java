@@ -11,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.tests.acceptance.plugins;
 
@@ -20,23 +19,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.hyperledger.besu.tests.acceptance.dsl.AcceptanceTestBase;
 import org.hyperledger.besu.tests.acceptance.dsl.node.BesuNode;
 
-import java.io.File;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 
-import org.awaitility.Awaitility;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 
 public class BadCLIOptionsPluginTest extends AcceptanceTestBase {
   private BesuNode node;
 
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
     System.setProperty("TEST_BAD_CLI", "true");
 
@@ -46,12 +42,13 @@ public class BadCLIOptionsPluginTest extends AcceptanceTestBase {
     cluster.start(node);
   }
 
-  @After
+  @AfterEach
   public void tearDown() {
     System.setProperty("TEST_BAD_CLI", "false");
   }
 
   @Test
+  @DisabledOnOs(OS.MAC)
   public void shouldNotRegister() {
     final Path registrationFile = node.homeDirectory().resolve("plugins/badCLIOptions.init");
     waitForFile(registrationFile);
@@ -59,6 +56,7 @@ public class BadCLIOptionsPluginTest extends AcceptanceTestBase {
   }
 
   @Test
+  @DisabledOnOs(OS.MAC)
   public void shouldNotStart() {
     // depend on the good PicoCLIOptions to tell us when it should be up
     final Path registrationFile = node.homeDirectory().resolve("plugins/pluginLifecycle.started");
@@ -68,26 +66,11 @@ public class BadCLIOptionsPluginTest extends AcceptanceTestBase {
   }
 
   @Test
-  @Ignore("No way to do a graceful shutdown of Besu at the moment.")
+  @Disabled("No way to do a graceful shutdown of Besu at the moment.")
   public void shouldNotStop() {
     cluster.stopNode(node);
     waitForFile(node.homeDirectory().resolve("plugins/pluginLifecycle.stopped"));
     assertThat(node.homeDirectory().resolve("plugins/badCliOptions.start")).doesNotExist();
     assertThat(node.homeDirectory().resolve("plugins/badCliOptions.stop")).doesNotExist();
-  }
-
-  private void waitForFile(final Path path) {
-    final File file = path.toFile();
-    Awaitility.waitAtMost(30, TimeUnit.SECONDS)
-        .until(
-            () -> {
-              if (file.exists()) {
-                try (final Stream<String> s = Files.lines(path)) {
-                  return s.count() > 0;
-                }
-              } else {
-                return false;
-              }
-            });
   }
 }

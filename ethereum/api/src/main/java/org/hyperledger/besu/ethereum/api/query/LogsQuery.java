@@ -1,5 +1,4 @@
 /*
- *
  * Copyright ConsenSys AG.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
@@ -12,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.ethereum.api.query;
 
@@ -101,7 +99,7 @@ public class LogsQuery {
   }
 
   private boolean matchesTopic(final LogTopic topic, final List<LogTopic> matchCriteria) {
-    return matchCriteria.contains(null) || matchCriteria.contains(topic);
+    return matchCriteria.isEmpty() || matchCriteria.contains(null) || matchCriteria.contains(topic);
   }
 
   @Override

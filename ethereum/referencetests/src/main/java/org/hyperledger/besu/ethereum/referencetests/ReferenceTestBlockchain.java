@@ -11,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.ethereum.referencetests;
 
@@ -108,6 +107,12 @@ public class ReferenceTestBlockchain implements Blockchain {
   }
 
   @Override
+  public Optional<Long> getEarliestBlockNumber() {
+    // Deterministic, but just not implemented.
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
   public long getChainHeadBlockNumber() {
     throw new NonDeterministicOperationException(CHAIN_HEAD_ERROR);
   }
@@ -133,9 +138,19 @@ public class ReferenceTestBlockchain implements Blockchain {
   }
 
   @Override
+  public synchronized Optional<BlockHeader> getBlockHeaderSafe(final Hash blockHeaderHash) {
+    return Optional.ofNullable(hashToHeader.get(blockHeaderHash));
+  }
+
+  @Override
   public Optional<BlockBody> getBlockBody(final Hash blockHeaderHash) {
     // Deterministic, but just not implemented.
     throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public synchronized Optional<BlockBody> getBlockBodySafe(final Hash blockHeaderHash) {
+    return getBlockBody(blockHeaderHash);
   }
 
   @Override
@@ -183,10 +198,11 @@ public class ReferenceTestBlockchain implements Blockchain {
   }
 
   @Override
+  @SuppressWarnings("unused")
   public Comparator<BlockHeader> getBlockChoiceRule() {
     return (a, b) -> {
       throw new NonDeterministicOperationException(
-          "ReferenceTestBlockchian for VMTest Chains do not support fork choice rules");
+          "ReferenceTestBlockchain for VMTest Chains do not support fork choice rules");
     };
   }
 

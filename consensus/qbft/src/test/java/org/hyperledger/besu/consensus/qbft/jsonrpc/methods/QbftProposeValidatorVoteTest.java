@@ -26,15 +26,15 @@ import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class QbftProposeValidatorVoteTest {
   private final ValidatorProvider validatorProvider = mock(ValidatorProvider.class);
@@ -43,7 +43,7 @@ public class QbftProposeValidatorVoteTest {
   private final String JSON_RPC_VERSION = "2.0";
   private QbftProposeValidatorVote method;
 
-  @Before
+  @BeforeEach
   public void setup() {
     method = new QbftProposeValidatorVote(validatorProvider);
     when(validatorProvider.getVoteProviderAtHead()).thenReturn(Optional.of(voteProvider));
@@ -58,35 +58,35 @@ public class QbftProposeValidatorVoteTest {
   public void exceptionWhenNoParamsSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams()))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 0");
+        .hasMessage("Invalid validator address parameter (index 0)");
   }
 
   @Test
   public void exceptionWhenNoAuthSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams(Address.fromHexString("1"))))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 1");
+        .hasMessage("Invalid vote type parameter (index 1)");
   }
 
   @Test
   public void exceptionWhenNoAddressSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams("true")))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 0");
+        .hasMessageContaining("Invalid validator address parameter");
   }
 
   @Test
   public void exceptionWhenInvalidBoolParameterSupplied() {
     assertThatThrownBy(() -> method.response(requestWithParams(Address.fromHexString("1"), "c")))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 1");
+        .hasMessageContaining("Invalid vote type parameter (index 1)");
   }
 
   @Test
   public void methodNotEnabledWhenNoVoteProvider() {
     final JsonRpcRequestContext request = requestWithParams(Address.fromHexString("1"));
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(request.getRequest().getId(), JsonRpcError.METHOD_NOT_ENABLED);
+        new JsonRpcErrorResponse(request.getRequest().getId(), RpcErrorType.METHOD_NOT_ENABLED);
     when(validatorProvider.getVoteProviderAtHead()).thenReturn(Optional.empty());
 
     final JsonRpcResponse response = method.response(request);

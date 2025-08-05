@@ -22,10 +22,10 @@ import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.api.query.cache.TransactionLogBloomCacher;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
@@ -36,15 +36,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class AdminLogsRemoveCacheTest {
   @Mock private BlockchainQueries blockchainQueries;
   @Mock private Blockchain blockchain;
@@ -55,54 +55,31 @@ public class AdminLogsRemoveCacheTest {
 
   private AdminLogsRemoveCache adminLogsRemoveCache;
 
-  @Before
+  @BeforeEach
   public void setup() {
     adminLogsRemoveCache = new AdminLogsRemoveCache(blockchainQueries);
   }
 
   @Test
   public void testParameterized() {
-    when(blockchainQueries.headBlockNumber()).thenReturn(1000L);
+    long blockNumber = 1000L;
+    when(blockchainQueries.headBlockNumber()).thenReturn(blockNumber);
 
     final Object[][] testVector = {
-      {new String[] {}, 0L, blockchainQueries.headBlockNumber()},
+      {new String[] {}, 0L, blockNumber},
       {new String[] {"earliest"}, 0L, 0L},
-      {
-        new String[] {"latest"},
-        blockchainQueries.headBlockNumber(),
-        blockchainQueries.headBlockNumber()
-      },
-      {
-        new String[] {"pending"},
-        blockchainQueries.headBlockNumber(),
-        blockchainQueries.headBlockNumber()
-      },
+      {new String[] {"latest"}, blockNumber, blockNumber},
+      {new String[] {"pending"}, blockNumber, blockNumber},
       {new String[] {"0x50"}, 0x50L, 0x50L},
       {new String[] {"earliest", "earliest"}, 0L, 0L},
-      {new String[] {"earliest", "latest"}, 0L, blockchainQueries.headBlockNumber()},
-      {
-        new String[] {"latest", "latest"},
-        blockchainQueries.headBlockNumber(),
-        blockchainQueries.headBlockNumber()
-      },
-      {
-        new String[] {"pending", "latest"},
-        blockchainQueries.headBlockNumber(),
-        blockchainQueries.headBlockNumber()
-      },
-      {new String[] {"0x50", "latest"}, 0x50L, blockchainQueries.headBlockNumber()},
-      {new String[] {"earliest", "pending"}, 0L, blockchainQueries.headBlockNumber()},
-      {
-        new String[] {"latest", "pending"},
-        blockchainQueries.headBlockNumber(),
-        blockchainQueries.headBlockNumber()
-      },
-      {
-        new String[] {"pending", "pending"},
-        blockchainQueries.headBlockNumber(),
-        blockchainQueries.headBlockNumber()
-      },
-      {new String[] {"0x50", "pending"}, 0x50L, blockchainQueries.headBlockNumber()},
+      {new String[] {"earliest", "latest"}, 0L, blockNumber},
+      {new String[] {"latest", "latest"}, blockNumber, blockNumber},
+      {new String[] {"pending", "latest"}, blockNumber, blockNumber},
+      {new String[] {"0x50", "latest"}, 0x50L, blockNumber},
+      {new String[] {"earliest", "pending"}, 0L, blockNumber},
+      {new String[] {"latest", "pending"}, blockNumber, blockNumber},
+      {new String[] {"pending", "pending"}, blockNumber, blockNumber},
+      {new String[] {"0x50", "pending"}, 0x50L, blockNumber},
       {new String[] {"earliest", "0x100"}, 0L, 0x100L},
       {new String[] {"0x50", "0x100"}, 0x50L, 0x100L},
     };
@@ -175,7 +152,8 @@ public class AdminLogsRemoveCacheTest {
         new JsonRpcRequestContext(
             new JsonRpcRequest("2.0", "admin_logsRemoveCache", new String[] {"0x20", "0x1"}));
     final JsonRpcResponse expectedResponse =
-        new JsonRpcErrorResponse(request.getRequest().getId(), JsonRpcError.INVALID_PARAMS);
+        new JsonRpcErrorResponse(
+            request.getRequest().getId(), RpcErrorType.INVALID_BLOCK_NUMBER_PARAMS);
 
     when(blockchainQueries.getBlockchain()).thenReturn(blockchain);
     when(blockchain.getBlockByNumber(anyLong())).thenReturn(Optional.of(block));

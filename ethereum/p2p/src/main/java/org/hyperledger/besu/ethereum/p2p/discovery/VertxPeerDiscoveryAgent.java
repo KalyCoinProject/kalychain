@@ -16,17 +16,20 @@ package org.hyperledger.besu.ethereum.p2p.discovery;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.tuweni.bytes.Bytes.wrapBuffer;
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.debugLambda;
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.traceLambda;
 
-import org.hyperledger.besu.crypto.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKey;
 import org.hyperledger.besu.ethereum.forkid.ForkIdManager;
 import org.hyperledger.besu.ethereum.p2p.config.DiscoveryConfiguration;
-import org.hyperledger.besu.ethereum.p2p.discovery.internal.Packet;
 import org.hyperledger.besu.ethereum.p2p.discovery.internal.PeerDiscoveryController;
 import org.hyperledger.besu.ethereum.p2p.discovery.internal.PeerDiscoveryController.AsyncExecutor;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.PeerTable;
 import org.hyperledger.besu.ethereum.p2p.discovery.internal.TimerUtil;
 import org.hyperledger.besu.ethereum.p2p.discovery.internal.VertxTimerUtil;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.DaggerPacketPackage;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.Packet;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.PacketDeserializer;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.PacketPackage;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.PacketSerializer;
 import org.hyperledger.besu.ethereum.p2p.permissions.PeerPermissions;
 import org.hyperledger.besu.ethereum.p2p.rlpx.RlpxAgent;
 import org.hyperledger.besu.ethereum.storage.StorageProvider;
@@ -55,6 +58,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.datagram.DatagramPacket;
 import io.vertx.core.datagram.DatagramSocket;
 import io.vertx.core.datagram.DatagramSocketOptions;
+import org.ethereum.beacon.discovery.util.DecodeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,7 +69,10 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
   /* The vert.x UDP socket. */
   private DatagramSocket socket;
 
-  public VertxPeerDiscoveryAgent(
+  private final PacketSerializer packetSerializer;
+  private final PacketDeserializer packetDeserializer;
+
+  VertxPeerDiscoveryAgent(
       final Vertx vertx,
       final NodeKey nodeKey,
       final DiscoveryConfiguration config,
@@ -74,7 +81,10 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
       final MetricsSystem metricsSystem,
       final StorageProvider storageProvider,
       final ForkIdManager forkIdManager,
-      final RlpxAgent rlpxAgent) {
+      final RlpxAgent rlpxAgent,
+      final PeerTable peerTable,
+      final PacketSerializer packetSerializer,
+      final PacketDeserializer packetDeserializer) {
     super(
         nodeKey,
         config,
@@ -83,15 +93,45 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
         metricsSystem,
         storageProvider,
         forkIdManager,
-        rlpxAgent);
+        rlpxAgent,
+        peerTable);
     checkArgument(vertx != null, "vertx instance cannot be null");
     this.vertx = vertx;
+    this.packetSerializer = packetSerializer;
+    this.packetDeserializer = packetDeserializer;
 
     metricsSystem.createIntegerGauge(
         BesuMetricCategory.NETWORK,
         "vertx_eventloop_pending_tasks",
         "The number of pending tasks in the Vertx event loop",
         pendingTaskCounter(vertx.nettyEventLoopGroup()));
+  }
+
+  public static VertxPeerDiscoveryAgent create(
+      final Vertx vertx,
+      final NodeKey nodeKey,
+      final DiscoveryConfiguration config,
+      final PeerPermissions peerPermissions,
+      final NatService natService,
+      final MetricsSystem metricsSystem,
+      final StorageProvider storageProvider,
+      final ForkIdManager forkIdManager,
+      final RlpxAgent rlpxAgent,
+      final PeerTable peerTable) {
+    PacketPackage packetPackage = DaggerPacketPackage.create();
+    return new VertxPeerDiscoveryAgent(
+        vertx,
+        nodeKey,
+        config,
+        peerPermissions,
+        natService,
+        metricsSystem,
+        storageProvider,
+        forkIdManager,
+        rlpxAgent,
+        peerTable,
+        packetPackage.packetSerializer(),
+        packetPackage.packetDeserializer());
   }
 
   private IntSupplier pendingTaskCounter(final EventLoopGroup eventLoopGroup) {
@@ -170,7 +210,7 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
           new RuntimeException("Discovery socket already closed, because Besu is closing down"));
     } else {
       socket.send(
-          packet.encode(),
+          packetSerializer.encode(packet),
           peer.getEndpoint().getUdpPort(),
           peer.getEnodeURL().getIpAsString(),
           ar -> {
@@ -196,6 +236,7 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
           if (ar.succeeded()) {
             controller.ifPresent(PeerDiscoveryController::stop);
             socket = null;
+            isStopped = true;
             completion.complete(null);
           } else {
             completion.completeExceptionally(ar.cause());
@@ -210,28 +251,30 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
     if (err instanceof NativeIoException) {
       final var nativeErr = (NativeIoException) err;
       if (nativeErr.expectedErr() == Errors.ERROR_ENETUNREACH_NEGATIVE) {
-        debugLambda(
-            LOG,
-            "Peer {} is unreachable, native error code {}, packet: {}, stacktrace: {}",
-            peer::toString,
-            nativeErr::expectedErr,
-            () -> wrapBuffer(packet.encode()),
-            err::toString);
+        LOG.atDebug()
+            .setMessage("Peer {} is unreachable, native error code {}, packet: {}, stacktrace: {}")
+            .addArgument(peer)
+            .addArgument(nativeErr::expectedErr)
+            .addArgument(() -> wrapBuffer(packetSerializer.encode(packet)))
+            .addArgument(err)
+            .log();
       } else {
-        LOG.warn(
-            "Sending to peer {} failed, native error code {}, packet: {}, stacktrace: {}",
-            peer,
-            nativeErr.expectedErr(),
-            wrapBuffer(packet.encode()),
-            err);
+        LOG.atDebug()
+            .setMessage(
+                "Sending to peer {} failed, native error code {}, packet: {}, stacktrace: {}")
+            .addArgument(peer)
+            .addArgument(nativeErr.expectedErr())
+            .addArgument(wrapBuffer(packetSerializer.encode(packet)))
+            .addArgument(err)
+            .log();
       }
     } else if (err instanceof SocketException && err.getMessage().contains("unreachable")) {
-      debugLambda(
-          LOG,
-          "Peer {} is unreachable, packet: {}",
-          peer::toString,
-          () -> wrapBuffer(packet.encode()),
-          err::toString);
+      LOG.atDebug()
+          .setMessage("Peer {} is unreachable, packet: {}")
+          .addArgument(peer)
+          .addArgument(() -> wrapBuffer(packetSerializer.encode(packet)))
+          .addArgument(err)
+          .log();
     } else if (err instanceof SocketException
         && err.getMessage().contentEquals("Operation not permitted")) {
       LOG.debug(
@@ -243,17 +286,17 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
           "Unsupported address type exception when connecting to peer {}, this is likely due to ipv6 not being enabled at runtime. "
               + "Set logging level to TRACE to see full stacktrace",
           peer);
-      traceLambda(
-          LOG,
-          "Sending to peer {} failed, packet: {}, stacktrace: {}",
-          peer::toString,
-          () -> wrapBuffer(packet.encode()),
-          err::toString);
+      LOG.atTrace()
+          .setMessage("Sending to peer {} failed, packet: {}, stacktrace: {}")
+          .addArgument(peer)
+          .addArgument(() -> wrapBuffer(packetSerializer.encode(packet)))
+          .addArgument(err)
+          .log();
     } else {
       LOG.warn(
           "Sending to peer {} failed, packet: {}, stacktrace: {}",
           peer,
-          wrapBuffer(packet.encode()),
+          wrapBuffer(packetSerializer.encode(packet)),
           err);
     }
   }
@@ -264,7 +307,7 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
    * @param exception the exception that was raised
    */
   private void handleException(final Throwable exception) {
-    if (exception instanceof IOException) {
+    if (exception instanceof IOException || exception instanceof DecodeException) {
       LOG.debug("Packet handler exception", exception);
     } else {
       LOG.error("Packet handler exception", exception);
@@ -285,7 +328,7 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
     vertx.<Packet>executeBlocking(
         future -> {
           try {
-            future.complete(Packet.decode(datagram.data()));
+            future.complete(packetDeserializer.decode(datagram.data()));
           } catch (final Throwable t) {
             future.fail(t);
           }
@@ -298,7 +341,8 @@ public class VertxPeerDiscoveryAgent extends PeerDiscoveryAgent {
             final Endpoint endpoint = new Endpoint(host, port, Optional.empty());
             handleIncomingPacket(endpoint, event.result());
           } else {
-            if (event.cause() instanceof PeerDiscoveryPacketDecodingException) {
+            if (event.cause() instanceof PeerDiscoveryPacketDecodingException
+                || event.cause() instanceof DecodeException) {
               LOG.debug(
                   "Discarding invalid peer discovery packet: {}, {}",
                   event.cause().getMessage(),

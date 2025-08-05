@@ -16,18 +16,19 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.FilterParameter;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.LogsResult;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.core.LogWithMetadata;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
@@ -38,9 +39,9 @@ public class EthGetLogs implements JsonRpcMethod {
   private static final Logger LOG = LoggerFactory.getLogger(EthGetLogs.class);
 
   private final BlockchainQueries blockchain;
-  private final Optional<Long> maxLogRange;
+  private final long maxLogRange;
 
-  public EthGetLogs(final BlockchainQueries blockchain, final Optional<Long> maxLogRange) {
+  public EthGetLogs(final BlockchainQueries blockchain, final long maxLogRange) {
     this.blockchain = blockchain;
     this.maxLogRange = maxLogRange;
   }
@@ -52,11 +53,18 @@ public class EthGetLogs implements JsonRpcMethod {
 
   @Override
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
-    final FilterParameter filter = requestContext.getRequiredParameter(0, FilterParameter.class);
+    final FilterParameter filter;
+    try {
+      filter = requestContext.getRequiredParameter(0, FilterParameter.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid filter parameter (index 0)", RpcErrorType.INVALID_FILTER_PARAMS, e);
+    }
+    LOG.atTrace().setMessage("eth_getLogs FilterParameter: {}").addArgument(filter).log();
 
     if (!filter.isValid()) {
       return new JsonRpcErrorResponse(
-          requestContext.getRequest().getId(), JsonRpcError.INVALID_PARAMS);
+          requestContext.getRequest().getId(), RpcErrorType.INVALID_FILTER_PARAMS);
     }
 
     final AtomicReference<Exception> ex = new AtomicReference<>();
@@ -65,8 +73,18 @@ public class EthGetLogs implements JsonRpcMethod {
             .getBlockHash()
             .map(
                 blockHash ->
-                    blockchain.matchingLogs(
-                        blockHash, filter.getLogsQuery(), requestContext::isAlive))
+                    blockchain
+                        .getBlockHeaderByHash(blockHash)
+                        .map(
+                            blockHeader ->
+                                blockchain.matchingLogs(
+                                    blockHeader.getBlockHash(),
+                                    filter.getLogsQuery(),
+                                    requestContext::isAlive))
+                        .orElseThrow(
+                            () ->
+                                new InvalidJsonRpcParameters(
+                                    "Block not found", RpcErrorType.BLOCK_NOT_FOUND)))
             .orElseGet(
                 () -> {
                   final long fromBlockNumber;
@@ -78,17 +96,22 @@ public class EthGetLogs implements JsonRpcMethod {
                             .getBlockNumber(blockchain)
                             .orElseThrow(
                                 () ->
-                                    new Exception("fromBlock not found: " + filter.getFromBlock()));
+                                    new InvalidJsonRpcParameters(
+                                        "fromBlock not found: " + filter.getFromBlock(),
+                                        RpcErrorType.INVALID_BLOCK_NUMBER_PARAMS));
                     toBlockNumber =
                         filter
                             .getToBlock()
                             .getBlockNumber(blockchain)
                             .orElseThrow(
-                                () -> new Exception("toBlock not found: " + filter.getToBlock()));
-                    if (maxLogRange.isPresent()
-                        && (toBlockNumber - fromBlockNumber) > maxLogRange.get()) {
-                      throw new IllegalArgumentException(
-                          "Requested range exceeds maximum range limit");
+                                () ->
+                                    new InvalidJsonRpcParameters(
+                                        "toBlock not found: " + filter.getToBlock(),
+                                        RpcErrorType.INVALID_BLOCK_NUMBER_PARAMS));
+                    if (maxLogRange > 0 && (toBlockNumber - fromBlockNumber) > maxLogRange) {
+                      throw new InvalidJsonRpcParameters(
+                          "Requested range exceeds maximum range limit",
+                          RpcErrorType.EXCEEDS_RPC_MAX_BLOCK_RANGE);
                     }
                   } catch (final Exception e) {
                     ex.set(e);
@@ -103,13 +126,18 @@ public class EthGetLogs implements JsonRpcMethod {
                 });
 
     if (ex.get() != null) {
-      LOG.debug("eth_getLogs call failed: ", ex.get());
-      if (ex.get() instanceof IllegalArgumentException) {
+      LOG.atDebug()
+          .setMessage("eth_getLogs request {} failed:")
+          .addArgument(requestContext.getRequest())
+          .setCause(ex.get())
+          .log();
+      if (ex.get() instanceof InvalidJsonRpcParameters) {
         return new JsonRpcErrorResponse(
-            requestContext.getRequest().getId(), JsonRpcError.EXCEEDS_RPC_MAX_BLOCK_RANGE);
+            requestContext.getRequest().getId(),
+            ((InvalidJsonRpcParameters) ex.get()).getRpcErrorType());
+      } else {
+        throw new RuntimeException(ex.get());
       }
-      return new JsonRpcErrorResponse(
-          requestContext.getRequest().getId(), JsonRpcError.INVALID_PARAMS);
     }
 
     return new JsonRpcSuccessResponse(

@@ -11,9 +11,7 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.util.io;
 
 import java.io.Closeable;
@@ -27,6 +25,7 @@ import java.util.function.BiFunction;
 
 import org.xerial.snappy.Snappy;
 
+/** The Rolling file writer. */
 public class RollingFileWriter implements Closeable {
   private static final long MAX_FILE_SIZE = 1 << 30; // 1 GiB max file size
 
@@ -37,6 +36,13 @@ public class RollingFileWriter implements Closeable {
   private FileOutputStream out;
   private final DataOutputStream index;
 
+  /**
+   * Instantiates a new Rolling file writer.
+   *
+   * @param filenameGenerator the filename generator
+   * @param compressed the compressed
+   * @throws FileNotFoundException the file not found exception
+   */
   public RollingFileWriter(
       final BiFunction<Integer, Boolean, Path> filenameGenerator, final boolean compressed)
       throws FileNotFoundException {
@@ -55,10 +61,22 @@ public class RollingFileWriter implements Closeable {
     index = new DataOutputStream(new FileOutputStream(dataFileToIndex(firstOutputFile).toFile()));
   }
 
+  /**
+   * Data file to index path.
+   *
+   * @param dataName the data name
+   * @return the path
+   */
   public static Path dataFileToIndex(final Path dataName) {
     return Path.of(dataName.toString().replaceAll("(.*)[-.]\\d\\d\\d\\d\\.(.)dat", "$1.$2idx"));
   }
 
+  /**
+   * Write bytes.
+   *
+   * @param bytes the bytes
+   * @throws IOException the io exception
+   */
   public void writeBytes(final byte[] bytes) throws IOException {
     final byte[] finalBytes;
     if (compressed) {

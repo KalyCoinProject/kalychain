@@ -16,11 +16,13 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.permissioning
 
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.permissioning.AccountLocalConfigPermissioningController;
 import org.hyperledger.besu.ethereum.permissioning.AllowlistOperationResult;
 
@@ -44,7 +46,14 @@ public class PermRemoveAccountsFromAllowlist implements JsonRpcMethod {
   @Override
   @SuppressWarnings("unchecked")
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
-    final List<String> accountsList = requestContext.getRequiredParameter(0, List.class);
+    final List<String> accountsList;
+    try {
+      accountsList = requestContext.getRequiredParameter(0, List.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid accounts list parameter (index 0)", RpcErrorType.INVALID_ACCOUNT_PARAMS, e);
+    }
+
     if (allowlistController.isPresent()) {
       final AllowlistOperationResult removeResult =
           allowlistController.get().removeAccounts(accountsList);
@@ -52,22 +61,22 @@ public class PermRemoveAccountsFromAllowlist implements JsonRpcMethod {
       switch (removeResult) {
         case ERROR_EMPTY_ENTRY:
           return new JsonRpcErrorResponse(
-              requestContext.getRequest().getId(), JsonRpcError.ACCOUNT_ALLOWLIST_EMPTY_ENTRY);
+              requestContext.getRequest().getId(), RpcErrorType.ACCOUNT_ALLOWLIST_EMPTY_ENTRY);
         case ERROR_INVALID_ENTRY:
           return new JsonRpcErrorResponse(
-              requestContext.getRequest().getId(), JsonRpcError.ACCOUNT_ALLOWLIST_INVALID_ENTRY);
+              requestContext.getRequest().getId(), RpcErrorType.ACCOUNT_ALLOWLIST_INVALID_ENTRY);
         case ERROR_ABSENT_ENTRY:
           return new JsonRpcErrorResponse(
-              requestContext.getRequest().getId(), JsonRpcError.ACCOUNT_ALLOWLIST_ABSENT_ENTRY);
+              requestContext.getRequest().getId(), RpcErrorType.ACCOUNT_ALLOWLIST_ABSENT_ENTRY);
         case ERROR_DUPLICATED_ENTRY:
           return new JsonRpcErrorResponse(
-              requestContext.getRequest().getId(), JsonRpcError.ACCOUNT_ALLOWLIST_DUPLICATED_ENTRY);
+              requestContext.getRequest().getId(), RpcErrorType.ACCOUNT_ALLOWLIST_DUPLICATED_ENTRY);
         case ERROR_ALLOWLIST_PERSIST_FAIL:
           return new JsonRpcErrorResponse(
-              requestContext.getRequest().getId(), JsonRpcError.ALLOWLIST_PERSIST_FAILURE);
+              requestContext.getRequest().getId(), RpcErrorType.ALLOWLIST_PERSIST_FAILURE);
         case ERROR_ALLOWLIST_FILE_SYNC:
           return new JsonRpcErrorResponse(
-              requestContext.getRequest().getId(), JsonRpcError.ALLOWLIST_FILE_SYNC);
+              requestContext.getRequest().getId(), RpcErrorType.ALLOWLIST_FILE_SYNC);
         case SUCCESS:
           return new JsonRpcSuccessResponse(requestContext.getRequest().getId());
         default:
@@ -76,7 +85,7 @@ public class PermRemoveAccountsFromAllowlist implements JsonRpcMethod {
       }
     } else {
       return new JsonRpcErrorResponse(
-          requestContext.getRequest().getId(), JsonRpcError.ACCOUNT_ALLOWLIST_NOT_ENABLED);
+          requestContext.getRequest().getId(), RpcErrorType.ACCOUNT_ALLOWLIST_NOT_ENABLED);
     }
   }
 }

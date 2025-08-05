@@ -16,6 +16,7 @@ package org.hyperledger.besu.ethereum.eth.sync.fastsync;
 
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
+import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.util.ExceptionUtils;
@@ -39,13 +40,14 @@ import org.slf4j.LoggerFactory;
 public class PivotBlockRetriever {
 
   private static final Logger LOG = LoggerFactory.getLogger(PivotBlockRetriever.class);
-  public static final int MAX_QUERY_RETRIES_PER_PEER = 4;
+  public static final int MAX_QUERY_RETRIES_PER_PEER = 5;
   private static final int DEFAULT_MAX_PIVOT_BLOCK_RESETS = 250;
   private static final int SUSPICIOUS_NUMBER_OF_RETRIES = 5;
 
   private final EthContext ethContext;
   private final MetricsSystem metricsSystem;
   private final ProtocolSchedule protocolSchedule;
+  private final SynchronizerConfiguration synchronizerConfiguration;
 
   // The number of peers we need to query to confirm our pivot block
   private final int peersToQuery;
@@ -66,6 +68,7 @@ public class PivotBlockRetriever {
       final ProtocolSchedule protocolSchedule,
       final EthContext ethContext,
       final MetricsSystem metricsSystem,
+      final SynchronizerConfiguration synchronizerConfiguration,
       final long pivotBlockNumber,
       final int peersToQuery,
       final long pivotBlockNumberResetDelta,
@@ -73,6 +76,7 @@ public class PivotBlockRetriever {
     this.protocolSchedule = protocolSchedule;
     this.ethContext = ethContext;
     this.metricsSystem = metricsSystem;
+    this.synchronizerConfiguration = synchronizerConfiguration;
     this.pivotBlockNumber = new AtomicLong(pivotBlockNumber);
     this.peersToQuery = peersToQuery;
     this.pivotBlockNumberResetDelta = pivotBlockNumberResetDelta;
@@ -83,6 +87,7 @@ public class PivotBlockRetriever {
       final ProtocolSchedule protocolSchedule,
       final EthContext ethContext,
       final MetricsSystem metricsSystem,
+      final SynchronizerConfiguration synchronizerConfiguration,
       final long pivotBlockNumber,
       final int peersToQuery,
       final long pivotBlockNumberResetDelta) {
@@ -90,6 +95,7 @@ public class PivotBlockRetriever {
         protocolSchedule,
         ethContext,
         metricsSystem,
+        synchronizerConfiguration,
         pivotBlockNumber,
         peersToQuery,
         pivotBlockNumberResetDelta,
@@ -111,6 +117,7 @@ public class PivotBlockRetriever {
             protocolSchedule,
             ethContext,
             metricsSystem,
+            synchronizerConfiguration,
             pivotBlockNumber.get(),
             peersToQuery,
             MAX_QUERY_RETRIES_PER_PEER);
@@ -156,8 +163,7 @@ public class PivotBlockRetriever {
           || pivotBlockNumber.get() <= BlockHeader.GENESIS_BLOCK_NUMBER) {
         LOG.info("Max retries reached, cancel pivot block download.");
         // Pivot block selection has failed
-        result.completeExceptionally(
-            new FastSyncException(FastSyncError.PIVOT_BLOCK_HEADER_MISMATCH));
+        result.completeExceptionally(new SyncException(SyncError.PIVOT_BLOCK_HEADER_MISMATCH));
         return;
       } else {
         LOG.info("Move pivot block back to {} and retry.", pivotBlockNumber);

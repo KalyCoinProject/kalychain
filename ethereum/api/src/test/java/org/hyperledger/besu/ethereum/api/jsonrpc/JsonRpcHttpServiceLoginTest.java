@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu contributors
+ * Copyright contributors to Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -18,11 +18,14 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.util.Lists.list;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
 
 import org.hyperledger.besu.config.StubGenesisConfigOptions;
+import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.ProtocolContext;
+import org.hyperledger.besu.ethereum.api.ApiConfiguration;
+import org.hyperledger.besu.ethereum.api.graphql.GraphQLConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.health.HealthService;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.filter.FilterManager;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.EthAccounts;
@@ -35,7 +38,10 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.methods.JsonRpcMethodsFactory;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.WebSocketConfiguration;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.blockcreation.PoWMiningCoordinator;
-import org.hyperledger.besu.ethereum.core.PrivacyParameters;
+import org.hyperledger.besu.ethereum.chain.BadBlockManager;
+import org.hyperledger.besu.ethereum.chain.Blockchain;
+import org.hyperledger.besu.ethereum.core.Block;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.Synchronizer;
 import org.hyperledger.besu.ethereum.eth.EthProtocol;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeers;
@@ -43,12 +49,15 @@ import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 import org.hyperledger.besu.ethereum.mainnet.MainnetProtocolSchedule;
 import org.hyperledger.besu.ethereum.p2p.network.P2PNetwork;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
+import org.hyperledger.besu.ethereum.transaction.TransactionSimulator;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.metrics.prometheus.MetricsConfiguration;
 import org.hyperledger.besu.nat.NatService;
+import org.hyperledger.besu.testutil.DeterministicEthScheduler;
 
 import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
@@ -77,18 +86,18 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import org.assertj.core.api.Assertions;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-import org.junit.runner.RunWith;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.StrictStubs.class)
+@ExtendWith(MockitoExtension.class)
 public class JsonRpcHttpServiceLoginTest {
 
-  @ClassRule public static final TemporaryFolder folder = new TemporaryFolder();
+  // this tempDir is deliberately static
+  @TempDir private static Path folder;
 
   private static final Vertx vertx = Vertx.vertx();
 
@@ -97,7 +106,9 @@ public class JsonRpcHttpServiceLoginTest {
   protected static OkHttpClient client;
   protected static String baseUrl;
   protected static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-  protected static final String CLIENT_VERSION = "TestClientVersion/0.1.0";
+  protected static final String CLIENT_NODE_NAME = "TestClientVersion/0.1.0";
+  protected static final String CLIENT_VERSION = "0.1.0";
+  protected static final String CLIENT_COMMIT = "12345678";
   protected static final BigInteger CHAIN_ID = BigInteger.valueOf(123);
   protected static P2PNetwork peerDiscoveryMock;
   protected static BlockchainQueries blockchainQueries;
@@ -112,49 +123,65 @@ public class JsonRpcHttpServiceLoginTest {
   protected final JsonRpcTestHelper testHelper = new JsonRpcTestHelper();
   protected static final NatService natService = new NatService(Optional.empty());
 
-  @BeforeClass
+  @BeforeAll
   public static void initServerAndClient() throws Exception {
     peerDiscoveryMock = mock(P2PNetwork.class);
     blockchainQueries = mock(BlockchainQueries.class);
     synchronizer = mock(Synchronizer.class);
 
     final Set<Capability> supportedCapabilities = new HashSet<>();
-    supportedCapabilities.add(EthProtocol.ETH62);
-    supportedCapabilities.add(EthProtocol.ETH63);
+    supportedCapabilities.add(EthProtocol.LATEST);
 
     final StubGenesisConfigOptions genesisConfigOptions =
         new StubGenesisConfigOptions().constantinopleBlock(0).chainId(CHAIN_ID);
 
+    // mocks so that genesis hash is populated
+    Blockchain blockchain = mock(Blockchain.class);
+    Block block = mock(Block.class);
+    lenient().when(blockchainQueries.getBlockchain()).thenReturn(blockchain);
+    lenient().when(blockchain.getGenesisBlock()).thenReturn(block);
+    lenient().when(block.getHash()).thenReturn(Hash.EMPTY);
+
     rpcMethods =
-        spy(
-            new JsonRpcMethodsFactory()
-                .methods(
-                    CLIENT_VERSION,
-                    CHAIN_ID,
+        new JsonRpcMethodsFactory()
+            .methods(
+                CLIENT_NODE_NAME,
+                CLIENT_VERSION,
+                CLIENT_COMMIT,
+                CHAIN_ID,
+                genesisConfigOptions,
+                peerDiscoveryMock,
+                blockchainQueries,
+                synchronizer,
+                MainnetProtocolSchedule.fromConfig(
                     genesisConfigOptions,
-                    peerDiscoveryMock,
-                    blockchainQueries,
-                    synchronizer,
-                    MainnetProtocolSchedule.fromConfig(genesisConfigOptions),
-                    mock(ProtocolContext.class),
-                    mock(FilterManager.class),
-                    mock(TransactionPool.class),
-                    mock(PoWMiningCoordinator.class),
-                    new NoOpMetricsSystem(),
-                    supportedCapabilities,
-                    Optional.empty(),
-                    Optional.empty(),
-                    JSON_RPC_APIS,
-                    mock(PrivacyParameters.class),
-                    mock(JsonRpcConfiguration.class),
-                    mock(WebSocketConfiguration.class),
-                    mock(MetricsConfiguration.class),
-                    natService,
-                    new HashMap<>(),
-                    folder.getRoot().toPath(),
-                    mock(EthPeers.class),
-                    vertx,
-                    Optional.empty()));
+                    MiningConfiguration.MINING_DISABLED,
+                    new BadBlockManager(),
+                    false,
+                    new NoOpMetricsSystem()),
+                mock(ProtocolContext.class),
+                mock(FilterManager.class),
+                mock(TransactionPool.class),
+                mock(MiningConfiguration.class),
+                mock(PoWMiningCoordinator.class),
+                new NoOpMetricsSystem(),
+                supportedCapabilities,
+                Optional.empty(),
+                Optional.empty(),
+                JSON_RPC_APIS,
+                mock(JsonRpcConfiguration.class),
+                mock(WebSocketConfiguration.class),
+                mock(MetricsConfiguration.class),
+                mock(GraphQLConfiguration.class),
+                natService,
+                new HashMap<>(),
+                folder,
+                mock(EthPeers.class),
+                vertx,
+                mock(ApiConfiguration.class),
+                Optional.empty(),
+                mock(TransactionSimulator.class),
+                new DeterministicEthScheduler());
     service = createJsonRpcHttpService();
     jwtAuth = service.authenticationService.get().getJwtAuthProvider();
     service.start().join();
@@ -177,7 +204,7 @@ public class JsonRpcHttpServiceLoginTest {
 
     return new JsonRpcHttpService(
         vertx,
-        folder.newFolder().toPath(),
+        folder,
         config,
         new NoOpMetricsSystem(),
         natService,
@@ -194,26 +221,40 @@ public class JsonRpcHttpServiceLoginTest {
   }
 
   /** Tears down the HTTP server. */
-  @AfterClass
+  @AfterAll
   public static void shutdownServer() {
     service.stop().join();
   }
 
   @Test
+  public void loginWithEmptyCredentials() throws IOException {
+    final RequestBody body = RequestBody.create("{}", JSON);
+    final Request request = new Request.Builder().post(body).url(baseUrl + "/login").build();
+    try (final Response resp = client.newCall(request).execute()) {
+      assertThat(resp.code()).isEqualTo(400);
+      assertThat(resp.message()).isEqualTo("Bad Request");
+      final String bodyString = resp.body().string();
+      assertThat(bodyString).containsIgnoringCase("username and password are required");
+    }
+  }
+
+  @Test
   public void loginWithBadCredentials() throws IOException {
     final RequestBody body =
-        RequestBody.create(JSON, "{\"username\":\"user\",\"password\":\"badpass\"}");
+        RequestBody.create("{\"username\":\"user\",\"password\":\"badpass\"}", JSON);
     final Request request = new Request.Builder().post(body).url(baseUrl + "/login").build();
     try (final Response resp = client.newCall(request).execute()) {
       assertThat(resp.code()).isEqualTo(401);
       assertThat(resp.message()).isEqualTo("Unauthorized");
+      final String bodyString = resp.body().string();
+      assertThat(bodyString).containsIgnoringCase("the username or password is incorrect");
     }
   }
 
   @Test
   public void loginWithGoodCredentials() throws IOException {
     final RequestBody body =
-        RequestBody.create(JSON, "{\"username\":\"user\",\"password\":\"pegasys\"}");
+        RequestBody.create("{\"username\":\"user\",\"password\":\"pegasys\"}", JSON);
     final Request request = new Request.Builder().post(body).url(baseUrl + "/login").build();
     try (final Response resp = client.newCall(request).execute()) {
       assertThat(resp.code()).isEqualTo(200);
@@ -247,7 +288,7 @@ public class JsonRpcHttpServiceLoginTest {
   @Test
   public void loginWithGoodCredentialsAndPermissions() throws IOException {
     final RequestBody body =
-        RequestBody.create(JSON, "{\"username\":\"user\",\"password\":\"pegasys\"}");
+        RequestBody.create("{\"username\":\"user\",\"password\":\"pegasys\"}", JSON);
     final Request request = new Request.Builder().post(body).url(baseUrl + "/login").build();
     try (final Response resp = client.newCall(request).execute()) {
       assertThat(resp.code()).isEqualTo(200);
@@ -288,7 +329,7 @@ public class JsonRpcHttpServiceLoginTest {
   public void loginDoesntPopulateJWTPayloadWithPassword()
       throws IOException, KeyStoreException, CertificateException, NoSuchAlgorithmException {
     final RequestBody body =
-        RequestBody.create(JSON, "{\"username\":\"user\",\"password\":\"pegasys\"}");
+        RequestBody.create("{\"username\":\"user\",\"password\":\"pegasys\"}", JSON);
     final Request request = new Request.Builder().post(body).url(baseUrl + "/login").build();
     try (final Response resp = client.newCall(request).execute()) {
       assertThat(resp.code()).isEqualTo(200);
@@ -315,7 +356,7 @@ public class JsonRpcHttpServiceLoginTest {
   public void loginPopulatesJWTPayloadWithRequiredValues()
       throws IOException, KeyStoreException, CertificateException, NoSuchAlgorithmException {
     final RequestBody body =
-        RequestBody.create(JSON, "{\"username\":\"user\",\"password\":\"pegasys\"}");
+        RequestBody.create("{\"username\":\"user\",\"password\":\"pegasys\"}", JSON);
     final Request request = new Request.Builder().post(body).url(baseUrl + "/login").build();
     try (final Response resp = client.newCall(request).execute()) {
       assertThat(resp.code()).isEqualTo(200);
@@ -348,7 +389,7 @@ public class JsonRpcHttpServiceLoginTest {
   private String login(final String username, final String password) throws IOException {
     final RequestBody loginBody =
         RequestBody.create(
-            JSON, "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}");
+            "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}", JSON);
     final Request loginRequest =
         new Request.Builder().post(loginBody).url(baseUrl + "/login").build();
     final String token;
@@ -372,7 +413,7 @@ public class JsonRpcHttpServiceLoginTest {
   @Test
   public void checkJsonRpcMethodsAvailableWithGoodCredentialsAndPermissions() throws IOException {
     final RequestBody body =
-        RequestBody.create(JSON, "{\"username\":\"user\",\"password\":\"pegasys\"}");
+        RequestBody.create("{\"username\":\"user\",\"password\":\"pegasys\"}", JSON);
     final Request request = new Request.Builder().post(body).url(baseUrl + "/login").build();
     try (final Response resp = client.newCall(request).execute()) {
       assertThat(resp.code()).isEqualTo(200);
@@ -441,7 +482,7 @@ public class JsonRpcHttpServiceLoginTest {
   public void checkJsonRpcMethodsAvailableWithGoodCredentialsAndAllPermissions()
       throws IOException {
     final RequestBody body =
-        RequestBody.create(JSON, "{\"username\":\"adminuser\",\"password\":\"pegasys\"}");
+        RequestBody.create("{\"username\":\"adminuser\",\"password\":\"pegasys\"}", JSON);
     final Request request = new Request.Builder().post(body).url(baseUrl + "/login").build();
     try (final Response resp = client.newCall(request).execute()) {
       assertThat(resp.code()).isEqualTo(200);
@@ -524,10 +565,10 @@ public class JsonRpcHttpServiceLoginTest {
     final String id = "123";
     final RequestBody body =
         RequestBody.create(
-            JSON,
             "{\"jsonrpc\":\"2.0\",\"id\":"
                 + Json.encode(id)
-                + ",\"method\":\"web3_clientVersion\"}");
+                + ",\"method\":\"web3_clientVersion\"}",
+            JSON);
 
     try (final Response resp = client.newCall(buildPostRequest(body)).execute()) {
       assertThat(resp.code()).isEqualTo(401);
@@ -540,10 +581,10 @@ public class JsonRpcHttpServiceLoginTest {
     final String id = "123";
     final RequestBody body =
         RequestBody.create(
-            JSON,
             "{\"jsonrpc\":\"2.0\",\"id\":"
                 + Json.encode(id)
-                + ",\"method\":\"web3_clientVersion\"}");
+                + ",\"method\":\"web3_clientVersion\"}",
+            JSON);
 
     try (final Response resp = client.newCall(buildPostRequest(body, "badtoken")).execute()) {
       assertThat(resp.code()).isEqualTo(401);
@@ -558,10 +599,10 @@ public class JsonRpcHttpServiceLoginTest {
     final String id = "123";
     final RequestBody web3ClientVersionBody =
         RequestBody.create(
-            JSON,
             "{\"jsonrpc\":\"2.0\",\"id\":"
                 + Json.encode(id)
-                + ",\"method\":\"web3_clientVersion\"}");
+                + ",\"method\":\"web3_clientVersion\"}",
+            JSON);
 
     try (final Response web3ClientVersionResp =
         client.newCall(buildPostRequest(web3ClientVersionBody, token)).execute()) {
@@ -582,8 +623,8 @@ public class JsonRpcHttpServiceLoginTest {
     final String id = "123";
     final RequestBody requestBody =
         RequestBody.create(
-            JSON,
-            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_services\"}");
+            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_services\"}",
+            JSON);
 
     try (final Response response = client.newCall(buildPostRequest(requestBody, token)).execute()) {
       assertThat(response.code()).isEqualTo(200);
@@ -597,8 +638,8 @@ public class JsonRpcHttpServiceLoginTest {
     final String id = "123";
     final RequestBody requestBody =
         RequestBody.create(
-            JSON,
-            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_services\"}");
+            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"net_services\"}",
+            JSON);
 
     try (final Response response = client.newCall(buildPostRequest(requestBody)).execute()) {
       assertThat(response.code()).isEqualTo(200);
@@ -614,8 +655,8 @@ public class JsonRpcHttpServiceLoginTest {
     final String id = "007";
     final RequestBody body =
         RequestBody.create(
-            JSON,
-            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"eth_syncing\"}");
+            "{\"jsonrpc\":\"2.0\",\"id\":" + Json.encode(id) + ",\"method\":\"eth_syncing\"}",
+            JSON);
 
     try (final Response resp = client.newCall(buildPostRequest(body, token)).execute()) {
       assertThat(resp.code()).isEqualTo(401);

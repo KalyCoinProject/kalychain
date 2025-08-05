@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,68 +14,91 @@
  */
 package org.hyperledger.besu.consensus.merge.blockcreation;
 
-import org.hyperledger.besu.datatypes.Address;
-import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.blockcreation.AbstractBlockCreator;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderBuilder;
 import org.hyperledger.besu.ethereum.core.Difficulty;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.SealableBlockHeader;
 import org.hyperledger.besu.ethereum.core.Transaction;
-import org.hyperledger.besu.ethereum.eth.transactions.sorter.AbstractPendingTransactionsSorter;
+import org.hyperledger.besu.ethereum.core.Withdrawal;
+import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
+import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Supplier;
 
 import org.apache.tuweni.bytes.Bytes32;
 
-public class MergeBlockCreator extends AbstractBlockCreator {
+/** The Merge block creator. */
+class MergeBlockCreator extends AbstractBlockCreator {
 
-  MergeBlockCreator(
-      final Address coinbase,
-      final Supplier<Optional<Long>> targetGasLimitSupplier,
+  /**
+   * Instantiates a new Merge block creator.
+   *
+   * @param miningConfiguration the mining parameters
+   * @param extraDataCalculator the extra data calculator
+   * @param transactionPool the pending transactions
+   * @param protocolContext the protocol context
+   * @param protocolSchedule the protocol schedule
+   * @param parentHeader the parent header
+   */
+  public MergeBlockCreator(
+      final MiningConfiguration miningConfiguration,
       final ExtraDataCalculator extraDataCalculator,
-      final AbstractPendingTransactionsSorter pendingTransactions,
+      final TransactionPool transactionPool,
       final ProtocolContext protocolContext,
       final ProtocolSchedule protocolSchedule,
-      final Wei minTransactionGasPrice,
-      final Address miningBeneficiary,
-      final Double minBlockOccupancyRatio,
-      final BlockHeader parentHeader) {
+      final BlockHeader parentHeader,
+      final EthScheduler ethScheduler) {
     super(
-        miningBeneficiary,
-        __ -> miningBeneficiary,
-        targetGasLimitSupplier,
+        miningConfiguration,
+        (__, ___) -> miningConfiguration.getCoinbase().orElseThrow(),
         extraDataCalculator,
-        pendingTransactions,
+        transactionPool,
         protocolContext,
         protocolSchedule,
-        minTransactionGasPrice,
-        minBlockOccupancyRatio,
-        parentHeader);
+        ethScheduler);
   }
 
+  /**
+   * Create block and return block creation result.
+   *
+   * @param maybeTransactions the maybe transactions
+   * @param random the random
+   * @param timestamp the timestamp
+   * @param withdrawals optional list of withdrawals
+   * @param parentBeaconBlockRoot optional root hash of the parent beacon block
+   * @return the block creation result
+   */
   public BlockCreationResult createBlock(
       final Optional<List<Transaction>> maybeTransactions,
       final Bytes32 random,
-      final long timestamp) {
+      final long timestamp,
+      final Optional<List<Withdrawal>> withdrawals,
+      final Optional<Bytes32> parentBeaconBlockRoot,
+      final BlockHeader parentHeader) {
+
     return createBlock(
         maybeTransactions,
         Optional.of(Collections.emptyList()),
+        withdrawals,
         Optional.of(random),
+        parentBeaconBlockRoot,
         timestamp,
-        false);
+        false,
+        parentHeader);
   }
 
   @Override
   public BlockCreationResult createBlock(
       final Optional<List<Transaction>> maybeTransactions,
       final Optional<List<BlockHeader>> maybeOmmers,
-      final long timestamp) {
+      final long timestamp,
+      final BlockHeader parentHeader) {
     throw new UnsupportedOperationException("random is required");
   }
 

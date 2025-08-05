@@ -37,18 +37,29 @@ import javax.annotation.Nullable;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonFactoryBuilder;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import org.apache.tuweni.bytes.Bytes;
 
 /**
  * Utility class for generating JUnit test parameters from json files. Each set of test parameters
  * will contain a String name followed by an object representing a deserialized json test case.
+ *
+ * @param <S> the type parameter
+ * @param <T> the type parameter
  */
 public class JsonTestParameters<S, T> {
 
   private static final String TEST_PATTERN_STR = System.getProperty("test.ethereum.include");
 
+  /**
+   * The Collector.
+   *
+   * @param <S> the type parameter
+   */
   public static class Collector<S> {
 
     @Nullable private final Predicate<String> includes;
@@ -64,8 +75,43 @@ public class JsonTestParameters<S, T> {
     // memory when we run a single test, but it's not the case we're trying to optimize.
     private final List<Object[]> testParameters = new ArrayList<>(256);
 
-    public void add(final String name, final S value, final boolean runTest) {
-      testParameters.add(new Object[] {name, value, runTest && includes(name)});
+    /**
+     * Add standard reference test.
+     *
+     * @param name the name
+     * @param fullPath the full path of the test
+     * @param value the value
+     * @param runTest the run test
+     */
+    public void add(
+        final String name, final String fullPath, final S value, final boolean runTest) {
+      testParameters.add(
+          new Object[] {name, value, runTest && includes(name) && includes(fullPath)});
+    }
+
+    /**
+     * Add EOF test.
+     *
+     * @param name the name
+     * @param fullPath the full path of the test
+     * @param fork the fork to be tested
+     * @param code the code to be tested
+     * @param containerKind the containerKind, if specified
+     * @param value the value
+     * @param runTest the run test
+     */
+    public void add(
+        final String name,
+        final String fullPath,
+        final String fork,
+        final Bytes code,
+        final String containerKind,
+        final S value,
+        final boolean runTest) {
+      testParameters.add(
+          new Object[] {
+            name, fork, code, containerKind, value, runTest && includes(name) && includes(fullPath)
+          });
     }
 
     private boolean includes(final String name) {
@@ -83,17 +129,37 @@ public class JsonTestParameters<S, T> {
     }
   }
 
+  /**
+   * The interface Generator.
+   *
+   * @param <S> the type parameter
+   * @param <T> the type parameter
+   */
   @FunctionalInterface
   public interface Generator<S, T> {
-    void generate(String name, S mappedType, Collector<T> collector);
+    /**
+     * Generate.
+     *
+     * @param name the name
+     * @param fullPath the full path of the test
+     * @param mappedType the mapped type
+     * @param collector the collector
+     */
+    void generate(String name, String fullPath, S mappedType, Collector<T> collector);
   }
 
   private static final ObjectMapper objectMapper =
-      new ObjectMapper().registerModule(new Jdk8Module());
+      new ObjectMapper(
+              new JsonFactoryBuilder()
+                  .streamReadConstraints(
+                      StreamReadConstraints.builder().maxStringLength(Integer.MAX_VALUE).build())
+                  .build())
+          .registerModule(new Jdk8Module());
 
   // The type to which the json file is directly mapped
   private final Class<S> jsonFileMappedType;
-  // The final type of the test case spec, which may or may not not be same than jsonFileMappedType
+
+  // The final type of the test case spec, which may or may not be same than jsonFileMappedType
   // Note that we don't really use this field as of now, but as this is the actual type of the final
   // spec used by tests, it feels "right" to have it passed explicitly at construction and having it
   // around could prove useful later.
@@ -115,16 +181,39 @@ public class JsonTestParameters<S, T> {
     }
   }
 
+  /**
+   * Create json test parameters.
+   *
+   * @param <T> the type parameter
+   * @param testCaseSpec the test case spec
+   * @return the json test parameters
+   */
   public static <T> JsonTestParameters<T, T> create(final Class<T> testCaseSpec) {
     return new JsonTestParameters<>(testCaseSpec, testCaseSpec)
-        .generator((name, testCase, collector) -> collector.add(name, testCase, true));
+        .generator(
+            (name, fullPath, testCase, collector) -> collector.add(name, fullPath, testCase, true));
   }
 
+  /**
+   * Create json test parameters.
+   *
+   * @param <S> the type parameter
+   * @param <T> the type parameter
+   * @param jsonFileMappedType the json file mapped type
+   * @param testCaseSpec the test case spec
+   * @return the json test parameters
+   */
   public static <S, T> JsonTestParameters<S, T> create(
       final Class<S> jsonFileMappedType, final Class<T> testCaseSpec) {
     return new JsonTestParameters<>(jsonFileMappedType, testCaseSpec);
   }
 
+  /**
+   * Exclude files json test parameters.
+   *
+   * @param filenames the filenames
+   * @return the json test parameters
+   */
   @SuppressWarnings("unused")
   public JsonTestParameters<S, T> excludeFiles(final String... filenames) {
     fileExcludes.addAll(Arrays.asList(filenames));
@@ -143,29 +232,50 @@ public class JsonTestParameters<S, T> {
     addPatterns(patterns, testIncludes);
   }
 
+  /**
+   * Ignore json test parameters.
+   *
+   * @param patterns the patterns
+   * @return the json test parameters
+   */
   public JsonTestParameters<S, T> ignore(final String... patterns) {
     addPatterns(patterns, testIgnores);
     return this;
   }
 
+  /** Ignore all. */
   public void ignoreAll() {
     testIgnores.add(t -> true);
   }
 
+  /**
+   * Generator json test parameters.
+   *
+   * @param generator the generator
+   * @return the json test parameters
+   */
   public JsonTestParameters<S, T> generator(final Generator<S, T> generator) {
     this.generator = generator;
     return this;
   }
 
-  public Collection<Object[]> generate(final String path) {
-    return generate(new String[] {path});
-  }
-
+  /**
+   * Generate collection.
+   *
+   * @param paths the paths
+   * @return the collection
+   */
   public Collection<Object[]> generate(final String... paths) {
     return generate(getFilteredFiles(paths));
   }
 
-  private Collection<Object[]> generate(final Collection<File> filteredFiles) {
+  /**
+   * Generate collection.
+   *
+   * @param filteredFiles the filtered files
+   * @return the collection
+   */
+  public Collection<Object[]> generate(final Collection<File> filteredFiles) {
     checkState(generator != null, "Missing generator function");
 
     final Collector<T> collector =
@@ -178,7 +288,7 @@ public class JsonTestParameters<S, T> {
       for (final Map.Entry<String, S> entry : testCase.testCaseSpecs.entrySet()) {
         final String testName = entry.getKey();
         final S mappedType = entry.getValue();
-        generator.generate(testName, mappedType, collector);
+        generator.generate(testName, file.getPath(), mappedType, collector);
       }
     }
     return collector.getParameters();
@@ -198,7 +308,7 @@ public class JsonTestParameters<S, T> {
     final List<File> files = new ArrayList<>();
     for (final String path : paths) {
       final URL url = classLoader.getResource(path);
-      checkState(url != null, "Cannot find test directory " + path);
+      checkState(url != null, "Cannot find test directory %s", path);
       final Path dir;
       try {
         dir = Paths.get(url.toURI());
@@ -231,9 +341,15 @@ public class JsonTestParameters<S, T> {
     }
   }
 
-  private static class JsonTestCaseReader<T> {
+  /**
+   * Parameterized wrapper for deserialization.
+   *
+   * @param <T> the type parameter
+   */
+  public static class JsonTestCaseReader<T> {
 
-    final Map<String, T> testCaseSpecs;
+    /** The Test case specs. */
+    public final Map<String, T> testCaseSpecs;
 
     /**
      * Public constructor.

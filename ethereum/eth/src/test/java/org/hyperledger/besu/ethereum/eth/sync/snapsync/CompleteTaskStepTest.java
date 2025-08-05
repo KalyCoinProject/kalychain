@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -34,14 +34,14 @@ import java.util.List;
 import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class CompleteTaskStepTest {
 
   private static final Hash HASH = Hash.hash(Bytes.of(1, 2, 3));
 
-  private final SnapSyncState snapSyncState = mock(SnapSyncState.class);
+  private final SnapSyncProcessState snapSyncState = mock(SnapSyncProcessState.class);
   private final SnapWorldDownloadState downloadState = mock(SnapWorldDownloadState.class);
 
   private final BlockHeader blockHeader =
@@ -50,7 +50,7 @@ public class CompleteTaskStepTest {
   private final CompleteTaskStep completeTaskStep =
       new CompleteTaskStep(snapSyncState, new NoOpMetricsSystem());
 
-  @Before
+  @BeforeEach
   public void setup() {
     when(snapSyncState.getPivotBlockHeader()).thenReturn(Optional.of(blockHeader));
   }
@@ -116,7 +116,7 @@ public class CompleteTaskStepTest {
 
   @Test
   public void shouldMarkSnapsyncTaskCompleteWhenData() {
-    final List<Task<SnapDataRequest>> requests = TaskGenerator.createAccountRequest(true);
+    final List<Task<SnapDataRequest>> requests = TaskGenerator.createAccountRequest(true, false);
     requests.stream()
         .map(StubTask.class::cast)
         .forEach(
@@ -132,7 +132,7 @@ public class CompleteTaskStepTest {
 
   @Test
   public void shouldMarkSnapsyncTaskAsFailedWhenNoData() {
-    final List<Task<SnapDataRequest>> requests = TaskGenerator.createAccountRequest(false);
+    final List<Task<SnapDataRequest>> requests = TaskGenerator.createAccountRequest(false, false);
     requests.stream()
         .map(StubTask.class::cast)
         .forEach(

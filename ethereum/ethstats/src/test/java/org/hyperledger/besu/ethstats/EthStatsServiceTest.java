@@ -33,8 +33,8 @@ import org.hyperledger.besu.ethereum.p2p.network.P2PNetwork;
 import org.hyperledger.besu.ethereum.p2p.peers.EnodeURLImpl;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
 import org.hyperledger.besu.ethstats.request.EthStatsRequest;
-import org.hyperledger.besu.ethstats.util.ImmutableNetstatsUrl;
-import org.hyperledger.besu.ethstats.util.NetstatsUrl;
+import org.hyperledger.besu.ethstats.util.EthStatsConnectOptions;
+import org.hyperledger.besu.ethstats.util.ImmutableEthStatsConnectOptions;
 import org.hyperledger.besu.plugin.data.EnodeURL;
 
 import java.math.BigInteger;
@@ -46,19 +46,22 @@ import java.util.Optional;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.WebSocket;
+import io.vertx.core.http.WebSocketClient;
+import io.vertx.core.http.WebSocketClientOptions;
 import io.vertx.core.http.WebSocketConnectOptions;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 @SuppressWarnings("unchecked")
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 public class EthStatsServiceTest {
 
   @Mock private Vertx vertx;
@@ -71,11 +74,11 @@ public class EthStatsServiceTest {
   @Mock private P2PNetwork p2PNetwork;
   @Mock private EthContext ethContext;
   @Mock private EthScheduler ethScheduler;
-  @Mock private HttpClient httpClient;
+  @Mock private WebSocketClient webSocketClient;
   @Mock private WebSocket webSocket;
 
-  final NetstatsUrl netstatsUrl =
-      ImmutableNetstatsUrl.builder()
+  final EthStatsConnectOptions ethStatsConnectOptions =
+      ImmutableEthStatsConnectOptions.builder()
           .nodeName("besu-node")
           .secret("secret")
           .host("127.0.0.1")
@@ -94,11 +97,12 @@ public class EthStatsServiceTest {
 
   private EthStatsService ethStatsService;
 
-  @Before
+  @BeforeEach
   public void initMocks() {
     when(ethProtocolManager.ethContext()).thenReturn(ethContext);
     when(ethContext.getScheduler()).thenReturn(ethScheduler);
-    when(vertx.createHttpClient(any(HttpClientOptions.class))).thenReturn(httpClient);
+    when(vertx.createWebSocketClient(any(WebSocketClientOptions.class)))
+        .thenReturn(webSocketClient);
     when(genesisConfigOptions.getChainId()).thenReturn(Optional.of(BigInteger.ONE));
     when(ethProtocolManager.getSupportedCapabilities())
         .thenReturn(List.of(Capability.create("eth64", 1)));
@@ -108,7 +112,7 @@ public class EthStatsServiceTest {
   public void shouldRetryWhenLocalEnodeNotAvailable() throws Exception {
     ethStatsService =
         new EthStatsService(
-            netstatsUrl,
+            ethStatsConnectOptions,
             blockchainQueries,
             ethProtocolManager,
             transactionPool,
@@ -127,7 +131,7 @@ public class EthStatsServiceTest {
   public void shouldSendHelloMessage() {
     ethStatsService =
         new EthStatsService(
-            netstatsUrl,
+            ethStatsConnectOptions,
             blockchainQueries,
             ethProtocolManager,
             transactionPool,
@@ -144,8 +148,8 @@ public class EthStatsServiceTest {
 
     ethStatsService.start();
 
-    verify(httpClient, times(1))
-        .webSocket(any(WebSocketConnectOptions.class), webSocketCaptor.capture());
+    verify(webSocketClient, times(1))
+        .connect(any(WebSocketConnectOptions.class), webSocketCaptor.capture());
     webSocketCaptor.getValue().handle(succeededWebSocketEvent(Optional.of(webSocket)));
 
     final ArgumentCaptor<String> helloMessageCaptor = ArgumentCaptor.forClass(String.class);
@@ -160,7 +164,7 @@ public class EthStatsServiceTest {
 
     ethStatsService =
         new EthStatsService(
-            netstatsUrl,
+            ethStatsConnectOptions,
             blockchainQueries,
             ethProtocolManager,
             transactionPool,
@@ -176,8 +180,8 @@ public class EthStatsServiceTest {
 
     final ArgumentCaptor<Handler<AsyncResult<WebSocket>>> webSocketCaptor =
         ArgumentCaptor.forClass(Handler.class);
-    verify(httpClient, times(1))
-        .webSocket(any(WebSocketConnectOptions.class), webSocketCaptor.capture());
+    verify(webSocketClient, times(1))
+        .connect(any(WebSocketConnectOptions.class), webSocketCaptor.capture());
     webSocketCaptor.getValue().handle(succeededWebSocketEvent(Optional.of(webSocket)));
 
     final ArgumentCaptor<Handler<AsyncResult<Void>>> helloMessageCaptor =
@@ -192,7 +196,7 @@ public class EthStatsServiceTest {
   public void shouldSendFullReportIfHelloMessageSucceeded() {
     ethStatsService =
         new EthStatsService(
-            netstatsUrl,
+            ethStatsConnectOptions,
             blockchainQueries,
             ethProtocolManager,
             transactionPool,
@@ -209,8 +213,8 @@ public class EthStatsServiceTest {
 
     ethStatsService.start();
 
-    verify(httpClient, times(1))
-        .webSocket(any(WebSocketConnectOptions.class), webSocketCaptor.capture());
+    verify(webSocketClient, times(1))
+        .connect(any(WebSocketConnectOptions.class), webSocketCaptor.capture());
     webSocketCaptor.getValue().handle(succeededWebSocketEvent(Optional.of(webSocket)));
 
     final ArgumentCaptor<Handler<String>> textMessageHandlerCaptor =

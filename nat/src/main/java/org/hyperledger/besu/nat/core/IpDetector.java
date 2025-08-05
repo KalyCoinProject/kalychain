@@ -12,12 +12,18 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.nat.core;
 
 import java.util.Optional;
 
+/** The interface Ip detector. */
 public interface IpDetector {
 
+  /**
+   * Detect advertised ip.
+   *
+   * @return the optional Ip in String
+   * @throws Exception in case of error while detecting advertised Ip
+   */
   Optional<String> detectAdvertisedIp() throws Exception;
 }

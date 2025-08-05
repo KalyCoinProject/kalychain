@@ -16,6 +16,8 @@ package org.hyperledger.besu.ethereum.api.query;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static org.hyperledger.besu.ethereum.api.query.cache.TransactionLogBloomCacher.BLOCKS_PER_BLOOM_CACHE;
+import static org.hyperledger.besu.ethereum.mainnet.feemarket.ExcessBlobGasCalculator.calculateExcessBlobGasForParent;
+import static org.hyperledger.besu.ethereum.trie.pathbased.common.provider.WorldStateQueryParams.withBlockHeaderAndNoUpdateNodeHead;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
@@ -29,10 +31,16 @@ import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockBody;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.LogWithMetadata;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.MutableWorldState;
+import org.hyperledger.besu.ethereum.core.ProcessableBlockHeader;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.core.TransactionReceipt;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
+import org.hyperledger.besu.ethereum.mainnet.feemarket.BaseFeeMarket;
+import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.log.LogsBloomFilter;
@@ -40,7 +48,6 @@ import org.hyperledger.besu.evm.log.LogsBloomFilter;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -54,60 +61,92 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.LongStream;
+import java.util.stream.Stream;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.units.bigints.UInt256;
+import org.apache.tuweni.units.bigints.UInt256s;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class BlockchainQueries {
   private static final Logger LOG = LoggerFactory.getLogger(BlockchainQueries.class);
 
+  private final ProtocolSchedule protocolSchedule;
   private final WorldStateArchive worldStateArchive;
   private final Blockchain blockchain;
   private final Optional<Path> cachePath;
   private final Optional<TransactionLogBloomCacher> transactionLogBloomCacher;
+  private final Optional<EthScheduler> ethScheduler;
   private final ApiConfiguration apiConfig;
-
-  public BlockchainQueries(final Blockchain blockchain, final WorldStateArchive worldStateArchive) {
-    this(blockchain, worldStateArchive, Optional.empty(), Optional.empty());
-  }
+  private final MiningConfiguration miningConfiguration;
 
   public BlockchainQueries(
+      final ProtocolSchedule protocolSchedule,
       final Blockchain blockchain,
       final WorldStateArchive worldStateArchive,
-      final EthScheduler scheduler) {
-    this(blockchain, worldStateArchive, Optional.empty(), Optional.ofNullable(scheduler));
-  }
-
-  public BlockchainQueries(
-      final Blockchain blockchain,
-      final WorldStateArchive worldStateArchive,
-      final Optional<Path> cachePath,
-      final Optional<EthScheduler> scheduler) {
+      final MiningConfiguration miningConfiguration) {
     this(
+        protocolSchedule,
         blockchain,
         worldStateArchive,
-        cachePath,
-        scheduler,
-        ImmutableApiConfiguration.builder().build());
+        Optional.empty(),
+        Optional.empty(),
+        miningConfiguration);
   }
 
   public BlockchainQueries(
+      final ProtocolSchedule protocolSchedule,
+      final Blockchain blockchain,
+      final WorldStateArchive worldStateArchive,
+      final EthScheduler scheduler,
+      final MiningConfiguration miningConfiguration) {
+    this(
+        protocolSchedule,
+        blockchain,
+        worldStateArchive,
+        Optional.empty(),
+        Optional.ofNullable(scheduler),
+        miningConfiguration);
+  }
+
+  public BlockchainQueries(
+      final ProtocolSchedule protocolSchedule,
       final Blockchain blockchain,
       final WorldStateArchive worldStateArchive,
       final Optional<Path> cachePath,
       final Optional<EthScheduler> scheduler,
-      final ApiConfiguration apiConfig) {
+      final MiningConfiguration miningConfiguration) {
+    this(
+        protocolSchedule,
+        blockchain,
+        worldStateArchive,
+        cachePath,
+        scheduler,
+        ImmutableApiConfiguration.builder().build(),
+        miningConfiguration);
+  }
+
+  public BlockchainQueries(
+      final ProtocolSchedule protocolSchedule,
+      final Blockchain blockchain,
+      final WorldStateArchive worldStateArchive,
+      final Optional<Path> cachePath,
+      final Optional<EthScheduler> scheduler,
+      final ApiConfiguration apiConfig,
+      final MiningConfiguration miningConfiguration) {
+    this.protocolSchedule = protocolSchedule;
     this.blockchain = blockchain;
     this.worldStateArchive = worldStateArchive;
     this.cachePath = cachePath;
+    this.ethScheduler = scheduler;
     this.transactionLogBloomCacher =
         (cachePath.isPresent() && scheduler.isPresent())
             ? Optional.of(
                 new TransactionLogBloomCacher(blockchain, cachePath.get(), scheduler.get()))
             : Optional.empty();
     this.apiConfig = apiConfig;
+    this.miningConfiguration = miningConfiguration;
   }
 
   public Blockchain getBlockchain() {
@@ -142,6 +181,15 @@ public class BlockchainQueries {
   }
 
   /**
+   * Return the header of the head of the chain.
+   *
+   * @return The header of the head of the chain.
+   */
+  public BlockHeader headBlockHeader() {
+    return blockchain.getChainHeadHeader();
+  }
+
+  /**
    * Return the header of the last finalized block.
    *
    * @return The header of the last finalized block.
@@ -169,8 +217,7 @@ public class BlockchainQueries {
    */
   public Optional<UInt256> storageAt(
       final Address address, final UInt256 storageIndex, final long blockNumber) {
-    final Hash blockHash =
-        getBlockHeaderByNumber(blockNumber).map(BlockHeader::getHash).orElse(Hash.EMPTY);
+    final Hash blockHash = getBlockHashByNumber(blockNumber).orElse(Hash.EMPTY);
 
     return storageAt(address, storageIndex, blockHash);
   }
@@ -197,8 +244,7 @@ public class BlockchainQueries {
    * @return The balance of the account in Wei.
    */
   public Optional<Wei> accountBalance(final Address address, final long blockNumber) {
-    final Hash blockHash =
-        getBlockHeaderByNumber(blockNumber).map(BlockHeader::getHash).orElse(Hash.EMPTY);
+    final Hash blockHash = getBlockHashByNumber(blockNumber).orElse(Hash.EMPTY);
 
     return accountBalance(address, blockHash);
   }
@@ -222,8 +268,7 @@ public class BlockchainQueries {
    * @return The code associated with this address.
    */
   public Optional<Bytes> getCode(final Address address, final long blockNumber) {
-    final Hash blockHash =
-        getBlockHeaderByNumber(blockNumber).map(BlockHeader::getHash).orElse(Hash.EMPTY);
+    final Hash blockHash = getBlockHashByNumber(blockNumber).orElse(Hash.EMPTY);
 
     return getCode(address, blockHash);
   }
@@ -249,13 +294,7 @@ public class BlockchainQueries {
     if (outsideBlockchainRange(blockNumber)) {
       return Optional.empty();
     }
-    return Optional.of(
-        blockchain
-            .getBlockHashByNumber(blockNumber)
-            .flatMap(this::blockByHashWithTxHashes)
-            .map(BlockWithMetadata::getTransactions)
-            .map(List::size)
-            .orElse(-1));
+    return blockchain.getBlockHashByNumber(blockNumber).flatMap(this::getTransactionCount);
   }
 
   /**
@@ -264,11 +303,8 @@ public class BlockchainQueries {
    * @param blockHeaderHash The hash of the block being queried.
    * @return The number of transactions contained in the referenced block.
    */
-  public Integer getTransactionCount(final Hash blockHeaderHash) {
-    return blockchain
-        .getBlockBody(blockHeaderHash)
-        .map(body -> body.getTransactions().size())
-        .orElse(-1);
+  public Optional<Integer> getTransactionCount(final Hash blockHeaderHash) {
+    return blockchain.getBlockBody(blockHeaderHash).map(body -> body.getTransactions().size());
   }
 
   /**
@@ -294,7 +330,8 @@ public class BlockchainQueries {
    * @return The number of transactions sent from the given address.
    */
   public long getTransactionCount(final Address address, final Hash blockHash) {
-    return getAndMapWorldState(blockHash, worldState -> worldState.get(address))
+    return getAndMapWorldState(
+            blockHash, worldState -> Optional.ofNullable(worldState.get(address)))
         .map(Account::getNonce)
         .orElse(0L);
   }
@@ -412,9 +449,14 @@ public class BlockchainQueries {
                                           body.getOmmers().stream()
                                               .map(BlockHeader::getHash)
                                               .collect(Collectors.toList());
-                                      final int size = new Block(header, body).calculateSize();
+                                      final int size = new Block(header, body).getSize();
                                       return new BlockWithMetadata<>(
-                                          header, formattedTxs, ommers, td, size);
+                                          header,
+                                          formattedTxs,
+                                          ommers,
+                                          td,
+                                          size,
+                                          body.getWithdrawals());
                                     })));
   }
 
@@ -467,8 +509,9 @@ public class BlockchainQueries {
                                           body.getOmmers().stream()
                                               .map(BlockHeader::getHash)
                                               .collect(Collectors.toList());
-                                      final int size = new Block(header, body).calculateSize();
-                                      return new BlockWithMetadata<>(header, txs, ommers, td, size);
+                                      final int size = new Block(header, body).getSize();
+                                      return new BlockWithMetadata<>(
+                                          header, txs, ommers, td, size, body.getWithdrawals());
                                     })));
   }
 
@@ -573,18 +616,81 @@ public class BlockchainQueries {
   private TransactionWithMetadata transactionByHeaderAndIndex(
       final BlockHeader header, final int txIndex) {
     final Hash blockHeaderHash = header.getHash();
-    // headers should not exist w/o bodies, so not being present is exceptional
-    final BlockBody blockBody = blockchain.getBlockBody(blockHeaderHash).orElseThrow();
-    final List<Transaction> txs = blockBody.getTransactions();
-    if (txIndex >= txs.size()) {
-      return null;
-    }
-    return new TransactionWithMetadata(
-        txs.get(txIndex), header.getNumber(), header.getBaseFee(), blockHeaderHash, txIndex);
+
+    return blockchain
+        .getBlockBody(blockHeaderHash)
+        .map(BlockBody::getTransactions)
+        .filter((txs) -> txIndex < txs.size())
+        .map(
+            (txs) ->
+                new TransactionWithMetadata(
+                    txs.get(txIndex),
+                    header.getNumber(),
+                    header.getBaseFee(),
+                    blockHeaderHash,
+                    txIndex))
+        .orElse(null);
   }
 
   public Optional<TransactionLocation> transactionLocationByHash(final Hash transactionHash) {
     return blockchain.getTransactionLocation(transactionHash);
+  }
+
+  /**
+   * Returns the transaction receipts associated with the given block hash.
+   *
+   * @param blockHash The hash of the block that corresponds to the receipts to retrieve.
+   * @return The transaction receipts associated with the referenced block.
+   */
+  public Optional<List<TransactionReceiptWithMetadata>> transactionReceiptsByBlockHash(
+      final Hash blockHash, final ProtocolSchedule protocolSchedule) {
+    final Optional<Block> block = blockchain.getBlockByHash(blockHash);
+    if (block.isEmpty()) {
+      return Optional.empty();
+    }
+    final BlockHeader header = block.get().getHeader();
+    final List<Transaction> transactions = block.get().getBody().getTransactions();
+
+    final List<TransactionReceipt> transactionReceipts =
+        blockchain.getTxReceipts(blockHash).orElseThrow();
+
+    long cumulativeGasUsedUntilTx = 0;
+    int logIndexOffset = 0;
+
+    List<TransactionReceiptWithMetadata> receiptsResult =
+        new ArrayList<TransactionReceiptWithMetadata>(transactions.size());
+
+    for (int transactionIndex = 0; transactionIndex < transactions.size(); transactionIndex++) {
+      final Transaction transaction = transactions.get(transactionIndex);
+      final TransactionReceipt transactionReceipt = transactionReceipts.get(transactionIndex);
+      final Hash transactionHash = transaction.getHash();
+
+      long gasUsed = transactionReceipt.getCumulativeGasUsed() - cumulativeGasUsedUntilTx;
+
+      Optional<Long> maybeBlobGasUsed =
+          getBlobGasUsed(transaction, protocolSchedule.getByBlockHeader(header));
+
+      Optional<Wei> maybeBlobGasPrice =
+          getBlobGasPrice(transaction, header, protocolSchedule.getByBlockHeader(header));
+
+      receiptsResult.add(
+          TransactionReceiptWithMetadata.create(
+              transactionReceipt,
+              transaction,
+              transactionHash,
+              transactionIndex,
+              gasUsed,
+              header.getBaseFee(),
+              blockHash,
+              header.getNumber(),
+              maybeBlobGasUsed,
+              maybeBlobGasPrice,
+              logIndexOffset));
+
+      cumulativeGasUsedUntilTx = transactionReceipt.getCumulativeGasUsed();
+      logIndexOffset += transactionReceipt.getLogsList().size();
+    }
+    return Optional.of(receiptsResult);
   }
 
   /**
@@ -594,7 +700,7 @@ public class BlockchainQueries {
    * @return The transaction receipt associated with the referenced transaction.
    */
   public Optional<TransactionReceiptWithMetadata> transactionReceiptByTransactionHash(
-      final Hash transactionHash) {
+      final Hash transactionHash, final ProtocolSchedule protocolSchedule) {
     final Optional<TransactionLocation> maybeLocation =
         blockchain.getTransactionLocation(transactionHash);
     if (maybeLocation.isEmpty()) {
@@ -603,34 +709,96 @@ public class BlockchainQueries {
     // getTransactionLocation should not return if the TX or block doesn't exist, so throwing
     // on a missing optional is appropriate.
     final TransactionLocation location = maybeLocation.get();
-    final Block block = blockchain.getBlockByHash(location.getBlockHash()).orElseThrow();
-    final Transaction transaction =
-        block.getBody().getTransactions().get(location.getTransactionIndex());
-
     final Hash blockhash = location.getBlockHash();
+    final int transactionIndex = location.getTransactionIndex();
+
+    final Block block = blockchain.getBlockByHash(blockhash).orElseThrow();
+    final Transaction transaction = block.getBody().getTransactions().get(transactionIndex);
+
     final BlockHeader header = block.getHeader();
     final List<TransactionReceipt> transactionReceipts =
         blockchain.getTxReceipts(blockhash).orElseThrow();
-    final TransactionReceipt transactionReceipt =
-        transactionReceipts.get(location.getTransactionIndex());
+    final TransactionReceipt transactionReceipt = transactionReceipts.get(transactionIndex);
 
     long gasUsed = transactionReceipt.getCumulativeGasUsed();
-    if (location.getTransactionIndex() > 0) {
-      gasUsed =
-          gasUsed
-              - transactionReceipts.get(location.getTransactionIndex() - 1).getCumulativeGasUsed();
+    int logIndexOffset = 0;
+    if (transactionIndex > 0) {
+      gasUsed -= transactionReceipts.get(transactionIndex - 1).getCumulativeGasUsed();
+      logIndexOffset =
+          IntStream.range(0, transactionIndex)
+              .map(i -> transactionReceipts.get(i).getLogsList().size())
+              .sum();
     }
+
+    Optional<Long> maybeBlobGasUsed =
+        getBlobGasUsed(transaction, protocolSchedule.getByBlockHeader(header));
+
+    Optional<Wei> maybeBlobGasPrice =
+        getBlobGasPrice(transaction, header, protocolSchedule.getByBlockHeader(header));
 
     return Optional.of(
         TransactionReceiptWithMetadata.create(
             transactionReceipt,
             transaction,
             transactionHash,
-            location.getTransactionIndex(),
+            transactionIndex,
             gasUsed,
             header.getBaseFee(),
             blockhash,
-            header.getNumber()));
+            header.getNumber(),
+            maybeBlobGasUsed,
+            maybeBlobGasPrice,
+            logIndexOffset));
+  }
+
+  /**
+   * Calculates the blob gas used for data in a transaction.
+   *
+   * @param transaction the transaction to calculate the gas for
+   * @param protocolSpec the protocol specification to use for gas calculation
+   * @return an Optional containing the blob gas used for data if the transaction type supports
+   *     blobs, otherwise returns an empty Optional
+   */
+  private Optional<Long> getBlobGasUsed(
+      final Transaction transaction, final ProtocolSpec protocolSpec) {
+    return transaction.getType().supportsBlob()
+        ? Optional.of(protocolSpec.getGasCalculator().blobGasCost(transaction.getBlobCount()))
+        : Optional.empty();
+  }
+
+  public long getMinimumTransactionCost(final ProcessableBlockHeader header) {
+    return protocolSchedule.getByBlockHeader(header).getGasCalculator().getMinimumTransactionCost();
+  }
+
+  public long getTransactionGasLimitCap(final ProcessableBlockHeader header) {
+    return protocolSchedule
+        .getByBlockHeader(header)
+        .getGasLimitCalculator()
+        .transactionGasLimitCap();
+  }
+
+  /**
+   * Calculates the blob gas price for data in a transaction.
+   *
+   * @param transaction the transaction to calculate the gas price for
+   * @param header the block header of the current block
+   * @param protocolSpec the protocol specification to use for gas price calculation
+   * @return an Optional containing the blob gas price for data if the transaction type supports
+   *     blobs, otherwise returns an empty Optional
+   */
+  private Optional<Wei> getBlobGasPrice(
+      final Transaction transaction, final BlockHeader header, final ProtocolSpec protocolSpec) {
+    if (transaction.getType().supportsBlob()) {
+      return blockchain
+          .getBlockHeader(header.getParentHash())
+          .map(
+              parentHeader ->
+                  protocolSpec
+                      .getFeeMarket()
+                      .blobGasPricePerGas(
+                          calculateExcessBlobGasForParent(protocolSpec, parentHeader)));
+    }
+    return Optional.empty();
   }
 
   /**
@@ -642,7 +810,7 @@ public class BlockchainQueries {
    * @param toBlockNumber The block number defining the last block in the search range (inclusive).
    * @param query Constraints on required topics by topic index. For a given index if the set of
    *     topics is non-empty, the topic at this index must match one of the values in the set.
-   * @param isQueryAlive Whether or not the backend query should stay alive.
+   * @param isQueryAlive Whether the backend query should stay alive.
    * @return The set of logs matching the given constraints.
    */
   public List<LogWithMetadata> matchingLogs(
@@ -706,7 +874,7 @@ public class BlockchainQueries {
         // handles the case when fromBlockNumber is past chain head.
         .takeWhile(Optional::isPresent)
         .map(Optional::get)
-        .filter(header -> query.couldMatch(header.getLogsBloom(true)))
+        .filter(header -> query.couldMatch(header.getLogsBloom()))
         .flatMap(header -> matchingLogs(header.getHash(), query, isQueryAlive).stream())
         .collect(Collectors.toList());
   }
@@ -835,8 +1003,8 @@ public class BlockchainQueries {
 
   /**
    * Wraps an operation on MutableWorldState with try-with-resources the corresponding block hash.
-   * This method provides access to the worldstate via a mapper function in order to ensure all of
-   * the uses of the MutableWorldState are subsequently closed, via the try-with-resources block.
+   * This method provides access to the worldstate via a mapper function in order to ensure all uses
+   * of the MutableWorldState are subsequently closed, via the try-with-resources block.
    *
    * @param <U> return type of the operation on the MutableWorldState
    * @param blockHash the block hash
@@ -844,21 +1012,26 @@ public class BlockchainQueries {
    * @return the world state at the block number
    */
   public <U> Optional<U> getAndMapWorldState(
-      final Hash blockHash, final Function<MutableWorldState, ? extends U> mapper) {
+      final Hash blockHash, final Function<MutableWorldState, ? extends Optional<U>> mapper) {
+
     return blockchain
         .getBlockHeader(blockHash)
         .flatMap(
             blockHeader -> {
               try (var ws =
                   worldStateArchive
-                      .getMutable(blockHeader.getStateRoot(), blockHeader.getHash(), false)
+                      .getWorldState(withBlockHeaderAndNoUpdateNodeHead(blockHeader))
                       .orElse(null)) {
                 if (ws != null) {
-                  return Optional.ofNullable(mapper.apply(ws));
+                  return mapper.apply(ws);
                 }
               } catch (Exception ex) {
                 LOG.error("failed worldstate query for " + blockHash.toShortHexString(), ex);
               }
+              LOG.atDebug()
+                  .setMessage("Failed to find worldstate for {}")
+                  .addArgument(blockHeader.toLogString())
+                  .log();
               return Optional.empty();
             });
   }
@@ -872,67 +1045,139 @@ public class BlockchainQueries {
    * @return the world state at the block number
    */
   public <U> Optional<U> getAndMapWorldState(
-      final long blockNumber, final Function<MutableWorldState, ? extends U> mapper) {
+      final long blockNumber, final Function<MutableWorldState, ? extends Optional<U>> mapper) {
     final Hash blockHash =
         getBlockHeaderByNumber(blockNumber).map(BlockHeader::getHash).orElse(Hash.EMPTY);
     return getAndMapWorldState(blockHash, mapper);
   }
 
-  public Optional<Long> gasPrice() {
-    final long blockHeight = headBlockNumber();
-    final long[] gasCollection =
-        LongStream.range(Math.max(0, blockHeight - apiConfig.getGasPriceBlocks()), blockHeight)
-            .mapToObj(
-                l ->
-                    blockchain
-                        .getBlockByNumber(l)
-                        .map(Block::getBody)
-                        .map(BlockBody::getTransactions)
-                        .orElseThrow(
-                            () -> new IllegalStateException("Could not retrieve block #" + l)))
+  public Wei gasPrice() {
+    final Block chainHeadBlock = blockchain.getChainHeadBlock();
+    final var chainHeadHeader = chainHeadBlock.getHeader();
+    final long blockHeight = chainHeadHeader.getNumber();
+
+    final var nextBlockProtocolSpec =
+        protocolSchedule.getForNextBlockHeader(chainHeadHeader, System.currentTimeMillis());
+    final var nextBlockFeeMarket = nextBlockProtocolSpec.getFeeMarket();
+
+    final Wei[] gasCollection =
+        Stream.concat(
+                LongStream.range(
+                        Math.max(0, blockHeight - apiConfig.getGasPriceBlocks() + 1), blockHeight)
+                    .mapToObj(
+                        l ->
+                            blockchain
+                                .getBlockByNumber(l)
+                                .orElseThrow(
+                                    () ->
+                                        new IllegalStateException(
+                                            "Could not retrieve block #" + l))),
+                Stream.of(chainHeadBlock))
+            .map(Block::getBody)
+            .map(BlockBody::getTransactions)
             .flatMap(Collection::stream)
             .filter(t -> t.getGasPrice().isPresent())
-            .mapToLong(t -> t.getGasPrice().get().toLong())
+            .map(t -> t.getGasPrice().get())
             .sorted()
-            .toArray();
-    return (gasCollection == null || gasCollection.length == 0)
-        ? Optional.empty()
-        : Optional.of(
-            Math.max(
-                apiConfig.getGasPriceMin(),
-                Math.min(
-                    apiConfig.getGasPriceMax(),
-                    gasCollection[
-                        Math.min(
-                            gasCollection.length - 1,
-                            (int) ((gasCollection.length) * apiConfig.getGasPriceFraction()))])));
-  }
+            .toArray(Wei[]::new);
 
-  public Optional<Wei> gasPriorityFee() {
-    final long blockHeight = headBlockNumber();
-    final BigInteger[] gasCollection =
-        LongStream.range(Math.max(0, blockHeight - apiConfig.getGasPriceBlocks()), blockHeight)
-            .mapToObj(
-                l ->
-                    blockchain
-                        .getBlockByNumber(l)
-                        .map(Block::getBody)
-                        .map(BlockBody::getTransactions)
-                        .orElseThrow(
-                            () -> new IllegalStateException("Could not retrieve block #" + l)))
-            .flatMap(Collection::stream)
-            .filter(t -> t.getMaxPriorityFeePerGas().isPresent())
-            .map(t -> t.getMaxPriorityFeePerGas().get().toBigInteger())
-            .sorted(BigInteger::compareTo)
-            .toArray(BigInteger[]::new);
-    return (gasCollection.length == 0)
-        ? Optional.empty()
-        : Optional.of(
-            Wei.of(
+    return gasCollection.length == 0
+        ? gasPriceLowerBound(chainHeadHeader, nextBlockFeeMarket)
+        : UInt256s.max(
+            gasPriceLowerBound(chainHeadHeader, nextBlockFeeMarket),
+            UInt256s.min(
+                apiConfig.getGasPriceMax(),
                 gasCollection[
                     Math.min(
                         gasCollection.length - 1,
                         (int) ((gasCollection.length) * apiConfig.getGasPriceFraction()))]));
+  }
+
+  /**
+   * Return the min gas required for a tx to be mineable. On networks with gas price fee market it
+   * is just the minGasPrice, while on networks with base fee market it is the max between the
+   * minGasPrice and the baseFee for the next block.
+   *
+   * @return the min gas required for a tx to be mineable.
+   */
+  public Wei gasPriceLowerBound() {
+    final var chainHeadHeader = blockchain.getChainHeadHeader();
+    final var nextBlockProtocolSpec =
+        protocolSchedule.getForNextBlockHeader(chainHeadHeader, System.currentTimeMillis());
+    final var nextBlockFeeMarket = nextBlockProtocolSpec.getFeeMarket();
+    return gasPriceLowerBound(chainHeadHeader, nextBlockFeeMarket);
+  }
+
+  private Wei gasPriceLowerBound(
+      final BlockHeader chainHeadHeader, final FeeMarket nextBlockFeeMarket) {
+    final var minGasPrice = miningConfiguration.getMinTransactionGasPrice();
+
+    if (nextBlockFeeMarket.implementsBaseFee()) {
+      return UInt256s.max(
+          getNextBlockBaseFee(chainHeadHeader, (BaseFeeMarket) nextBlockFeeMarket), minGasPrice);
+    }
+
+    return minGasPrice;
+  }
+
+  public Wei gasPriorityFee() {
+    final Block chainHeadBlock = blockchain.getChainHeadBlock();
+    final long blockHeight = chainHeadBlock.getHeader().getNumber();
+
+    final Wei[] gasCollection =
+        Stream.concat(
+                LongStream.range(
+                        Math.max(0, blockHeight - apiConfig.getGasPriceBlocks() + 1), blockHeight)
+                    .mapToObj(
+                        l ->
+                            blockchain
+                                .getBlockByNumber(l)
+                                .orElseThrow(
+                                    () ->
+                                        new IllegalStateException(
+                                            "Could not retrieve block #" + l))),
+                Stream.of(chainHeadBlock))
+            .map(Block::getBody)
+            .map(BlockBody::getTransactions)
+            .flatMap(Collection::stream)
+            .filter(t -> t.getMaxPriorityFeePerGas().isPresent())
+            .map(t -> t.getMaxPriorityFeePerGas().get())
+            .sorted()
+            .toArray(Wei[]::new);
+
+    return gasCollection.length == 0
+        ? miningConfiguration.getMinPriorityFeePerGas()
+        : UInt256s.max(
+            miningConfiguration.getMinPriorityFeePerGas(),
+            gasCollection[
+                Math.min(
+                    gasCollection.length - 1,
+                    (int) ((gasCollection.length) * apiConfig.getGasPriceFraction()))]);
+  }
+
+  /**
+   * Calculate and return the value of the base fee for the next block, if the network has a base
+   * fee market, otherwise return empty.
+   *
+   * @return the optional base fee
+   */
+  public Optional<Wei> getNextBlockBaseFee() {
+    final var chainHeadHeader = blockchain.getChainHeadHeader();
+    final var nextBlockProtocolSpec =
+        protocolSchedule.getForNextBlockHeader(chainHeadHeader, System.currentTimeMillis());
+    final var nextBlockFeeMarket = nextBlockProtocolSpec.getFeeMarket();
+    return nextBlockFeeMarket.implementsBaseFee()
+        ? Optional.of(getNextBlockBaseFee(chainHeadHeader, (BaseFeeMarket) nextBlockFeeMarket))
+        : Optional.empty();
+  }
+
+  private Wei getNextBlockBaseFee(
+      final BlockHeader chainHeadHeader, final BaseFeeMarket nextBlockFeeMarket) {
+    return nextBlockFeeMarket.computeBaseFee(
+        chainHeadHeader.getNumber() + 1,
+        chainHeadHeader.getBaseFee().orElse(Wei.ZERO),
+        chainHeadHeader.getGasUsed(),
+        nextBlockFeeMarket.targetGasUsed(chainHeadHeader));
   }
 
   private <T> Optional<T> fromAccount(
@@ -943,7 +1188,9 @@ public class BlockchainQueries {
     return getAndMapWorldState(
         blockHash,
         worldState ->
-            Optional.ofNullable(worldState.get(address)).map(getter).orElse(noAccountValue));
+            Optional.ofNullable(worldState.get(address))
+                .map(getter)
+                .or(() -> Optional.ofNullable(noAccountValue)));
   }
 
   private List<TransactionWithMetadata> formatTransactions(
@@ -975,7 +1222,11 @@ public class BlockchainQueries {
       final Hash blockHash, final Supplier<Boolean> isQueryAlive) throws Exception {
     return BackendQuery.runIfAlive(
         "matchingLogs - getBlockBody",
-        () -> blockchain.getBlockBody(blockHash).orElseThrow().getTransactions(),
+        () ->
+            blockchain
+                .getBlockBody(blockHash)
+                .map((bb) -> bb.getTransactions())
+                .orElse(Collections.emptyList()),
         isQueryAlive);
   }
 
@@ -983,7 +1234,7 @@ public class BlockchainQueries {
       final Hash blockHash, final Supplier<Boolean> isQueryAlive) throws Exception {
     return BackendQuery.runIfAlive(
         "matchingLogs - getTxReceipts",
-        () -> blockchain.getTxReceipts(blockHash).orElseThrow(),
+        () -> blockchain.getTxReceipts(blockHash).orElse(Collections.emptyList()),
         isQueryAlive);
   }
 
@@ -1003,9 +1254,13 @@ public class BlockchainQueries {
         break;
       }
 
-      logIndexOffset += receipts.get(i).getLogs().size();
+      logIndexOffset += receipts.get(i).getLogsList().size();
     }
 
     return logIndexOffset;
+  }
+
+  public Optional<EthScheduler> getEthScheduler() {
+    return ethScheduler;
   }
 }

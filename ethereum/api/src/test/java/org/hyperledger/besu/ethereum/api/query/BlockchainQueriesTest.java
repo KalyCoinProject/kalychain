@@ -1,5 +1,4 @@
 /*
- *
  * Copyright ConsenSys AG.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
@@ -12,7 +11,6 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.ethereum.api.query;
 
@@ -30,9 +28,11 @@ import org.hyperledger.besu.ethereum.core.BlockDataGenerator;
 import org.hyperledger.besu.ethereum.core.BlockDataGenerator.BlockOptions;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.LogWithMetadata;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.core.TransactionReceipt;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.worldstate.WorldState;
@@ -46,14 +46,15 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 import org.apache.tuweni.units.bigints.UInt256;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 public class BlockchainQueriesTest {
   private BlockDataGenerator gen;
   private EthScheduler scheduler;
 
-  @Before
+  @BeforeEach
   public void setup() {
     gen = new BlockDataGenerator();
     scheduler = new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem());
@@ -197,6 +198,17 @@ public class BlockchainQueriesTest {
   }
 
   @Test
+  public void getHeadBlockHeader() {
+    final BlockchainWithData data = setupBlockchain(3);
+    final BlockchainQueries queries = data.blockchainQueries;
+
+    final BlockHeader targetBlockHeader = data.blockData.get(2).block.getHeader();
+
+    BlockHeader result = queries.headBlockHeader();
+    assertThat(targetBlockHeader).isEqualTo(result);
+  }
+
+  @Test
   public void getAccountStorageBlockNumber() {
     final List<Address> addresses = Arrays.asList(gen.address(), gen.address(), gen.address());
     final List<UInt256> storageKeys =
@@ -316,6 +328,41 @@ public class BlockchainQueriesTest {
     final Block targetBlock = data.blockData.get(data.blockData.size() - 1).block;
     final Optional<Integer> result = queries.getOmmerCount();
     assertThat(result).contains(targetBlock.getBody().getOmmers().size());
+  }
+
+  @Test
+  public void getTransactionReceiptsByHash() {
+    final BlockchainWithData data = setupBlockchain(3);
+    final BlockchainQueries queries = data.blockchainQueries;
+
+    final Block targetBlock = data.blockData.get(1).block;
+
+    final Optional<List<TransactionReceiptWithMetadata>> receipts =
+        queries.transactionReceiptsByBlockHash(
+            targetBlock.getHash(), Mockito.mock(ProtocolSchedule.class));
+    assertThat(receipts).isNotEmpty();
+
+    receipts
+        .get()
+        .forEach(
+            receipt -> {
+              final long gasUsed = receipt.getGasUsed();
+
+              assertThat(gasUsed)
+                  .isEqualTo(
+                      targetBlock.getHeader().getGasUsed()
+                          / targetBlock.getBody().getTransactions().size());
+            });
+  }
+
+  @Test
+  public void getTransactionReceiptsByInvalidHash() {
+    final BlockchainWithData data = setupBlockchain(3);
+    final BlockchainQueries queries = data.blockchainQueries;
+
+    final Optional<List<TransactionReceiptWithMetadata>> result =
+        queries.transactionReceiptsByBlockHash(gen.hash(), Mockito.mock(ProtocolSchedule.class));
+    assertThat(result).isEmpty();
   }
 
   @Test
@@ -495,6 +542,9 @@ public class BlockchainQueriesTest {
     assertThat(retrievedOmmerBlockHeader).isEqualTo(ommerBlockHeader);
   }
 
+  @Test
+  public void getGasPriceLowerBound() {}
+
   private void assertBlockMatchesResult(
       final Block targetBlock, final BlockWithMetadata<TransactionWithMetadata, Hash> result) {
     assertThat(result.getHeader()).isEqualTo(targetBlock.getHeader());
@@ -578,17 +628,15 @@ public class BlockchainQueriesTest {
       this.blockchain = blockchain;
       this.blockData = blockData;
       this.worldStateArchive = worldStateArchive;
-      this.blockchainQueries = new BlockchainQueries(blockchain, worldStateArchive, scheduler);
+      this.blockchainQueries =
+          new BlockchainQueries(
+              Mockito.mock(ProtocolSchedule.class),
+              blockchain,
+              worldStateArchive,
+              scheduler,
+              MiningConfiguration.newDefault());
     }
   }
 
-  private static class BlockData {
-    final Block block;
-    final List<TransactionReceipt> receipts;
-
-    private BlockData(final Block block, final List<TransactionReceipt> receipts) {
-      this.block = block;
-      this.receipts = receipts;
-    }
-  }
+  private record BlockData(Block block, List<TransactionReceipt> receipts) {}
 }

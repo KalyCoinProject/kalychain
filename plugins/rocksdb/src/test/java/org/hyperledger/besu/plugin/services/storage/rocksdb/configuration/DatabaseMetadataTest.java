@@ -12,48 +12,50 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.plugin.services.storage.rocksdb.configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+
+import org.hyperledger.besu.plugin.services.exception.StorageException;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
-public class DatabaseMetadataTest {
-  @Rule public final TemporaryFolder temporaryFolder = new TemporaryFolder();
+class DatabaseMetadataTest {
+  @TempDir public Path temporaryFolder;
 
   @Test
-  public void getVersion() {
-    final DatabaseMetadata databaseMetadata = new DatabaseMetadata(42);
-    assertThat(databaseMetadata).isNotNull();
-    assertThat(databaseMetadata.getVersion()).isEqualTo(42);
+  void readingMetadataV1() throws Exception {
+    final Path tempDataDir = createAndWrite("data", "DATABASE_METADATA.json", "{\"version\":2}");
+
+    final DatabaseMetadata databaseMetadata = DatabaseMetadata.lookUpFrom(tempDataDir);
+    assertThat(databaseMetadata.getVersionedStorageFormat())
+        .isEqualTo(BaseVersionedStorageFormat.BONSAI_WITH_VARIABLES);
   }
 
   @Test
-  public void metaFileShouldMayContain() throws Exception {
+  void readingMetadataV2() throws Exception {
     final Path tempDataDir =
         createAndWrite(
-            "data", "DATABASE_METADATA.json", "{\"version\":42 , \"privacyVersion\":55}");
+            "data", "DATABASE_METADATA.json", "{\"v2\":{\"format\":\"FOREST\",\"version\":2}}");
 
     final DatabaseMetadata databaseMetadata = DatabaseMetadata.lookUpFrom(tempDataDir);
-    assertThat(databaseMetadata).isNotNull();
-    assertThat(databaseMetadata.getVersion()).isEqualTo(42);
-    assertThat(databaseMetadata.maybePrivacyVersion()).isNotEmpty();
-    assertThat(databaseMetadata.maybePrivacyVersion().get()).isEqualTo(55);
+    assertThat(databaseMetadata.getVersionedStorageFormat())
+        .isEqualTo(BaseVersionedStorageFormat.FOREST_WITH_VARIABLES);
   }
 
   @Test
-  public void metaFileShouldBeSoughtIntoDataDirFirst() throws Exception {
+  void unsupportedMetadata() throws Exception {
     final Path tempDataDir = createAndWrite("data", "DATABASE_METADATA.json", "{\"version\":42}");
-    final DatabaseMetadata databaseMetadata = DatabaseMetadata.lookUpFrom(tempDataDir);
-    assertThat(databaseMetadata).isNotNull();
-    assertThat(databaseMetadata.getVersion()).isEqualTo(42);
+    try {
+      DatabaseMetadata.lookUpFrom(tempDataDir);
+    } catch (final StorageException se) {
+      assertThat(se).hasMessage("Unsupported db version: 42");
+    }
   }
 
   private Path createAndWrite(final String dir, final String file, final String content)
@@ -62,12 +64,9 @@ public class DatabaseMetadataTest {
   }
 
   private Path createAndWrite(
-      final TemporaryFolder temporaryFolder,
-      final String dir,
-      final String file,
-      final String content)
+      final Path temporaryFolder, final String dir, final String file, final String content)
       throws IOException {
-    final Path tmpDir = temporaryFolder.newFolder().toPath().resolve(dir);
+    final Path tmpDir = temporaryFolder.resolve(dir);
     Files.createDirectories(tmpDir);
     createAndWrite(tmpDir.resolve(file), content);
     return tmpDir;

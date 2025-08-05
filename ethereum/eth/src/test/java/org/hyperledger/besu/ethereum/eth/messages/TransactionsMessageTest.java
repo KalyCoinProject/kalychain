@@ -24,7 +24,7 @@ import org.hyperledger.besu.ethereum.p2p.rlpx.wire.RawMessage;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class TransactionsMessageTest {
 
@@ -41,7 +41,8 @@ public class TransactionsMessageTest {
     // Create TransactionsMessage
     final MessageData initialMessage = TransactionsMessage.create(transactions);
     // Read message into a generic RawMessage
-    final MessageData raw = new RawMessage(EthPV62.TRANSACTIONS, initialMessage.getData());
+    final MessageData raw =
+        new RawMessage(EthProtocolMessages.TRANSACTIONS, initialMessage.getData());
     // Transform back to a TransactionsMessage from RawMessage
     final TransactionsMessage message = TransactionsMessage.readFrom(raw);
 

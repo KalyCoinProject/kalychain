@@ -22,7 +22,9 @@ import org.hyperledger.besu.ethereum.rlp.BytesValueRLPOutput;
 import org.hyperledger.besu.ethereum.rlp.RLPInput;
 
 import java.math.BigInteger;
+import java.util.Optional;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.immutables.value.Value;
@@ -47,12 +49,21 @@ public final class GetAccountRangeMessage extends AbstractSnapMessageData {
 
   public static GetAccountRangeMessage create(
       final Hash worldStateRootHash, final Bytes32 startKeyHash, final Bytes32 endKeyHash) {
+    return create(worldStateRootHash, startKeyHash, endKeyHash, SIZE_REQUEST);
+  }
+
+  @VisibleForTesting
+  public static GetAccountRangeMessage create(
+      final Hash worldStateRootHash,
+      final Bytes32 startKeyHash,
+      final Bytes32 endKeyHash,
+      final BigInteger sizeRequest) {
     final BytesValueRLPOutput tmp = new BytesValueRLPOutput();
     tmp.startList();
     tmp.writeBytes(worldStateRootHash);
     tmp.writeBytes(startKeyHash);
     tmp.writeBytes(endKeyHash);
-    tmp.writeBigIntegerScalar(SIZE_REQUEST);
+    tmp.writeBigIntegerScalar(sizeRequest);
     tmp.endList();
     return new GetAccountRangeMessage(tmp.encoded());
   }
@@ -92,13 +103,10 @@ public final class GetAccountRangeMessage extends AbstractSnapMessageData {
     return range;
   }
 
-  @Override
-  public String toString() {
-    return "GetAccountRangeMessage{" + "data=" + data + '}';
-  }
-
   @Value.Immutable
   public interface Range {
+
+    Optional<BigInteger> requestId();
 
     Hash worldStateRootHash();
 

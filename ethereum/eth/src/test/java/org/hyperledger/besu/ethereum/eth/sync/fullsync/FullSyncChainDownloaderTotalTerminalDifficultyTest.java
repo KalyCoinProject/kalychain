@@ -15,6 +15,7 @@
 package org.hyperledger.besu.ethereum.eth.sync.fullsync;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
@@ -24,29 +25,31 @@ import org.hyperledger.besu.ethereum.core.Difficulty;
 import org.hyperledger.besu.ethereum.eth.EthProtocolConfiguration;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManager;
+import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestBuilder;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestUtil;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.manager.RespondingEthPeer;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutor;
 import org.hyperledger.besu.ethereum.eth.sync.ChainDownloader;
 import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncState;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
+import org.hyperledger.besu.metrics.SyncDurationMetrics;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
+import org.hyperledger.besu.plugin.services.storage.DataStorageFormat;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Stream;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.ArgumentsProvider;
+import org.junit.jupiter.params.provider.ArgumentsSource;
 
-@RunWith(Parameterized.class)
 public class FullSyncChainDownloaderTotalTerminalDifficultyTest {
 
   protected ProtocolSchedule protocolSchedule;
@@ -62,19 +65,16 @@ public class FullSyncChainDownloaderTotalTerminalDifficultyTest {
   private final MetricsSystem metricsSystem = new NoOpMetricsSystem();
   private static final Difficulty TARGET_TERMINAL_DIFFICULTY = Difficulty.of(1_000_000L);
 
-  @Parameters
-  public static Collection<Object[]> data() {
-    return Arrays.asList(new Object[][] {{DataStorageFormat.BONSAI}, {DataStorageFormat.FOREST}});
+  static class FullSyncChainDownloaderTotalTerminalDifficultyTestArguments
+      implements ArgumentsProvider {
+    @Override
+    public Stream<? extends Arguments> provideArguments(final ExtensionContext context) {
+      return Stream.of(
+          Arguments.of(DataStorageFormat.BONSAI), Arguments.of(DataStorageFormat.FOREST));
+    }
   }
 
-  private final DataStorageFormat storageFormat;
-
-  public FullSyncChainDownloaderTotalTerminalDifficultyTest(final DataStorageFormat storageFormat) {
-    this.storageFormat = storageFormat;
-  }
-
-  @Before
-  public void setupTest() {
+  public void setupTest(final DataStorageFormat storageFormat) {
     localBlockchainSetup = BlockchainSetupUtil.forTesting(storageFormat);
     localBlockchain = localBlockchainSetup.getBlockchain();
     otherBlockchainSetup = BlockchainSetupUtil.forTesting(storageFormat);
@@ -83,19 +83,23 @@ public class FullSyncChainDownloaderTotalTerminalDifficultyTest {
     protocolSchedule = localBlockchainSetup.getProtocolSchedule();
     protocolContext = localBlockchainSetup.getProtocolContext();
     ethProtocolManager =
-        EthProtocolManagerTestUtil.create(
-            localBlockchain,
-            new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()),
-            localBlockchainSetup.getWorldArchive(),
-            localBlockchainSetup.getTransactionPool(),
-            EthProtocolConfiguration.defaultConfig());
+        EthProtocolManagerTestBuilder.builder()
+            .setProtocolSchedule(protocolSchedule)
+            .setBlockchain(localBlockchain)
+            .setEthScheduler(new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()))
+            .setWorldStateArchive(localBlockchainSetup.getWorldArchive())
+            .setTransactionPool(localBlockchainSetup.getTransactionPool())
+            .setEthereumWireProtocolConfiguration(EthProtocolConfiguration.defaultConfig())
+            .build();
     ethContext = ethProtocolManager.ethContext();
     syncState = new SyncState(protocolContext.getBlockchain(), ethContext.getEthPeers());
   }
 
-  @After
+  @AfterEach
   public void tearDown() {
-    ethProtocolManager.stop();
+    if (ethProtocolManager != null) {
+      ethProtocolManager.stop();
+    }
   }
 
   private ChainDownloader downloader(
@@ -108,15 +112,19 @@ public class FullSyncChainDownloaderTotalTerminalDifficultyTest {
         ethContext,
         syncState,
         metricsSystem,
-        terminalCondition);
+        terminalCondition,
+        SyncDurationMetrics.NO_OP_SYNC_DURATION_METRICS,
+        mock(PeerTaskExecutor.class));
   }
 
   private SynchronizerConfiguration.Builder syncConfigBuilder() {
     return SynchronizerConfiguration.builder();
   }
 
-  @Test
-  public void syncsFullyAndStopsWhenTTDReached() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTotalTerminalDifficultyTestArguments.class)
+  public void syncsFullyAndStopsWhenTTDReached(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     otherBlockchainSetup.importFirstBlocks(30);
     final long targetBlock = otherBlockchain.getChainHeadBlockNumber();
     // Sanity check
@@ -149,8 +157,10 @@ public class FullSyncChainDownloaderTotalTerminalDifficultyTest {
     assertThat(future.isDone()).isTrue();
   }
 
-  @Test
-  public void syncsFullyAndContinuesWhenTTDNotSpecified() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTotalTerminalDifficultyTestArguments.class)
+  public void syncsFullyAndContinuesWhenTTDNotSpecified(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     otherBlockchainSetup.importFirstBlocks(30);
     final long targetBlock = otherBlockchain.getChainHeadBlockNumber();
     // Sanity check
@@ -178,5 +188,12 @@ public class FullSyncChainDownloaderTotalTerminalDifficultyTest {
     assertThat(localBlockchain.getChainHeadBlockNumber()).isEqualTo(targetBlock);
 
     assertThat(future.isDone()).isFalse();
+  }
+
+  @Test
+  void dryRunDetector() {
+    assertThat(true)
+        .withFailMessage("This test is here so gradle --dry-run executes this class")
+        .isTrue();
   }
 }

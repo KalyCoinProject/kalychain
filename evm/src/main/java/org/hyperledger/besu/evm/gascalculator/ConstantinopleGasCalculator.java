@@ -14,16 +14,11 @@
  */
 package org.hyperledger.besu.evm.gascalculator;
 
-import static org.hyperledger.besu.evm.internal.Words.clampedAdd;
-import static org.hyperledger.besu.evm.internal.Words.clampedMultiply;
-import static org.hyperledger.besu.evm.internal.Words.clampedToLong;
+import java.util.function.Supplier;
 
-import org.hyperledger.besu.evm.account.Account;
-import org.hyperledger.besu.evm.frame.MessageFrame;
-
-import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt256;
 
+/** The Constantinople gas calculator. */
 public class ConstantinopleGasCalculator extends ByzantiumGasCalculator {
 
   private static final long SSTORE_NO_OP_COST = 200L;
@@ -37,26 +32,23 @@ public class ConstantinopleGasCalculator extends ByzantiumGasCalculator {
 
   private static final long EXTCODE_HASH_COST = 400L;
 
-  @Override
-  public long create2OperationGasCost(final MessageFrame frame) {
-    final long initCodeLength = clampedToLong(frame.getStackItem(2));
-    final long numWords = clampedAdd(initCodeLength, 31) / Bytes32.SIZE;
-    final long initCodeHashCost = clampedMultiply(KECCAK256_OPERATION_WORD_GAS_COST, numWords);
-    return clampedAdd(createOperationGasCost(frame), initCodeHashCost);
-  }
+  /** Default constructor. */
+  public ConstantinopleGasCalculator() {}
 
   @Override
   // As per https://eips.ethereum.org/EIPS/eip-1283
   public long calculateStorageCost(
-      final Account account, final UInt256 key, final UInt256 newValue) {
+      final UInt256 newValue,
+      final Supplier<UInt256> currentValue,
+      final Supplier<UInt256> originalValue) {
 
-    final UInt256 currentValue = account.getStorageValue(key);
-    if (currentValue.equals(newValue)) {
+    final UInt256 localCurrentValue = currentValue.get();
+    if (localCurrentValue.equals(newValue)) {
       return SSTORE_NO_OP_COST;
     } else {
-      final UInt256 originalValue = account.getOriginalStorageValue(key);
-      if (originalValue.equals(currentValue)) {
-        return originalValue.isZero()
+      final UInt256 localOriginalValue = originalValue.get();
+      if (localOriginalValue.equals(localCurrentValue)) {
+        return localOriginalValue.isZero()
             ? SSTORE_FIRST_DIRTY_NEW_STORAGE_COST
             : SSTORE_FIRST_DIRTY_EXISTING_STORAGE_COST;
       } else {
@@ -68,15 +60,17 @@ public class ConstantinopleGasCalculator extends ByzantiumGasCalculator {
   @Override
   // As per https://eips.ethereum.org/EIPS/eip-1283
   public long calculateStorageRefundAmount(
-      final Account account, final UInt256 key, final UInt256 newValue) {
+      final UInt256 newValue,
+      final Supplier<UInt256> currentValue,
+      final Supplier<UInt256> originalValue) {
 
-    final UInt256 currentValue = account.getStorageValue(key);
-    if (currentValue.equals(newValue)) {
+    UInt256 localCurrentValue = currentValue.get();
+    if (localCurrentValue.equals(newValue)) {
       return 0L;
     } else {
-      final UInt256 originalValue = account.getOriginalStorageValue(key);
-      if (originalValue.equals(currentValue)) {
-        if (originalValue.isZero()) {
+      UInt256 localOriginalValue = originalValue.get();
+      if (localOriginalValue.equals(localCurrentValue)) {
+        if (localOriginalValue.isZero()) {
           return 0L;
         } else if (newValue.isZero()) {
           return STORAGE_RESET_REFUND_AMOUNT;
@@ -85,18 +79,18 @@ public class ConstantinopleGasCalculator extends ByzantiumGasCalculator {
         }
       } else {
         long refund = 0L;
-        if (!originalValue.isZero()) {
-          if (currentValue.isZero()) {
+        if (!localOriginalValue.isZero()) {
+          if (localCurrentValue.isZero()) {
             refund = NEGATIVE_STORAGE_RESET_REFUND_AMOUNT;
           } else if (newValue.isZero()) {
             refund = STORAGE_RESET_REFUND_AMOUNT;
           }
         }
 
-        if (originalValue.equals(newValue)) {
+        if (localOriginalValue.equals(newValue)) {
           refund =
               refund
-                  + (originalValue.isZero()
+                  + (localOriginalValue.isZero()
                       ? SSTORE_DIRTY_RETURN_TO_UNUSED_REFUND_AMOUNT
                       : SSTORE_DIRTY_RETURN_TO_ORIGINAL_VALUE_REFUND_AMOUNT);
         }

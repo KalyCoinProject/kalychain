@@ -25,35 +25,52 @@ import org.hyperledger.besu.ethereum.BlockValidator;
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.mainnet.HeaderValidationMode;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 
 import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Message validator. */
 public class MessageValidator {
 
   private static final Logger LOG = LoggerFactory.getLogger(MessageValidator.class);
 
   private final SignedDataValidator signedDataValidator;
   private final ProposalBlockConsistencyValidator proposalConsistencyValidator;
-  private final BlockValidator blockValidator;
+  private final ProtocolSchedule protocolSchedule;
   private final ProtocolContext protocolContext;
   private final RoundChangeCertificateValidator roundChangeCertificateValidator;
 
+  /**
+   * Instantiates a new Message validator.
+   *
+   * @param signedDataValidator the signed data validator
+   * @param proposalConsistencyValidator the proposal consistency validator
+   * @param protocolSchedule the protocol schedule
+   * @param protocolContext the protocol context
+   * @param roundChangeCertificateValidator the round change certificate validator
+   */
   public MessageValidator(
       final SignedDataValidator signedDataValidator,
       final ProposalBlockConsistencyValidator proposalConsistencyValidator,
-      final BlockValidator blockValidator,
       final ProtocolContext protocolContext,
+      final ProtocolSchedule protocolSchedule,
       final RoundChangeCertificateValidator roundChangeCertificateValidator) {
     this.signedDataValidator = signedDataValidator;
     this.proposalConsistencyValidator = proposalConsistencyValidator;
-    this.blockValidator = blockValidator;
+    this.protocolSchedule = protocolSchedule;
     this.protocolContext = protocolContext;
     this.roundChangeCertificateValidator = roundChangeCertificateValidator;
   }
 
+  /**
+   * Validate proposal.
+   *
+   * @param msg the msg
+   * @return the boolean
+   */
   public boolean validateProposal(final Proposal msg) {
 
     if (!signedDataValidator.validateProposal(msg.getSignedPayload())) {
@@ -61,7 +78,9 @@ public class MessageValidator {
       return false;
     }
 
-    if (!validateBlock(msg.getBlock())) {
+    // We want to validate the block but not persist it yet as it's just a proposal. If it turns
+    // out to be an accepted block it will be persisted at block import time
+    if (!validateBlockWithoutPersisting(msg.getBlock())) {
       return false;
     }
 
@@ -76,10 +95,14 @@ public class MessageValidator {
         msg.getSignedPayload(), msg.getBlock(), blockInterface);
   }
 
-  private boolean validateBlock(final Block block) {
+  private boolean validateBlockWithoutPersisting(final Block block) {
+
+    final BlockValidator blockValidator =
+        protocolSchedule.getByBlockHeader(block.getHeader()).getBlockValidator();
+
     final var validationResult =
         blockValidator.validateAndProcessBlock(
-            protocolContext, block, HeaderValidationMode.LIGHT, HeaderValidationMode.FULL);
+            protocolContext, block, HeaderValidationMode.LIGHT, HeaderValidationMode.FULL, false);
 
     if (validationResult.isFailed()) {
       LOG.info(
@@ -140,10 +163,22 @@ public class MessageValidator {
     return true;
   }
 
+  /**
+   * Validate prepare.
+   *
+   * @param msg the msg
+   * @return the boolean
+   */
   public boolean validatePrepare(final Prepare msg) {
     return signedDataValidator.validatePrepare(msg.getSignedPayload());
   }
 
+  /**
+   * Validate commit.
+   *
+   * @param msg the msg
+   * @return the boolean
+   */
   public boolean validateCommit(final Commit msg) {
     return signedDataValidator.validateCommit(msg.getSignedPayload());
   }

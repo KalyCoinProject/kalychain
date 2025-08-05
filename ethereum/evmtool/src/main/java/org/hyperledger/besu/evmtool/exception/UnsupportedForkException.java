@@ -11,12 +11,17 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evmtool.exception;
 
+/** The Unsupported fork exception. */
 public class UnsupportedForkException extends RuntimeException {
 
+  /**
+   * Instantiates a new Unsupported fork exception.
+   *
+   * @param forkName the fork name
+   */
   public UnsupportedForkException(final String forkName) {
     super(String.format("Fork '%s' not supported", forkName));
   }

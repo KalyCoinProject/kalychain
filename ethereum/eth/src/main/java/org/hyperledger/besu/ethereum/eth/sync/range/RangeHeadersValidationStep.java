@@ -67,16 +67,14 @@ public class RangeHeadersValidationStep implements Function<RangeHeaders, Stream
                         rangeEndDescription,
                         firstHeader.getNumber(),
                         firstHeader.getHash());
-                throw new InvalidBlockException(
-                    errorMessage, firstHeader.getNumber(), firstHeader.getHash());
+                throw InvalidBlockException.fromInvalidBlock(errorMessage, firstHeader);
               }
             })
         .orElse(Stream.empty());
   }
 
   private boolean isValid(final BlockHeader expectedParent, final BlockHeader firstHeaderToImport) {
-    final ProtocolSpec protocolSpec =
-        protocolSchedule.getByBlockNumber(firstHeaderToImport.getNumber());
+    final ProtocolSpec protocolSpec = protocolSchedule.getByBlockHeader(firstHeaderToImport);
     final BlockHeaderValidator validator = protocolSpec.getBlockHeaderValidator();
     return validator.validateHeader(
         firstHeaderToImport,

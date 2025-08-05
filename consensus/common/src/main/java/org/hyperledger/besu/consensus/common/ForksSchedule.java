@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -22,16 +22,32 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Function;
 
+/**
+ * The Forks schedule.
+ *
+ * @param <C> the type parameter
+ */
 public class ForksSchedule<C> {
 
   private final NavigableSet<ForkSpec<C>> forks =
       new TreeSet<>(
           Comparator.comparing((Function<ForkSpec<C>, Long>) ForkSpec::getBlock).reversed());
 
+  /**
+   * Instantiates a new Forks schedule.
+   *
+   * @param forks the forks
+   */
   public ForksSchedule(final Collection<ForkSpec<C>> forks) {
     this.forks.addAll(forks);
   }
 
+  /**
+   * Gets fork.
+   *
+   * @param blockNumber the block number
+   * @return the fork
+   */
   public ForkSpec<C> getFork(final long blockNumber) {
     for (final ForkSpec<C> f : forks) {
       if (blockNumber >= f.getBlock()) {
@@ -42,6 +58,11 @@ public class ForksSchedule<C> {
     return forks.first();
   }
 
+  /**
+   * Gets forks.
+   *
+   * @return the forks
+   */
   public Set<ForkSpec<C>> getForks() {
     return Collections.unmodifiableSet(forks);
   }

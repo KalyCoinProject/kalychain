@@ -18,14 +18,17 @@ import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParameterOrBlockHash;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.proof.GetProofResult;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
-import org.hyperledger.besu.ethereum.proof.WorldStateProof;
+import org.hyperledger.besu.ethereum.chain.Blockchain;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
 
 import java.util.Arrays;
 import java.util.List;
@@ -47,38 +50,55 @@ public class EthGetProof extends AbstractBlockParameterOrBlockHashMethod {
   @Override
   protected BlockParameterOrBlockHash blockParameterOrBlockHash(
       final JsonRpcRequestContext request) {
-    return request.getRequiredParameter(2, BlockParameterOrBlockHash.class);
+    try {
+      return request.getRequiredParameter(2, BlockParameterOrBlockHash.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid block or block hash parameter (index 2)", RpcErrorType.INVALID_BLOCK_PARAMS, e);
+    }
   }
 
   @Override
   protected Object resultByBlockHash(
       final JsonRpcRequestContext requestContext, final Hash blockHash) {
 
-    final Address address = requestContext.getRequiredParameter(0, Address.class);
+    final Address address;
+    try {
+      address = requestContext.getRequiredParameter(0, Address.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid address parameter (index 0)", RpcErrorType.INVALID_ADDRESS_PARAMS, e);
+    }
     final List<UInt256> storageKeys = getStorageKeys(requestContext);
 
-    return getBlockchainQueries()
-        .getAndMapWorldState(
-            blockHash,
-            worldState -> {
-              Optional<WorldStateProof> proofOptional =
-                  getBlockchainQueries()
-                      .getWorldStateArchive()
-                      .getAccountProof(worldState.rootHash(), address, storageKeys);
-              return proofOptional
-                  .map(
-                      proof ->
-                          (JsonRpcResponse)
-                              new JsonRpcSuccessResponse(
-                                  requestContext.getRequest().getId(),
-                                  GetProofResult.buildGetProofResult(address, proof)))
-                  .orElse(
-                      new JsonRpcErrorResponse(
-                          requestContext.getRequest().getId(), JsonRpcError.NO_ACCOUNT_FOUND));
+    final Blockchain blockchain = getBlockchainQueries().getBlockchain();
+    final WorldStateArchive worldStateArchive = getBlockchainQueries().getWorldStateArchive();
+    return blockchain
+        .getBlockHeader(blockHash)
+        .flatMap(
+            blockHeader -> {
+              return worldStateArchive.getAccountProof(
+                  blockHeader,
+                  address,
+                  storageKeys,
+                  maybeWorldStateProof ->
+                      maybeWorldStateProof
+                          .map(
+                              proof ->
+                                  (JsonRpcResponse)
+                                      new JsonRpcSuccessResponse(
+                                          requestContext.getRequest().getId(),
+                                          GetProofResult.buildGetProofResult(address, proof)))
+                          .or(
+                              () ->
+                                  Optional.of(
+                                      new JsonRpcErrorResponse(
+                                          requestContext.getRequest().getId(),
+                                          RpcErrorType.NO_ACCOUNT_FOUND))));
             })
         .orElse(
             new JsonRpcErrorResponse(
-                requestContext.getRequest().getId(), JsonRpcError.WORLD_STATE_UNAVAILABLE));
+                requestContext.getRequest().getId(), RpcErrorType.WORLD_STATE_UNAVAILABLE));
   }
 
   @Override
@@ -87,8 +107,13 @@ public class EthGetProof extends AbstractBlockParameterOrBlockHashMethod {
   }
 
   private List<UInt256> getStorageKeys(final JsonRpcRequestContext request) {
-    return Arrays.stream(request.getRequiredParameter(1, String[].class))
-        .map(UInt256::fromHexString)
-        .collect(Collectors.toList());
+    try {
+      return Arrays.stream(request.getRequiredParameter(1, String[].class))
+          .map(UInt256::fromHexString)
+          .collect(Collectors.toList());
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid storage keys parameters (index 1)", RpcErrorType.INVALID_STORAGE_KEYS_PARAMS, e);
+    }
   }
 }

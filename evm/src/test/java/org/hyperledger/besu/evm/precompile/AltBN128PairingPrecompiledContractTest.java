@@ -16,34 +16,47 @@ package org.hyperledger.besu.evm.precompile;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.evm.EvmSpecVersion;
+import org.hyperledger.besu.evm.fluent.EvmSpec;
 import org.hyperledger.besu.evm.frame.MessageFrame;
-import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
-public class AltBN128PairingPrecompiledContractTest {
+@ExtendWith(MockitoExtension.class)
+class AltBN128PairingPrecompiledContractTest {
 
   @Mock MessageFrame messageFrame;
-  @Mock GasCalculator gasCalculator;
 
-  private final AltBN128PairingPrecompiledContract byzantiumContract =
-      AltBN128PairingPrecompiledContract.byzantium(gasCalculator);
-  private final AltBN128PairingPrecompiledContract istanbulContract =
-      AltBN128PairingPrecompiledContract.istanbul(gasCalculator);
+  private final PrecompiledContract byzantiumContract =
+      EvmSpec.evmSpec(EvmSpecVersion.BYZANTIUM)
+          .getPrecompileContractRegistry()
+          .get(Address.ALTBN128_PAIRING);
+  private final PrecompiledContract istanbulContract =
+      EvmSpec.evmSpec(EvmSpecVersion.ISTANBUL)
+          .getPrecompileContractRegistry()
+          .get(Address.ALTBN128_PAIRING);
 
-  @Test
-  public void compute_validPoints() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void compute_validPoints(final boolean useNative) {
+    if (useNative) {
+      AbstractAltBnPrecompiledContract.maybeEnableNative();
+    } else {
+      AbstractAltBnPrecompiledContract.disableNative();
+    }
     final Bytes input = validPointBytes();
-    final Bytes result = byzantiumContract.compute(input, messageFrame);
+    final Bytes result = byzantiumContract.computePrecompile(input, messageFrame).output();
     assertThat(result).isEqualTo(AltBN128PairingPrecompiledContract.TRUE);
   }
 
-  public Bytes validPointBytes() {
+  Bytes validPointBytes() {
     final Bytes g1Point0 =
         Bytes.concatenate(
             Bytes.fromHexString(
@@ -80,8 +93,14 @@ public class AltBN128PairingPrecompiledContractTest {
     return Bytes.concatenate(g1Point0, g2Point0, g1Point1, g2Point1);
   }
 
-  @Test
-  public void compute_invalidPointsOutsideSubgroupG2() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void compute_invalidPointsOutsideSubgroupG2(final boolean useNative) {
+    if (useNative) {
+      AbstractAltBnPrecompiledContract.maybeEnableNative();
+    } else {
+      AbstractAltBnPrecompiledContract.disableNative();
+    }
     final Bytes g1Point0 =
         Bytes.concatenate(
             Bytes.fromHexString(
@@ -116,17 +135,19 @@ public class AltBN128PairingPrecompiledContractTest {
                 "0x1fbf8045ce3e79b5cde4112d38bcd0efbdb1295d2eefdf58151ae309d7ded7db"));
 
     final Bytes input = Bytes.concatenate(g1Point0, g2Point0, g1Point1, g2Point1);
-    final Bytes result = byzantiumContract.compute(input, messageFrame);
+    final Bytes result = byzantiumContract.computePrecompile(input, messageFrame).output();
     assertThat(result).isNull();
   }
 
   @Test
-  public void gasPrice_byzantium() {
+  void gasPrice_byzantium() {
+    // gas calculation is java only
     assertThat(byzantiumContract.gasRequirement(validPointBytes())).isEqualTo(260_000L);
   }
 
   @Test
-  public void gasPrice_istanbul() {
+  void gasPrice_istanbul() {
+    // gas calculation is java only
     assertThat(istanbulContract.gasRequirement(validPointBytes())).isEqualTo(113_000L);
   }
 }

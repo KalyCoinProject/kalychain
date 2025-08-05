@@ -14,9 +14,9 @@
  */
 package org.hyperledger.besu.ethereum.p2p.rlpx.connections.netty;
 
-import org.hyperledger.besu.crypto.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKey;
 import org.hyperledger.besu.ethereum.p2p.config.RlpxConfiguration;
-import org.hyperledger.besu.ethereum.p2p.discovery.DiscoveryPeer;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.PeerTable;
 import org.hyperledger.besu.ethereum.p2p.peers.LocalNode;
 import org.hyperledger.besu.ethereum.p2p.peers.Peer;
 import org.hyperledger.besu.ethereum.p2p.rlpx.ConnectCallback;
@@ -42,7 +42,6 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntSupplier;
 import java.util.stream.StreamSupport;
-import javax.annotation.Nonnull;
 
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
@@ -56,6 +55,7 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.util.concurrent.SingleThreadEventExecutor;
+import jakarta.validation.constraints.NotNull;
 
 public class NettyConnectionInitializer
     implements ConnectionInitializer, HandshakerProvider, FramerProvider {
@@ -68,6 +68,7 @@ public class NettyConnectionInitializer
   private final PeerConnectionEventDispatcher eventDispatcher;
   private final MetricsSystem metricsSystem;
   private final Subscribers<ConnectCallback> connectSubscribers = Subscribers.create();
+  private final PeerTable peerTable;
 
   private ChannelFuture server;
   private final EventLoopGroup boss = new NioEventLoopGroup(1);
@@ -80,12 +81,14 @@ public class NettyConnectionInitializer
       final RlpxConfiguration config,
       final LocalNode localNode,
       final PeerConnectionEventDispatcher eventDispatcher,
-      final MetricsSystem metricsSystem) {
+      final MetricsSystem metricsSystem,
+      final PeerTable peerTable) {
     this.nodeKey = nodeKey;
     this.config = config;
     this.localNode = localNode;
     this.eventDispatcher = eventDispatcher;
     this.metricsSystem = metricsSystem;
+    this.peerTable = peerTable;
 
     metricsSystem.createIntegerGauge(
         BesuMetricCategory.NETWORK,
@@ -138,7 +141,7 @@ public class NettyConnectionInitializer
 
   @Override
   public CompletableFuture<Void> stop() {
-    CompletableFuture<Void> stoppedFuture = new CompletableFuture<>();
+    final CompletableFuture<Void> stoppedFuture = new CompletableFuture<>();
     if (!started.get() || !stopped.compareAndSet(false, true)) {
       stoppedFuture.completeExceptionally(
           new IllegalStateException("Illegal attempt to stop " + this.getClass().getSimpleName()));
@@ -170,10 +173,6 @@ public class NettyConnectionInitializer
   public CompletableFuture<PeerConnection> connect(final Peer peer) {
     final CompletableFuture<PeerConnection> connectionFuture = new CompletableFuture<>();
 
-    if (peer instanceof DiscoveryPeer) {
-      ((DiscoveryPeer) peer).setLastAttemptedConnection(System.currentTimeMillis());
-    }
-
     final EnodeURL enode = peer.getEnodeURL();
     new Bootstrap()
         .group(workers)
@@ -196,7 +195,7 @@ public class NettyConnectionInitializer
   /**
    * @return a channel initializer for outbound connections
    */
-  @Nonnull
+  @NotNull
   private ChannelInitializer<SocketChannel> outboundChannelInitializer(
       final Peer peer, final CompletableFuture<PeerConnection> connectionFuture) {
     return new ChannelInitializer<SocketChannel>() {
@@ -207,7 +206,7 @@ public class NettyConnectionInitializer
                 timeoutHandler(
                     connectionFuture,
                     "Timed out waiting to establish connection with peer: " + peer.getId()));
-        addAdditionalOutboundHandlers(ch);
+        addAdditionalOutboundHandlers(ch, peer);
         ch.pipeline().addLast(outboundHandler(peer, connectionFuture));
       }
     };
@@ -233,7 +232,7 @@ public class NettyConnectionInitializer
     };
   }
 
-  @Nonnull
+  @NotNull
   private HandshakeHandlerInbound inboundHandler(
       final CompletableFuture<PeerConnection> connectionFuture) {
     return new HandshakeHandlerInbound(
@@ -244,10 +243,11 @@ public class NettyConnectionInitializer
         eventDispatcher,
         metricsSystem,
         this,
-        this);
+        this,
+        peerTable);
   }
 
-  @Nonnull
+  @NotNull
   private HandshakeHandlerOutbound outboundHandler(
       final Peer peer, final CompletableFuture<PeerConnection> connectionFuture) {
     return new HandshakeHandlerOutbound(
@@ -259,10 +259,11 @@ public class NettyConnectionInitializer
         eventDispatcher,
         metricsSystem,
         this,
-        this);
+        this,
+        peerTable);
   }
 
-  @Nonnull
+  @NotNull
   private TimeoutHandler<Channel> timeoutHandler(
       final CompletableFuture<PeerConnection> connectionFuture, final String s) {
     return new TimeoutHandler<>(
@@ -271,7 +272,7 @@ public class NettyConnectionInitializer
         () -> connectionFuture.completeExceptionally(new TimeoutException(s)));
   }
 
-  void addAdditionalOutboundHandlers(final Channel ch)
+  void addAdditionalOutboundHandlers(final Channel ch, final Peer peer)
       throws GeneralSecurityException, IOException {}
 
   void addAdditionalInboundHandlers(final Channel ch)

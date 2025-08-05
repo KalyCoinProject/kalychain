@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -22,50 +22,120 @@ import org.hyperledger.besu.ethereum.rlp.RLP;
 import org.hyperledger.besu.ethereum.rlp.RLPException;
 import org.hyperledger.besu.ethereum.rlp.RLPInput;
 
+import java.util.Arrays;
+import java.util.concurrent.ExecutionException;
+
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.bytes.DelegatingBytes;
 
 /** A 160-bits account address. */
-public class Address extends DelegatingBytes implements org.hyperledger.besu.plugin.data.Address {
+public class Address extends DelegatingBytes {
 
+  /** The constant SIZE. */
   public static final int SIZE = 20;
 
   /** Specific addresses of the "precompiled" contracts. */
   public static final Address ECREC = Address.precompiled(0x01);
 
+  /** The constant SHA256. */
   public static final Address SHA256 = Address.precompiled(0x02);
-  public static final Address RIPEMD160 = Address.precompiled(0x03);
-  public static final Address ID = Address.precompiled(0x04);
-  public static final Address MODEXP = Address.precompiled(0x05);
-  public static final Address ALTBN128_ADD = Address.precompiled(0x06);
-  public static final Address ALTBN128_MUL = Address.precompiled(0x07);
-  public static final Address ALTBN128_PAIRING = Address.precompiled(0x08);
-  public static final Address BLAKE2B_F_COMPRESSION = Address.precompiled(0x09);
-  public static final Address BLS12_G1ADD = Address.precompiled(0xA);
-  public static final Address BLS12_G1MUL = Address.precompiled(0xB);
-  public static final Address BLS12_G1MULTIEXP = Address.precompiled(0xC);
-  public static final Address BLS12_G2ADD = Address.precompiled(0xD);
-  public static final Address BLS12_G2MUL = Address.precompiled(0xE);
-  public static final Address BLS12_G2MULTIEXP = Address.precompiled(0xF);
-  public static final Address BLS12_PAIRING = Address.precompiled(0x10);
-  public static final Address BLS12_MAP_FP_TO_G1 = Address.precompiled(0x11);
-  public static final Address BLS12_MAP_FP2_TO_G2 = Address.precompiled(0x12);
 
+  /** The constant RIPEMD160. */
+  public static final Address RIPEMD160 = Address.precompiled(0x03);
+
+  /** The constant ID. */
+  public static final Address ID = Address.precompiled(0x04);
+
+  /** The constant MODEXP. */
+  public static final Address MODEXP = Address.precompiled(0x05);
+
+  /** The constant ALTBN128_ADD. */
+  public static final Address ALTBN128_ADD = Address.precompiled(0x06);
+
+  /** The constant ALTBN128_MUL. */
+  public static final Address ALTBN128_MUL = Address.precompiled(0x07);
+
+  /** The constant ALTBN128_PAIRING. */
+  public static final Address ALTBN128_PAIRING = Address.precompiled(0x08);
+
+  /** The constant BLAKE2B_F_COMPRESSION. */
+  public static final Address BLAKE2B_F_COMPRESSION = Address.precompiled(0x09);
+
+  /** The constant KZG_POINT_EVAL aka POINT_EVALUATION_PRECOMPILE_ADDRESS. */
+  public static final Address KZG_POINT_EVAL = Address.precompiled(0xA);
+
+  /** The constant BLS12_G1ADD. */
+  public static final Address BLS12_G1ADD = Address.precompiled(0xB);
+
+  /** The constant BLS12_G1MULTIEXP. */
+  public static final Address BLS12_G1MULTIEXP = Address.precompiled(0xC);
+
+  /** The constant BLS12_G2ADD. */
+  public static final Address BLS12_G2ADD = Address.precompiled(0xD);
+
+  /** The constant BLS12_G2MULTIEXP. */
+  public static final Address BLS12_G2MULTIEXP = Address.precompiled(0xE);
+
+  /** The constant BLS12_PAIRING. */
+  public static final Address BLS12_PAIRING = Address.precompiled(0xF);
+
+  /** The constant BLS12_MAP_FP_TO_G1. */
+  public static final Address BLS12_MAP_FP_TO_G1 = Address.precompiled(0x10);
+
+  /** The constant BLS12_MAP_FP2_TO_G2. */
+  public static final Address BLS12_MAP_FP2_TO_G2 = Address.precompiled(0x11);
+
+  /** Precompile address for P256_VERIFY. */
+  public static final Address P256_VERIFY = Address.precompiled(0x0100);
+
+  /** The constant ZERO. */
   public static final Address ZERO = Address.fromHexString("0x0");
 
+  static LoadingCache<Address, Hash> hashCache =
+      CacheBuilder.newBuilder()
+          .maximumSize(4000)
+          // .weakKeys() // unless we "intern" all addresses we cannot use weak or soft keys.
+          .build(
+              new CacheLoader<>() {
+                @Override
+                public Hash load(final Address key) {
+                  return Hash.hash(key);
+                }
+              });
+
+  /**
+   * Instantiates a new Address.
+   *
+   * @param bytes the bytes
+   */
   protected Address(final Bytes bytes) {
     super(bytes);
   }
 
+  /**
+   * Wrap address.
+   *
+   * @param value the value
+   * @return the address
+   */
   public static Address wrap(final Bytes value) {
     checkArgument(
         value.size() == SIZE,
         "An account address must be %s bytes long, got %s",
         SIZE,
         value.size());
-    return new Address(value);
+    if (value instanceof Address address) {
+      return address;
+    } else if (value instanceof DelegatingBytes delegatingBytes) {
+      return new Address(delegatingBytes.copy());
+    } else {
+      return new Address(value);
+    }
   }
 
   /**
@@ -86,23 +156,30 @@ public class Address extends DelegatingBytes implements org.hyperledger.besu.plu
   /**
    * Extracts an address from a ECDSARECOVER result hash.
    *
-   * @param hash A hash that has been obtained through hashing the return of the <code>ECDSARECOVER
-   *     </code> function from Appendix F (Signing Transactions) of the Ethereum Yellow Paper.
+   * @param hash A hash that has been obtained through hashing the return of the <code>
+   *     ECDSARECOVER     </code> function from Appendix F (Signing Transactions) of the Ethereum
+   *     Yellow Paper.
    * @return The ethereum address from the provided hash.
    */
   public static Address extract(final Bytes32 hash) {
     return wrap(hash.slice(12, 20));
   }
 
+  /**
+   * Extract address.
+   *
+   * @param publicKey the public key
+   * @return the address
+   */
   public static Address extract(final SECPPublicKey publicKey) {
     return Address.extract(keccak256(publicKey.getEncodedBytes()));
   }
 
   /**
-   * Parse an hexadecimal string representing an account address.
+   * Parse a hexadecimal string representing an account address.
    *
-   * @param str An hexadecimal string (with or without the leading '0x') representing a valid
-   *     account address.
+   * @param str A hexadecimal string (with or without the leading '0x') representing a valid account
+   *     address.
    * @return The parsed address: {@code null} if the provided string is {@code null}.
    * @throws IllegalArgumentException if the string is either not hexadecimal, or not the valid
    *     representation of an address.
@@ -114,9 +191,9 @@ public class Address extends DelegatingBytes implements org.hyperledger.besu.plu
   }
 
   /**
-   * Parse an hexadecimal string representing an account address.
+   * Parse a hexadecimal string representing an account address.
    *
-   * @param str An hexadecimal string representing a valid account address (strictly 20 bytes).
+   * @param str A hexadecimal string representing a valid account address (strictly 20 bytes).
    * @return The parsed address.
    * @throws IllegalArgumentException if the provided string is {@code null}.
    * @throws IllegalArgumentException if the string is either not hexadecimal, or not the valid
@@ -127,22 +204,25 @@ public class Address extends DelegatingBytes implements org.hyperledger.besu.plu
     final Bytes value = Bytes.fromHexString(str);
     checkArgument(
         value.size() == SIZE,
-        "An account address must be be %s bytes long, got %s",
+        "An account address must be %s bytes long, got %s",
         SIZE,
         value.size());
     return new Address(value);
   }
 
+  /**
+   * Precompiled address.
+   *
+   * @param value the value
+   * @return the address
+   */
   public static Address precompiled(final int value) {
-    // Keep it simple while we don't need precompiled above 127.
-    checkArgument(value < Byte.MAX_VALUE);
+    // Allow values up to 0x01FF (511) to encompass layer2 precompile address space
+    checkArgument(value < 0x01FF, "Precompiled value must be <= 0x01FF");
     final byte[] address = new byte[SIZE];
-    address[SIZE - 1] = (byte) value;
+    address[SIZE - 2] = (byte) (value >>> 8); // High byte
+    address[SIZE - 1] = (byte) (value & 0xFF); // Low byte
     return new Address(Bytes.wrap(address));
-  }
-
-  public static Address privacyPrecompiled(final int value) {
-    return precompiled(value);
   }
 
   /**
@@ -167,28 +247,27 @@ public class Address extends DelegatingBytes implements org.hyperledger.besu.plu
   }
 
   /**
-   * Address of the created private contract.
+   * Returns the hash of the address. Backed by a cache for performance reasons.
    *
-   * @param senderAddress the address of the transaction sender.
-   * @param nonce the nonce of this transaction.
-   * @param privacyGroupId hash of participants list ordered from Enclave response.
-   * @return The generated address of the created private contract.
+   * @return the hash of the address.
    */
-  public static Address privateContractAddress(
-      final Address senderAddress, final long nonce, final Bytes privacyGroupId) {
-    return Address.extract(
-        keccak256(
-            RLP.encode(
-                out -> {
-                  out.startList();
-                  out.writeBytes(senderAddress);
-                  out.writeLongScalar(nonce);
-                  out.writeBytes(privacyGroupId);
-                  out.endList();
-                })));
+  public Hash addressHash() {
+    try {
+      return hashCache.get(this);
+    } catch (ExecutionException e) {
+      return Hash.hash(this);
+    }
   }
 
-  public static Address fromPlugin(final org.hyperledger.besu.plugin.data.Address address) {
-    return address instanceof Address ? (Address) address : wrap(address.copy());
+  @Override
+  public boolean equals(final Object obj) {
+    if (obj == this) {
+      return true;
+    }
+    if (!(obj instanceof Address)) {
+      return false;
+    }
+    Address other = (Address) obj;
+    return Arrays.equals(this.toArrayUnsafe(), other.toArrayUnsafe());
   }
 }

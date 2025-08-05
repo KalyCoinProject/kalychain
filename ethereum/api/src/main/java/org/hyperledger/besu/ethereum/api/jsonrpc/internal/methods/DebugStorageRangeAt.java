@@ -18,10 +18,15 @@ import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParameterOrBlockHash;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.BlockReplay;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.Tracer;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.Tracer.TraceableState;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.DebugStorageRangeAtResult;
 import org.hyperledger.besu.ethereum.api.query.BlockWithMetadata;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
@@ -29,7 +34,6 @@ import org.hyperledger.besu.ethereum.api.query.TransactionWithMetadata;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.account.AccountStorageEntry;
-import org.hyperledger.besu.evm.worldstate.WorldState;
 
 import java.util.Collections;
 import java.util.NavigableMap;
@@ -66,13 +70,44 @@ public class DebugStorageRangeAt implements JsonRpcMethod {
 
   @Override
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
-    final BlockParameterOrBlockHash blockParameterOrBlockHash =
-        requestContext.getRequiredParameter(0, BlockParameterOrBlockHash.class);
-    final int transactionIndex = requestContext.getRequiredParameter(1, Integer.class);
-    final Address accountAddress = requestContext.getRequiredParameter(2, Address.class);
-    final Hash startKey =
-        Hash.fromHexStringLenient(requestContext.getRequiredParameter(3, String.class));
-    final int limit = requestContext.getRequiredParameter(4, Integer.class);
+    final BlockParameterOrBlockHash blockParameterOrBlockHash;
+    try {
+      blockParameterOrBlockHash =
+          requestContext.getRequiredParameter(0, BlockParameterOrBlockHash.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid block or block hash parameter (index 0)", RpcErrorType.INVALID_BLOCK_PARAMS, e);
+    }
+    final int transactionIndex;
+    try {
+      transactionIndex = requestContext.getRequiredParameter(1, Integer.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid transaction index parameter (index 1)",
+          RpcErrorType.INVALID_TRANSACTION_INDEX_PARAMS,
+          e);
+    }
+    final Address accountAddress;
+    try {
+      accountAddress = requestContext.getRequiredParameter(2, Address.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid account address parameter (index 2)", RpcErrorType.INVALID_ADDRESS_PARAMS, e);
+    }
+    final Hash startKey;
+    try {
+      startKey = Hash.fromHexStringLenient(requestContext.getRequiredParameter(3, String.class));
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid data start hash parameter (index 3)", RpcErrorType.INVALID_DATA_HASH_PARAMS, e);
+    }
+    final int limit;
+    try {
+      limit = requestContext.getRequiredParameter(4, Integer.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid limit parameter (index 4)", RpcErrorType.INVALID_TRANSACTION_LIMIT_PARAMS, e);
+    }
 
     final Optional<Hash> blockHashOptional = hashFromParameter(blockParameterOrBlockHash);
     if (blockHashOptional.isEmpty()) {
@@ -85,31 +120,38 @@ public class DebugStorageRangeAt implements JsonRpcMethod {
       return emptyResponse(requestContext);
     }
 
-    final Optional<TransactionWithMetadata> optional =
+    final Optional<TransactionWithMetadata> maybeTransactionIndex =
         blockchainQueries.get().transactionByBlockHashAndIndex(blockHash, transactionIndex);
 
-    return optional
-        .map(
-            transactionWithMetadata ->
-                (blockReplay
+    return Tracer.processTracing(
+            blockchainQueries.get(),
+            Optional.of(blockHeaderOptional.get()),
+            mutableWorldState -> {
+              if (maybeTransactionIndex.isEmpty()) {
+                return Optional.of(
+                    extractStorageAt(
+                        requestContext, accountAddress, startKey, limit, mutableWorldState));
+              } else {
+                return blockReplay
                     .get()
                     .afterTransactionInBlock(
+                        mutableWorldState,
                         blockHash,
-                        transactionWithMetadata.getTransaction().getHash(),
-                        (transaction, blockHeader, blockchain, worldState, transactionProcessor) ->
+                        maybeTransactionIndex.get().getTransaction().getHash(),
+                        (transaction,
+                            blockHeader,
+                            blockchain,
+                            transactionProcessor,
+                            protocolSpec) ->
                             extractStorageAt(
-                                requestContext, accountAddress, startKey, limit, worldState))
-                    .orElseGet(() -> emptyResponse(requestContext))))
-        .orElseGet(
-            () ->
-                blockchainQueries
-                    .get()
-                    .getAndMapWorldState(
-                        blockHeaderOptional.get().getNumber(),
-                        worldState ->
-                            extractStorageAt(
-                                requestContext, accountAddress, startKey, limit, worldState))
-                    .orElseGet(() -> emptyResponse(requestContext)));
+                                requestContext,
+                                accountAddress,
+                                startKey,
+                                limit,
+                                mutableWorldState));
+              }
+            })
+        .orElse(emptyResponse(requestContext));
   }
 
   private Optional<Hash> hashFromParameter(final BlockParameterOrBlockHash blockParameter) {
@@ -132,7 +174,7 @@ public class DebugStorageRangeAt implements JsonRpcMethod {
       final Address accountAddress,
       final Hash startKey,
       final int limit,
-      final WorldState worldState) {
+      final TraceableState worldState) {
     final Account account = worldState.get(accountAddress);
     final NavigableMap<Bytes32, AccountStorageEntry> entries =
         account.storageEntriesFrom(startKey, limit + 1);

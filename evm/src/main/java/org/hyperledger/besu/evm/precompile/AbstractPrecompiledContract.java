@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,6 +16,10 @@ package org.hyperledger.besu.evm.precompile;
 
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
+import java.util.Arrays;
+import java.util.function.Consumer;
+
+import org.apache.tuweni.bytes.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,11 +33,22 @@ public abstract class AbstractPrecompiledContract implements PrecompiledContract
 
   private final String name;
 
+  /**
+   * Instantiates a new Abstract precompiled contract.
+   *
+   * @param name the name
+   * @param gasCalculator the gas calculator
+   */
   protected AbstractPrecompiledContract(final String name, final GasCalculator gasCalculator) {
     this.name = name;
     this.gasCalculator = gasCalculator;
   }
 
+  /**
+   * Gas calculator.
+   *
+   * @return the gas calculator
+   */
   protected GasCalculator gasCalculator() {
     return gasCalculator;
   }
@@ -41,5 +56,56 @@ public abstract class AbstractPrecompiledContract implements PrecompiledContract
   @Override
   public String getName() {
     return name;
+  }
+
+  /** Default result caching to false unless otherwise set. */
+  protected static Boolean enableResultCaching = Boolean.FALSE;
+
+  /**
+   * Enable or disable precompile result caching.
+   *
+   * @param enablePrecompileCaching boolean indicating whether to cache precompile results
+   */
+  public static void setPrecompileCaching(final boolean enablePrecompileCaching) {
+    enableResultCaching = enablePrecompileCaching;
+  }
+
+  /** enum for precompile cache metric */
+  public enum CacheMetric {
+    /** a successful cache hit metric */
+    HIT,
+    /** a cache miss metric */
+    MISS,
+    /** a false positive cache hit metric */
+    FALSE_POSITIVE
+  }
+
+  /**
+   * record type used for cache event
+   *
+   * @param precompile precompile name
+   * @param cacheMetric cache metric type (hit, miss, false positive).
+   */
+  public record CacheEvent(String precompile, CacheMetric cacheMetric) {}
+
+  static Consumer<CacheEvent> cacheEventConsumer = __ -> {};
+
+  /**
+   * Set an optional cache event consumer, such as a metrics system logger.
+   *
+   * @param eventConsumer consumer of the CacheEvent.
+   */
+  public static void setCacheEventConsumer(final Consumer<CacheEvent> eventConsumer) {
+    cacheEventConsumer = eventConsumer;
+  }
+
+  /**
+   * calculate a cache key based on input bytes
+   *
+   * @param input bytes
+   * @return integer cache key
+   */
+  public static Integer getCacheKey(final Bytes input) {
+    return Arrays.hashCode(input.toArrayUnsafe());
   }
 }

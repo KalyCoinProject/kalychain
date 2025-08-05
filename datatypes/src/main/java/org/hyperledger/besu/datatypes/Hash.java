@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -15,6 +15,7 @@
 package org.hyperledger.besu.datatypes;
 
 import static org.hyperledger.besu.crypto.Hash.keccak256;
+import static org.hyperledger.besu.crypto.Hash.sha256;
 
 import org.hyperledger.besu.ethereum.rlp.RLP;
 
@@ -23,10 +24,14 @@ import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.bytes.DelegatingBytes32;
 
-/** A 32-bytes hash value as used in Ethereum blocks, that is the result of the KEC algorithm. */
-public class Hash extends DelegatingBytes32 implements org.hyperledger.besu.plugin.data.Hash {
+/** A 32-bytes hash value as used in Ethereum blocks, usually the result of the KEC algorithm. */
+public class Hash extends DelegatingBytes32 {
 
+  /** The constant ZERO. */
   public static final Hash ZERO = new Hash(Bytes32.ZERO);
+
+  /** Last hash */
+  public static final Hash LAST = new Hash(Bytes32.fromHexString("F".repeat(64)));
 
   /**
    * Hash of an RLP encoded trie hash with no content, or
@@ -46,14 +51,36 @@ public class Hash extends DelegatingBytes32 implements org.hyperledger.besu.plug
    */
   public static final Hash EMPTY = hash(Bytes.EMPTY);
 
-  private Hash(final Bytes32 bytes) {
+  /**
+   * Hash of empty requests or "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   */
+  public static final Hash EMPTY_REQUESTS_HASH = Hash.wrap(sha256(Bytes.EMPTY));
+
+  /**
+   * Instantiates a new Hash.
+   *
+   * @param bytes raw bytes
+   */
+  protected Hash(final Bytes32 bytes) {
     super(bytes);
   }
 
+  /**
+   * Convert value to keccak256 hash.
+   *
+   * @param value the value
+   * @return the hash
+   */
   public static Hash hash(final Bytes value) {
     return new Hash(keccak256(value));
   }
 
+  /**
+   * Wrap bytes to hash.
+   *
+   * @param bytes the bytes
+   * @return the hash
+   */
   public static Hash wrap(final Bytes32 bytes) {
     if (bytes instanceof Hash) {
       return (Hash) bytes;
@@ -76,11 +103,25 @@ public class Hash extends DelegatingBytes32 implements org.hyperledger.besu.plug
     return new Hash(Bytes32.fromHexStringStrict(str));
   }
 
+  /**
+   * From hex string lenient hash.
+   *
+   * @param str the str
+   * @return the hash
+   */
   public static Hash fromHexStringLenient(final String str) {
     return new Hash(Bytes32.fromHexStringLenient(str));
   }
 
-  public static Hash fromPlugin(final org.hyperledger.besu.plugin.data.Hash blockHash) {
-    return blockHash instanceof Hash ? (Hash) blockHash : wrap(blockHash);
+  /***
+   * For logging purposes, this method returns a shortened hex representation
+   *
+   * @return shortened string with only the beginning and the end of the hex representation
+   */
+  public String toShortLogString() {
+    final var hexRepresentation = toFastHex(false);
+    String firstPart = hexRepresentation.substring(0, 5);
+    String lastPart = hexRepresentation.substring(hexRepresentation.length() - 5);
+    return firstPart + "....." + lastPart;
   }
 }

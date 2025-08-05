@@ -15,7 +15,6 @@
 package org.hyperledger.besu.ethereum.eth.sync.tasks;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.debugLambda;
 
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.core.Block;
@@ -195,15 +194,15 @@ public class PersistBlockTask extends AbstractEthTask<Block> {
   @Override
   protected void executeTask() {
     try {
-      final ProtocolSpec protocolSpec =
-          protocolSchedule.getByBlockNumber(block.getHeader().getNumber());
+      final ProtocolSpec protocolSpec = protocolSchedule.getByBlockHeader(block.getHeader());
       final BlockImporter blockImporter = protocolSpec.getBlockImporter();
-      debugLambda(LOG, "Running import task for block {}", block::toLogString);
+      LOG.atDebug()
+          .setMessage("Running import task for block {}")
+          .addArgument(block::toLogString)
+          .log();
       blockImportResult = blockImporter.importBlock(protocolContext, block, validateHeaders);
       if (!blockImportResult.isImported()) {
-        result.completeExceptionally(
-            new InvalidBlockException(
-                "Failed to import block", block.getHeader().getNumber(), block.getHash()));
+        result.completeExceptionally(InvalidBlockException.fromInvalidBlock(block.getHeader()));
         return;
       }
       result.complete(block);
@@ -219,7 +218,8 @@ public class PersistBlockTask extends AbstractEthTask<Block> {
       case IMPORTED:
         LOG.info(
             String.format(
-                "Imported #%,d / %d tx / %d om / %,d (%01.1f%%) gas / (%s) in %01.3fs. Peers: %d",
+                "Imported %s #%,d / %d tx / %d om / %,d (%01.1f%%) gas / (%s) in %01.3fs. Peers: %d",
+                block.getBody().getTransactions().size() == 0 ? "empty block" : "block",
                 block.getHeader().getNumber(),
                 block.getBody().getTransactions().size(),
                 block.getBody().getOmmers().size(),

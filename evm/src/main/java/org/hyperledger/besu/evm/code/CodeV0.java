@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -11,57 +11,79 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.evm.code;
 
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.evm.Code;
+import org.hyperledger.besu.evm.EVM;
+import org.hyperledger.besu.evm.internal.Words;
 import org.hyperledger.besu.evm.operation.JumpDestOperation;
-import org.hyperledger.besu.evm.operation.PushOperation;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 
 import com.google.common.base.MoreObjects;
+import com.google.common.base.Suppliers;
 import org.apache.tuweni.bytes.Bytes;
 
+/** The CodeV0. */
 public class CodeV0 implements Code {
 
-  public static final CodeV0 EMPTY_CODE = new CodeV0(Bytes.EMPTY, Hash.EMPTY);
+  /** The constant EMPTY_CODE. */
+  public static final CodeV0 EMPTY_CODE = new CodeV0(Bytes.EMPTY);
 
   /** The bytes representing the code. */
   private final Bytes bytes;
 
   /** The hash of the code, needed for accessing metadata about the bytecode */
-  private final Hash codeHash;
+  private Hash codeHash;
 
-  /** Used to cache valid jump destinations. */
-  private long[] validJumpDestinations;
+  private Integer size;
+
+  /** Code section info for the legacy code */
+  private final CodeSection codeSectionZero;
+
+  /** Bit mask for jump destinations, used to optimize JUMP/JUMPI operations */
+  private long[] jumpDestBitMask = null;
 
   /**
    * Public constructor.
    *
-   * @param bytes The byte representation of the code.
-   * @param codeHash the Hash of the bytes in the code.
+   * @param byteCode The byte representation of the code.
    */
-  CodeV0(final Bytes bytes, final Hash codeHash) {
-    this.bytes = bytes;
+  public CodeV0(final Bytes byteCode) {
+    this(byteCode, byteCode.isEmpty() ? Hash.EMPTY : null);
+  }
+
+  /**
+   * Public constructor.
+   *
+   * @param byteCode The byte representation of the code.
+   * @param codeHash the hash of the bytecode
+   */
+  public CodeV0(final Bytes byteCode, final Hash codeHash) {
+    this.bytes = byteCode;
     this.codeHash = codeHash;
+
+    this.codeSectionZero = new CodeSection(Suppliers.memoize(this::getSize), 0, -1, -1, 0);
   }
 
   /**
    * Returns true if the object is equal to this; otherwise false.
    *
    * @param other The object to compare this with.
-   * @return True if the object is equal to this; otherwise false.
+   * @return True if the object is equal to this, otherwise false.
    */
   @Override
   public boolean equals(final Object other) {
     if (other == null) return false;
     if (other == this) return true;
-    if (!(other instanceof CodeV0)) return false;
+    if (!(other instanceof CodeV0 that)) return false;
 
-    final CodeV0 that = (CodeV0) other;
-    return this.bytes.equals(that.bytes);
+    return this.getCodeHash().equals(that.getCodeHash());
   }
 
   @Override
@@ -76,16 +98,25 @@ public class CodeV0 implements Code {
    */
   @Override
   public int getSize() {
-    return bytes.size();
+    if (size == null) {
+      size = bytes.size();
+    }
+
+    return size;
   }
 
   @Override
-  public Bytes getCodeBytes() {
-    return getContainerBytes();
+  public int getDataSize() {
+    return 0;
   }
 
   @Override
-  public Bytes getContainerBytes() {
+  public int getDeclaredDataSize() {
+    return 0;
+  }
+
+  @Override
+  public Bytes getBytes() {
     return bytes;
   }
 
@@ -96,6 +127,11 @@ public class CodeV0 implements Code {
 
   @Override
   public Hash getCodeHash() {
+    if (codeHash != null) {
+      return codeHash;
+    }
+
+    codeHash = Hash.hash(bytes);
     return codeHash;
   }
 
@@ -104,12 +140,21 @@ public class CodeV0 implements Code {
     if (jumpDestination < 0 || jumpDestination >= getSize()) {
       return true;
     }
-    if (validJumpDestinations == null || validJumpDestinations.length == 0) {
-      validJumpDestinations = calculateJumpDests();
+
+    if (jumpDestBitMask == null) {
+      jumpDestBitMask = calculateJumpDestBitMask();
     }
 
-    final long targetLong = validJumpDestinations[jumpDestination >>> 6];
+    // This selects which long in the array holds the bit for the given offset:
+    //	1)	>>> 6 is equivalent to jumpDestination / 64
+    //	2)	Each long holds 64 bits, so this finds the correct chunk
+    final long targetLong = jumpDestBitMask[jumpDestination >>> 6];
+
+    // 1) & 0x3F is jumpDestination % 64
+    // 2)	1L << ... gives a mask for the specific bit in that long
     final long targetBit = 1L << (jumpDestination & 0x3F);
+
+    // If the bit is not set, then it is an invalid jump destination
     return (targetLong & targetBit) == 0L;
   }
 
@@ -118,31 +163,280 @@ public class CodeV0 implements Code {
     return true;
   }
 
-  long[] calculateJumpDests() {
+  @Override
+  public CodeSection getCodeSection(final int section) {
+    if (section == 0) {
+      return codeSectionZero;
+    } else {
+      return null;
+    }
+  }
+
+  @Override
+  public int getCodeSectionCount() {
+    return 1;
+  }
+
+  @Override
+  public int getEofVersion() {
+    return 0;
+  }
+
+  @Override
+  public int getSubcontainerCount() {
+    return 0;
+  }
+
+  @Override
+  public Optional<Code> getSubContainer(final int index, final Bytes auxData, final EVM evm) {
+    return Optional.empty();
+  }
+
+  @Override
+  public Bytes getData(final int offset, final int length) {
+    return Bytes.EMPTY;
+  }
+
+  @Override
+  public int readBigEndianI16(final int index) {
+    return Words.readBigEndianI16(index, bytes.toArrayUnsafe());
+  }
+
+  @Override
+  public int readBigEndianU16(final int index) {
+    return Words.readBigEndianU16(index, bytes.toArrayUnsafe());
+  }
+
+  @Override
+  public int readU8(final int index) {
+    return bytes.toArrayUnsafe()[index] & 0xff;
+  }
+
+  @Override
+  public String prettyPrint() {
+    int i = 0;
+    int len = bytes.size();
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    PrintStream ps = new PrintStream(out);
+    ps.println("0x # Legacy EVM Code");
+    while (i < len) {
+      i += printInstruction(i, ps);
+    }
+    return out.toString(StandardCharsets.UTF_8);
+  }
+
+  /**
+   * Computes a bitmask where each bit set to 1 indicates a valid `JUMPDEST` opcode in the EVM
+   * bytecode. The bitmap is organized in 64-byte chunks, each represented as a `long` (64 bits).
+   * This is used for efficiently validating dynamic jumps (`JUMP`, `JUMPI`) at runtime.
+   */
+  long[] calculateJumpDestBitMask() {
+    // Total number of bytes in the bytecode
     final int size = getSize();
+
+    // Allocate enough longs to cover all bytes, one long (64 bits) per 64-byte chunk
     final long[] bitmap = new long[(size >> 6) + 1];
-    final byte[] rawCode = bytes.toArrayUnsafe();
+
+    // Get the raw EVM bytecode as a byte array (no copying)
+    final byte[] rawCode = getBytes().toArrayUnsafe();
     final int length = rawCode.length;
+
+    // Iterate through the bytecode
     for (int i = 0; i < length; ) {
+      // One 64-bit entry corresponds to 64 bytecode positions
       long thisEntry = 0L;
+
+      // Compute which bitmap entry we are in (i / 64)
       final int entryPos = i >> 6;
+
+      // Compute the number of bytes we can safely examine in this 64-byte window
       final int max = Math.min(64, length - (entryPos << 6));
+
+      // j is the position within this 64-byte window
       int j = i & 0x3F;
+
+      // Scan through this 64-byte chunk of the bytecode
       for (; j < max; i++, j++) {
         final byte operationNum = rawCode[i];
-        if (operationNum == JumpDestOperation.OPCODE) {
-          thisEntry |= 1L << j;
-        } else if (operationNum > PushOperation.PUSH_BASE) {
-          // not needed - && operationNum <= PushOperation.PUSH_MAX
-          // Java quirk, all bytes are signed, and PUSH32 is 127, which is Byte.MAX_VALUE
-          // so we don't need to check the upper bound as it will never be violated
-          final int multiByteDataLen = operationNum - PushOperation.PUSH_BASE;
-          j += multiByteDataLen;
-          i += multiByteDataLen;
+
+        // Skip all opcodes below 0x5b (JUMPDEST), since only PUSH1–PUSH32 and JUMPDEST matter
+        if (operationNum >= JumpDestOperation.OPCODE) {
+          switch (operationNum) {
+            // JUMPDEST opcode (0x5b): mark as a valid jump destination
+            case JumpDestOperation.OPCODE:
+              thisEntry |= 1L << j; // Set the bit at position j
+              break;
+            // PUSH1–PUSH32 opcodes (0x60–0x7f): these consume 1-32 bytes of data that should be
+            // skipped
+            case 0x60:
+              i += 1;
+              j += 1;
+              break;
+            case 0x61:
+              i += 2;
+              j += 2;
+              break;
+            case 0x62:
+              i += 3;
+              j += 3;
+              break;
+            case 0x63:
+              i += 4;
+              j += 4;
+              break;
+            case 0x64:
+              i += 5;
+              j += 5;
+              break;
+            case 0x65:
+              i += 6;
+              j += 6;
+              break;
+            case 0x66:
+              i += 7;
+              j += 7;
+              break;
+            case 0x67:
+              i += 8;
+              j += 8;
+              break;
+            case 0x68:
+              i += 9;
+              j += 9;
+              break;
+            case 0x69:
+              i += 10;
+              j += 10;
+              break;
+            case 0x6a:
+              i += 11;
+              j += 11;
+              break;
+            case 0x6b:
+              i += 12;
+              j += 12;
+              break;
+            case 0x6c:
+              i += 13;
+              j += 13;
+              break;
+            case 0x6d:
+              i += 14;
+              j += 14;
+              break;
+            case 0x6e:
+              i += 15;
+              j += 15;
+              break;
+            case 0x6f:
+              i += 16;
+              j += 16;
+              break;
+            case 0x70:
+              i += 17;
+              j += 17;
+              break;
+            case 0x71:
+              i += 18;
+              j += 18;
+              break;
+            case 0x72:
+              i += 19;
+              j += 19;
+              break;
+            case 0x73:
+              i += 20;
+              j += 20;
+              break;
+            case 0x74:
+              i += 21;
+              j += 21;
+              break;
+            case 0x75:
+              i += 22;
+              j += 22;
+              break;
+            case 0x76:
+              i += 23;
+              j += 23;
+              break;
+            case 0x77:
+              i += 24;
+              j += 24;
+              break;
+            case 0x78:
+              i += 25;
+              j += 25;
+              break;
+            case 0x79:
+              i += 26;
+              j += 26;
+              break;
+            case 0x7a:
+              i += 27;
+              j += 27;
+              break;
+            case 0x7b:
+              i += 28;
+              j += 28;
+              break;
+            case 0x7c:
+              i += 29;
+              j += 29;
+              break;
+            case 0x7d:
+              i += 30;
+              j += 30;
+              break;
+            case 0x7e:
+              i += 31;
+              j += 31;
+              break;
+            case 0x7f:
+              i += 32;
+              j += 32;
+              break;
+            default:
+              // No default case needed: any unhandled opcode >= 0x5b but not PUSH or JUMPDEST is
+              // skipped
+          }
         }
       }
+
+      // Store the computed bitmask for this 64-byte chunk
       bitmap[entryPos] = thisEntry;
     }
+
+    // Return the full jump destination bitmask
     return bitmap;
+  }
+
+  /**
+   * Prints an individual instruction, including immediate data
+   *
+   * @param offset Offset within the code
+   * @param out the print stream to write to
+   * @return the number of bytes to advance the PC (includes consideration of immediate arguments)
+   */
+  public int printInstruction(final int offset, final PrintStream out) {
+    int codeByte = bytes.get(offset) & 0xff;
+    OpcodeInfo info = OpcodeInfo.getLegacyOpcode(codeByte);
+    String push = "";
+    String decimalPush = "";
+    if (info.pcAdvance() > 1) {
+      int start = Math.min(bytes.size(), offset + 1);
+      int end = Math.min(bytes.size(), info.pcAdvance() - 1);
+      Bytes slice = bytes.slice(start, end);
+      push = slice.toUnprefixedHexString();
+      if (info.pcAdvance() < 5) {
+        decimalPush = "(" + slice.toLong() + ")";
+      }
+    }
+    String name = info.name();
+    if (codeByte == 0x5b) {
+      name = "JUMPDEST";
+    }
+    out.printf("%02x%s # [ %d ] %s%s%n", codeByte, push, offset, name, decimalPush);
+    return Math.max(1, info.pcAdvance());
   }
 }

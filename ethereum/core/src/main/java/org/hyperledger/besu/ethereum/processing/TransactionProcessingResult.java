@@ -16,15 +16,17 @@ package org.hyperledger.besu.ethereum.processing;
 
 import org.hyperledger.besu.ethereum.mainnet.ValidationResult;
 import org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason;
+import org.hyperledger.besu.ethereum.trie.pathbased.common.worldview.accumulator.PathBasedWorldStateUpdateAccumulator;
+import org.hyperledger.besu.evm.frame.ExceptionalHaltReason;
 import org.hyperledger.besu.evm.log.Log;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
 
-public class TransactionProcessingResult {
+public class TransactionProcessingResult
+    implements org.hyperledger.besu.plugin.data.TransactionProcessingResult {
 
   /** The status of the transaction after being processed. */
   public enum Status {
@@ -49,28 +51,35 @@ public class TransactionProcessingResult {
 
   private final Bytes output;
 
+  private Optional<Boolean> isProcessedInParallel = Optional.empty();
+
   private final ValidationResult<TransactionInvalidReason> validationResult;
   private final Optional<Bytes> revertReason;
+
+  public PathBasedWorldStateUpdateAccumulator<?> accumulator;
+  private final Optional<ExceptionalHaltReason> exceptionalHaltReason;
 
   public static TransactionProcessingResult invalid(
       final ValidationResult<TransactionInvalidReason> validationResult) {
     return new TransactionProcessingResult(
-        Status.INVALID, new ArrayList<>(), -1, -1, Bytes.EMPTY, validationResult, Optional.empty());
+        Status.INVALID, List.of(), -1, -1, Bytes.EMPTY, validationResult, Optional.empty());
   }
 
   public static TransactionProcessingResult failed(
       final long gasUsedByTransaction,
       final long gasRemaining,
       final ValidationResult<TransactionInvalidReason> validationResult,
-      final Optional<Bytes> revertReason) {
+      final Optional<Bytes> revertReason,
+      final Optional<ExceptionalHaltReason> exceptionalHaltReason) {
     return new TransactionProcessingResult(
         Status.FAILED,
-        new ArrayList<>(),
+        List.of(),
         gasUsedByTransaction,
         gasRemaining,
         Bytes.EMPTY,
         validationResult,
-        revertReason);
+        revertReason,
+        exceptionalHaltReason);
   }
 
   public static TransactionProcessingResult successful(
@@ -104,6 +113,26 @@ public class TransactionProcessingResult {
     this.output = output;
     this.validationResult = validationResult;
     this.revertReason = revertReason;
+    this.exceptionalHaltReason = Optional.empty();
+  }
+
+  public TransactionProcessingResult(
+      final Status status,
+      final List<Log> logs,
+      final long estimateGasUsedByTransaction,
+      final long gasRemaining,
+      final Bytes output,
+      final ValidationResult<TransactionInvalidReason> validationResult,
+      final Optional<Bytes> revertReason,
+      final Optional<ExceptionalHaltReason> exceptionalHaltReason) {
+    this.status = status;
+    this.logs = logs;
+    this.estimateGasUsedByTransaction = estimateGasUsedByTransaction;
+    this.gasRemaining = gasRemaining;
+    this.output = output;
+    this.validationResult = validationResult;
+    this.revertReason = revertReason;
+    this.exceptionalHaltReason = exceptionalHaltReason;
   }
 
   /**
@@ -113,6 +142,7 @@ public class TransactionProcessingResult {
    *
    * @return the logs produced by the transaction
    */
+  @Override
   public List<Log> getLogs() {
     return logs;
   }
@@ -124,6 +154,7 @@ public class TransactionProcessingResult {
    *
    * @return the gas remaining after the transaction was processed
    */
+  @Override
   public long getGasRemaining() {
     return gasRemaining;
   }
@@ -134,6 +165,7 @@ public class TransactionProcessingResult {
    *
    * @return the estimate gas used
    */
+  @Override
   public long getEstimateGasUsedByTransaction() {
     return estimateGasUsedByTransaction;
   }
@@ -147,26 +179,39 @@ public class TransactionProcessingResult {
     return status;
   }
 
+  @Override
   public Bytes getOutput() {
     return output;
   }
 
   /**
-   * Returns whether or not the transaction was invalid.
+   * Returns whether the transaction was invalid.
    *
    * @return {@code true} if the transaction was invalid; otherwise {@code false}
    */
+  @Override
   public boolean isInvalid() {
     return getStatus() == Status.INVALID;
   }
 
   /**
-   * Returns whether or not the transaction was successfully processed.
+   * Returns whether the transaction was successfully processed.
    *
    * @return {@code true} if the transaction was successfully processed; otherwise {@code false}
    */
+  @Override
   public boolean isSuccessful() {
     return getStatus() == Status.SUCCESSFUL;
+  }
+
+  /**
+   * Returns whether the transaction failed.
+   *
+   * @return {@code true} if the transaction failed; otherwise {@code false}
+   */
+  @Override
+  public boolean isFailed() {
+    return getStatus() == Status.FAILED;
   }
 
   /**
@@ -179,11 +224,62 @@ public class TransactionProcessingResult {
   }
 
   /**
+   * Set isProcessedInParallel to the value in parameter
+   *
+   * @param isProcessedInParallel new value of isProcessedInParallel
+   */
+  public void setIsProcessedInParallel(final Optional<Boolean> isProcessedInParallel) {
+    this.isProcessedInParallel = isProcessedInParallel;
+  }
+
+  /**
+   * Returns a flag that indicates if the transaction was executed in parallel
+   *
+   * @return Optional of Boolean, the value of the boolean is true if the transaction was executed
+   *     in parallel
+   */
+  public Optional<Boolean> getIsProcessedInParallel() {
+    return isProcessedInParallel;
+  }
+
+  /**
    * Returns the reason why a transaction was reverted (if applicable).
    *
    * @return the revert reason.
    */
+  @Override
   public Optional<Bytes> getRevertReason() {
     return revertReason;
+  }
+
+  @Override
+  public Optional<String> getInvalidReason() {
+    return (validationResult.isValid()
+        ? Optional.empty()
+        : Optional.of(validationResult.getErrorMessage()));
+  }
+
+  public Optional<ExceptionalHaltReason> getExceptionalHaltReason() {
+    return exceptionalHaltReason;
+  }
+
+  @Override
+  public String toString() {
+    return "TransactionProcessingResult{"
+        + "status="
+        + status
+        + ", estimateGasUsedByTransaction="
+        + estimateGasUsedByTransaction
+        + ", gasRemaining="
+        + gasRemaining
+        + ", logs="
+        + logs
+        + ", output="
+        + output
+        + ", validationResult="
+        + validationResult
+        + ", revertReason="
+        + revertReason
+        + '}';
   }
 }

@@ -17,20 +17,25 @@ package org.hyperledger.besu.evm.operation;
 import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
+import org.hyperledger.besu.evm.internal.Words;
 
-import org.apache.tuweni.bytes.Bytes;
-
+/** The Number operation. */
 public class NumberOperation extends AbstractFixedCostOperation {
 
+  /**
+   * Instantiates a new Number operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public NumberOperation(final GasCalculator gasCalculator) {
-    super(0x43, "NUMBER", 0, 1, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
+    super(0x43, "NUMBER", 0, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
   }
 
   @Override
   public Operation.OperationResult executeFixedCostOperation(
       final MessageFrame frame, final EVM evm) {
     final long number = frame.getBlockValues().getNumber();
-    frame.pushStackItem(Bytes.ofUnsignedLong(number));
+    frame.pushStackItem(Words.longBytes(number));
 
     return successResponse;
   }

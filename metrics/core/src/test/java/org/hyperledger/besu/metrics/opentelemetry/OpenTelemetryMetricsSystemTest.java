@@ -31,8 +31,8 @@ import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.metrics.prometheus.MetricsConfiguration;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.plugin.services.metrics.Counter;
-import org.hyperledger.besu.plugin.services.metrics.LabelledGauge;
 import org.hyperledger.besu.plugin.services.metrics.LabelledMetric;
+import org.hyperledger.besu.plugin.services.metrics.LabelledSuppliedMetric;
 import org.hyperledger.besu.plugin.services.metrics.OperationTimer;
 
 import java.util.Collections;
@@ -43,18 +43,18 @@ import java.util.stream.Stream;
 
 import com.google.common.collect.ImmutableSet;
 import io.opentelemetry.api.GlobalOpenTelemetry;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class OpenTelemetryMetricsSystemTest {
 
   private static final Comparator<Observation> IGNORE_VALUES =
-      Comparator.<Observation, String>comparing(observation -> observation.getCategory().getName())
-          .thenComparing(Observation::getMetricName)
-          .thenComparing((o1, o2) -> o1.getLabels().equals(o2.getLabels()) ? 0 : 1);
+      Comparator.<Observation, String>comparing(observation -> observation.category().getName())
+          .thenComparing(Observation::metricName)
+          .thenComparing((o1, o2) -> o1.labels().equals(o2.labels()) ? 0 : 1);
 
-  @Before
+  @BeforeEach
   public void resetGlobalOpenTelemetry() {
     GlobalOpenTelemetry.resetForTest();
   }
@@ -74,12 +74,12 @@ public class OpenTelemetryMetricsSystemTest {
     return null;
   }
 
-  @Before
+  @BeforeEach
   public void setUp() {
     metricsSystem = new OpenTelemetrySystem(DEFAULT_METRIC_CATEGORIES, true, "job", false);
   }
 
-  @After
+  @AfterEach
   public void tearDown() {
     metricsSystem.shutdown();
   }
@@ -231,8 +231,8 @@ public class OpenTelemetryMetricsSystemTest {
 
   @Test
   public void shouldCreateLabelledGauge() {
-    LabelledGauge labelledGauge =
-        metricsSystem.createLabelledGauge(RPC, "gaugeName", "help", "a", "b");
+    LabelledSuppliedMetric labelledGauge =
+        metricsSystem.createLabelledSuppliedGauge(RPC, "gaugeName", "help", "a", "b");
     labelledGauge.labels(() -> 1.0, "a1", "b1");
     labelledGauge.labels(() -> 11.0, "a2", "b2");
     labelledGauge.labels(() -> 21.0, "a3", "b3");
@@ -266,7 +266,7 @@ public class OpenTelemetryMetricsSystemTest {
       final LabelledMetric<Counter> counterN =
           localMetricSystem.createLabelledCounter(
               NETWORK, "ABC", "Not that kind of network", "show");
-      assertThat(counterN).isSameAs(NoOpMetricsSystem.NO_OP_LABELLED_1_COUNTER);
+      assertThat(counterN).isInstanceOf(NoOpMetricsSystem.LabelCountingNoOpMetric.class);
 
       counterN.labels("show").inc();
       assertThat(localMetricSystem.streamObservations()).isEmpty();
@@ -274,7 +274,7 @@ public class OpenTelemetryMetricsSystemTest {
       // do a category we are watching
       final LabelledMetric<Counter> counterR =
           localMetricSystem.createLabelledCounter(RPC, "name", "Not useful", "method");
-      assertThat(counterR).isNotSameAs(NoOpMetricsSystem.NO_OP_LABELLED_1_COUNTER);
+      assertThat(counterR).isNotInstanceOf(NoOpMetricsSystem.LabelCountingNoOpMetric.class);
 
       counterR.labels("op").inc();
       assertThat(getObservation(localMetricSystem))

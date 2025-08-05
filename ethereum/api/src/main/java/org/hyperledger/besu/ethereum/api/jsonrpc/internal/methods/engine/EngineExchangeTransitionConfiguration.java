@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -15,16 +15,18 @@
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.engine;
 
 import static org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod.ENGINE_EXCHANGE_TRANSITION_CONFIGURATION;
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.traceLambda;
 
 import org.hyperledger.besu.consensus.merge.MergeContext;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.ExecutionEngineJsonRpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.EngineExchangeTransitionConfigurationParameter;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.EngineExchangeTransitionConfigurationResult;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.Difficulty;
@@ -66,21 +68,30 @@ public class EngineExchangeTransitionConfiguration extends ExecutionEngineJsonRp
   public JsonRpcResponse syncResponse(final JsonRpcRequestContext requestContext) {
     engineCallListener.executionEngineCalled();
 
-    final EngineExchangeTransitionConfigurationParameter remoteTransitionConfiguration =
-        requestContext.getRequiredParameter(
-            0, EngineExchangeTransitionConfigurationParameter.class);
+    final EngineExchangeTransitionConfigurationParameter remoteTransitionConfiguration;
+    try {
+      remoteTransitionConfiguration =
+          requestContext.getRequiredParameter(
+              0, EngineExchangeTransitionConfigurationParameter.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid engine exchange transition configuration parameters (index 0)",
+          RpcErrorType.INVALID_ENGINE_EXCHANGE_TRANSITION_CONFIGURATION_PARAMS,
+          e);
+    }
     final Object reqId = requestContext.getRequest().getId();
 
-    traceLambda(
-        LOG,
-        "received transitionConfiguration: {}",
-        () -> {
-          try {
-            return mapperSupplier.get().writeValueAsString(remoteTransitionConfiguration);
-          } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
-          }
-        });
+    LOG.atTrace()
+        .setMessage("received transitionConfiguration: {}")
+        .addArgument(
+            () -> {
+              try {
+                return mapperSupplier.get().writeValueAsString(remoteTransitionConfiguration);
+              } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+              }
+            })
+        .log();
 
     final Optional<BlockHeader> maybeTerminalPoWBlockHeader =
         mergeContextOptional.flatMap(MergeContext::getTerminalPoWBlock);

@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -15,18 +15,19 @@
 package org.hyperledger.besu.ethereum.eth.sync.snapsync;
 
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.SnapDataRequest;
-import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.TrieNodeDataRequest;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.TrieNodeHealingRequest;
 import org.hyperledger.besu.metrics.BesuMetricCategory;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.plugin.services.metrics.Counter;
 import org.hyperledger.besu.services.tasks.Task;
 
 public class CompleteTaskStep {
-  private final SnapSyncState snapSyncState;
+  private final SnapSyncProcessState snapSyncState;
   private final Counter completedRequestsCounter;
   private final Counter retriedRequestsCounter;
 
-  public CompleteTaskStep(final SnapSyncState snapSyncState, final MetricsSystem metricsSystem) {
+  public CompleteTaskStep(
+      final SnapSyncProcessState snapSyncState, final MetricsSystem metricsSystem) {
     this.snapSyncState = snapSyncState;
     completedRequestsCounter =
         metricsSystem.createCounter(
@@ -42,9 +43,11 @@ public class CompleteTaskStep {
 
   public synchronized void markAsCompleteOrFailed(
       final SnapWorldDownloadState downloadState, final Task<SnapDataRequest> task) {
-    if (task.getData().isResponseReceived()
-        || (task.getData() instanceof TrieNodeDataRequest
-            && task.getData().isExpired(snapSyncState))) {
+    final boolean isResponseReceived = task.getData().isResponseReceived();
+    final boolean isExpiredRequest =
+        task.getData() instanceof TrieNodeHealingRequest && task.getData().isExpired(snapSyncState);
+    // if pivot block has changed, the request is expired and we mark this one completed
+    if (isResponseReceived || isExpiredRequest) {
       completedRequestsCounter.inc();
       task.markCompleted();
       downloadState.checkCompletion(snapSyncState.getPivotBlockHeader().orElseThrow());

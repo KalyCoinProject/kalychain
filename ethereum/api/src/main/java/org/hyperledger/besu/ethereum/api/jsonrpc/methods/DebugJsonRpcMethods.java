@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright contributors to Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -21,7 +21,12 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugAccountAt
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugAccountRange;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugBatchSendRawTransaction;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugGetBadBlocks;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugGetRawBlock;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugGetRawHeader;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugGetRawReceipts;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugGetRawTransaction;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugMetrics;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugResyncWorldstate;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugSetHead;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugStandardTraceBadBlockToFile;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugStandardTraceBlockToFile;
@@ -29,6 +34,7 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugStorageRa
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugTraceBlock;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugTraceBlockByHash;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugTraceBlockByNumber;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugTraceCall;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.DebugTraceTransaction;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.BlockReplay;
@@ -36,9 +42,11 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.BlockTracer;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.processor.TransactionTracer;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.BlockResultFactory;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
+import org.hyperledger.besu.ethereum.core.Synchronizer;
+import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
-import org.hyperledger.besu.ethereum.mainnet.ScheduleBasedBlockHeaderFunctions;
+import org.hyperledger.besu.ethereum.transaction.TransactionSimulator;
 import org.hyperledger.besu.metrics.ObservableMetricsSystem;
 
 import java.nio.file.Path;
@@ -53,7 +61,10 @@ public class DebugJsonRpcMethods extends ApiGroupJsonRpcMethods {
   private final ProtocolSchedule protocolSchedule;
   private final ObservableMetricsSystem metricsSystem;
   private final TransactionPool transactionPool;
+  private final Synchronizer synchronizer;
   private final Path dataDir;
+  private final TransactionSimulator transactionSimulator;
+  private final EthScheduler ethScheduler;
 
   DebugJsonRpcMethods(
       final BlockchainQueries blockchainQueries,
@@ -61,13 +72,19 @@ public class DebugJsonRpcMethods extends ApiGroupJsonRpcMethods {
       final ProtocolSchedule protocolSchedule,
       final ObservableMetricsSystem metricsSystem,
       final TransactionPool transactionPool,
-      final Path dataDir) {
+      final Synchronizer synchronizer,
+      final Path dataDir,
+      final TransactionSimulator transactionSimulator,
+      final EthScheduler ethScheduler) {
     this.blockchainQueries = blockchainQueries;
     this.protocolContext = protocolContext;
     this.protocolSchedule = protocolSchedule;
     this.metricsSystem = metricsSystem;
     this.transactionPool = transactionPool;
+    this.synchronizer = synchronizer;
     this.dataDir = dataDir;
+    this.transactionSimulator = transactionSimulator;
+    this.ethScheduler = ethScheduler;
   }
 
   @Override
@@ -78,30 +95,31 @@ public class DebugJsonRpcMethods extends ApiGroupJsonRpcMethods {
   @Override
   protected Map<String, JsonRpcMethod> create() {
     final BlockReplay blockReplay =
-        new BlockReplay(
-            protocolSchedule,
-            blockchainQueries.getBlockchain(),
-            blockchainQueries.getWorldStateArchive());
+        new BlockReplay(protocolSchedule, protocolContext, blockchainQueries.getBlockchain());
 
     return mapOf(
         new DebugTraceTransaction(blockchainQueries, new TransactionTracer(blockReplay)),
         new DebugAccountRange(blockchainQueries),
         new DebugStorageRangeAt(blockchainQueries, blockReplay),
         new DebugMetrics(metricsSystem),
-        new DebugTraceBlock(
-            () -> new BlockTracer(blockReplay),
-            ScheduleBasedBlockHeaderFunctions.create(protocolSchedule),
-            blockchainQueries),
+        new DebugResyncWorldstate(protocolContext, synchronizer),
+        new DebugTraceBlock(protocolSchedule, blockchainQueries, metricsSystem, ethScheduler),
         new DebugSetHead(blockchainQueries, protocolContext),
         new DebugReplayBlock(blockchainQueries, protocolContext, protocolSchedule),
-        new DebugTraceBlockByNumber(() -> new BlockTracer(blockReplay), blockchainQueries),
-        new DebugTraceBlockByHash(() -> new BlockTracer(blockReplay)),
+        new DebugTraceBlockByNumber(
+            protocolSchedule, blockchainQueries, metricsSystem, ethScheduler),
+        new DebugTraceBlockByHash(protocolSchedule, blockchainQueries, metricsSystem, ethScheduler),
         new DebugBatchSendRawTransaction(transactionPool),
-        new DebugGetBadBlocks(blockchainQueries, protocolSchedule, blockResult),
+        new DebugGetBadBlocks(protocolContext, blockResult),
         new DebugStandardTraceBlockToFile(
             () -> new TransactionTracer(blockReplay), blockchainQueries, dataDir),
         new DebugStandardTraceBadBlockToFile(
-            () -> new TransactionTracer(blockReplay), blockchainQueries, protocolSchedule, dataDir),
-        new DebugAccountAt(blockchainQueries, () -> new BlockTracer(blockReplay)));
+            () -> new TransactionTracer(blockReplay), blockchainQueries, protocolContext, dataDir),
+        new DebugAccountAt(blockchainQueries, () -> new BlockTracer(blockReplay)),
+        new DebugGetRawHeader(blockchainQueries),
+        new DebugGetRawBlock(blockchainQueries),
+        new DebugGetRawReceipts(blockchainQueries),
+        new DebugGetRawTransaction(blockchainQueries),
+        new DebugTraceCall(blockchainQueries, protocolSchedule, transactionSimulator));
   }
 }

@@ -14,6 +14,7 @@
  */
 package org.hyperledger.besu.ethereum.p2p.discovery.internal;
 
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.packet.Packet;
 import org.hyperledger.besu.ethereum.p2p.peers.Peer;
 import org.hyperledger.besu.metrics.BesuMetricCategory;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
@@ -49,7 +50,7 @@ public class DiscoveryProtocolLogger {
     LOG.trace(
         "<<< Sending {} packet to peer {} ({}): {}",
         shortenPacketType(packet),
-        peer.getId().slice(0, 16),
+        peer.getLoggableId(),
         peer.getEnodeURL(),
         packet);
   }
@@ -59,7 +60,7 @@ public class DiscoveryProtocolLogger {
     LOG.trace(
         ">>> Received {} packet from peer {} ({}): {}",
         shortenPacketType(packet),
-        peer.getId().slice(0, 16),
+        peer.getLoggableId(),
         peer.getEnodeURL(),
         packet);
   }

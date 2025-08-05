@@ -18,39 +18,46 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import org.hyperledger.besu.consensus.merge.ForkchoiceEvent;
 import org.hyperledger.besu.consensus.merge.UnverifiedForkchoiceListener;
+import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.ProtocolContext;
-import org.hyperledger.besu.ethereum.bonsai.BonsaiWorldStateArchive;
-import org.hyperledger.besu.ethereum.bonsai.BonsaiWorldStateKeyValueStorage;
 import org.hyperledger.besu.ethereum.core.Synchronizer;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutor;
 import org.hyperledger.besu.ethereum.eth.sync.checkpointsync.CheckpointDownloaderFactory;
 import org.hyperledger.besu.ethereum.eth.sync.fastsync.FastSyncDownloader;
 import org.hyperledger.besu.ethereum.eth.sync.fastsync.FastSyncState;
+import org.hyperledger.besu.ethereum.eth.sync.fastsync.NoSyncRequiredState;
 import org.hyperledger.besu.ethereum.eth.sync.fastsync.worldstate.FastDownloaderFactory;
 import org.hyperledger.besu.ethereum.eth.sync.fullsync.FullSyncDownloader;
 import org.hyperledger.besu.ethereum.eth.sync.fullsync.SyncTerminationCondition;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapDownloaderFactory;
-import org.hyperledger.besu.ethereum.eth.sync.snapsync.SnapPersistedContext;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.context.SnapSyncStatePersistenceManager;
 import org.hyperledger.besu.ethereum.eth.sync.state.PendingBlocksManager;
 import org.hyperledger.besu.ethereum.eth.sync.state.SyncState;
-import org.hyperledger.besu.ethereum.eth.sync.worldstate.WorldStatePeerTrieNodeFinder;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
-import org.hyperledger.besu.ethereum.p2p.network.ProtocolManager;
 import org.hyperledger.besu.ethereum.storage.StorageProvider;
-import org.hyperledger.besu.ethereum.worldstate.PeerTrieNodeFinder;
-import org.hyperledger.besu.ethereum.worldstate.Pruner;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.BonsaiWorldStateProvider;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 import org.hyperledger.besu.metrics.BesuMetricCategory;
+import org.hyperledger.besu.metrics.SyncDurationMetrics;
 import org.hyperledger.besu.plugin.data.SyncStatus;
+import org.hyperledger.besu.plugin.services.BesuEvents;
 import org.hyperledger.besu.plugin.services.BesuEvents.SyncStatusListener;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
+import org.hyperledger.besu.util.log.FramedLogMessage;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
+import org.apache.tuweni.bytes.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,17 +65,14 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
 
   private static final Logger LOG = LoggerFactory.getLogger(DefaultSynchronizer.class);
 
-  private final Optional<Pruner> maybePruner;
   private final SyncState syncState;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private final Optional<BlockPropagationManager> blockPropagationManager;
-  private final Optional<FastSyncDownloader<?>> fastSyncDownloader;
+  private final Supplier<Optional<FastSyncDownloader<?>>> fastSyncFactory;
+  private final SyncDurationMetrics syncDurationMetrics;
+  private Optional<FastSyncDownloader<?>> fastSyncDownloader;
   private final Optional<FullSyncDownloader> fullSyncDownloader;
-  private final EthContext ethContext;
   private final ProtocolContext protocolContext;
-  private final ProtocolManager protocolManager;
-  private final WorldStateStorage worldStateStorage;
-  private final MetricsSystem metricsSystem;
   private final PivotBlockSelector pivotBlockSelector;
   private final SyncTerminationCondition terminationCondition;
 
@@ -76,34 +80,34 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
       final SynchronizerConfiguration syncConfig,
       final ProtocolSchedule protocolSchedule,
       final ProtocolContext protocolContext,
-      final WorldStateStorage worldStateStorage,
+      final WorldStateStorageCoordinator worldStateStorageCoordinator,
       final BlockBroadcaster blockBroadcaster,
-      final Optional<Pruner> maybePruner,
       final EthContext ethContext,
+      final PeerTaskExecutor peerTaskExecutor,
       final SyncState syncState,
       final Path dataDirectory,
       final StorageProvider storageProvider,
       final Clock clock,
       final MetricsSystem metricsSystem,
       final SyncTerminationCondition terminationCondition,
-      final ProtocolManager protocolManager,
       final PivotBlockSelector pivotBlockSelector) {
-    this.maybePruner = maybePruner;
     this.syncState = syncState;
-    this.protocolManager = protocolManager;
     this.pivotBlockSelector = pivotBlockSelector;
-    this.ethContext = ethContext;
     this.protocolContext = protocolContext;
-    this.worldStateStorage = worldStateStorage;
-    this.metricsSystem = metricsSystem;
     this.terminationCondition = terminationCondition;
 
     ChainHeadTracker.trackChainHeadForPeers(
         ethContext,
         protocolSchedule,
+        syncConfig,
         protocolContext.getBlockchain(),
         this::calculateTrailingPeerRequirements,
         metricsSystem);
+
+    if (syncConfig.getSyncMode() == SyncMode.SNAP
+        || syncConfig.getSyncMode() == SyncMode.CHECKPOINT) {
+      SnapServerChecker.createAndSetSnapServerChecker(ethContext, metricsSystem);
+    }
 
     this.blockPropagationManager =
         terminationCondition.shouldStopDownload()
@@ -119,6 +123,8 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
                     metricsSystem,
                     blockBroadcaster));
 
+    syncDurationMetrics = new SyncDurationMetrics(metricsSystem);
+
     this.fullSyncDownloader =
         terminationCondition.shouldStopDownload()
             ? Optional.empty()
@@ -130,50 +136,61 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
                     ethContext,
                     syncState,
                     metricsSystem,
-                    terminationCondition));
+                    terminationCondition,
+                    peerTaskExecutor,
+                    syncDurationMetrics));
 
-    if (SyncMode.FAST.equals(syncConfig.getSyncMode())) {
-      this.fastSyncDownloader =
-          FastDownloaderFactory.create(
-              pivotBlockSelector,
-              syncConfig,
-              dataDirectory,
-              protocolSchedule,
-              protocolContext,
-              metricsSystem,
-              ethContext,
-              worldStateStorage,
-              syncState,
-              clock);
-    } else if (SyncMode.X_CHECKPOINT.equals(syncConfig.getSyncMode())) {
-      this.fastSyncDownloader =
-          CheckpointDownloaderFactory.createCheckpointDownloader(
-              new SnapPersistedContext(storageProvider),
-              pivotBlockSelector,
-              syncConfig,
-              dataDirectory,
-              protocolSchedule,
-              protocolContext,
-              metricsSystem,
-              ethContext,
-              worldStateStorage,
-              syncState,
-              clock);
-    } else {
-      this.fastSyncDownloader =
-          SnapDownloaderFactory.createSnapDownloader(
-              new SnapPersistedContext(storageProvider),
-              pivotBlockSelector,
-              syncConfig,
-              dataDirectory,
-              protocolSchedule,
-              protocolContext,
-              metricsSystem,
-              ethContext,
-              worldStateStorage,
-              syncState,
-              clock);
-    }
+    this.fastSyncFactory =
+        switch (syncConfig.getSyncMode()) {
+          case FAST ->
+              () ->
+                  FastDownloaderFactory.create(
+                      pivotBlockSelector,
+                      syncConfig,
+                      dataDirectory,
+                      protocolSchedule,
+                      protocolContext,
+                      metricsSystem,
+                      ethContext,
+                      worldStateStorageCoordinator,
+                      syncState,
+                      clock,
+                      syncDurationMetrics);
+          case CHECKPOINT ->
+              () ->
+                  CheckpointDownloaderFactory.createCheckpointDownloader(
+                      new SnapSyncStatePersistenceManager(storageProvider),
+                      pivotBlockSelector,
+                      syncConfig,
+                      dataDirectory,
+                      protocolSchedule,
+                      protocolContext,
+                      metricsSystem,
+                      ethContext,
+                      worldStateStorageCoordinator,
+                      syncState,
+                      clock,
+                      syncDurationMetrics);
+          case SNAP ->
+              () ->
+                  SnapDownloaderFactory.createSnapDownloader(
+                      new SnapSyncStatePersistenceManager(storageProvider),
+                      pivotBlockSelector,
+                      syncConfig,
+                      dataDirectory,
+                      protocolSchedule,
+                      protocolContext,
+                      metricsSystem,
+                      ethContext,
+                      worldStateStorageCoordinator,
+                      syncState,
+                      clock,
+                      syncDurationMetrics);
+          default -> () -> Optional.empty();
+        };
+
+    // create a non-resync fast sync downloader:
+    this.fastSyncDownloader = this.fastSyncFactory.get();
 
     metricsSystem.createLongGauge(
         BesuMetricCategory.ETHEREUM,
@@ -187,7 +204,7 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
         () -> getSyncStatus().isPresent() ? 0 : 1);
   }
 
-  private TrailingPeerRequirements calculateTrailingPeerRequirements() {
+  public TrailingPeerRequirements calculateTrailingPeerRequirements() {
     return fastSyncDownloader
         .flatMap(FastSyncDownloader::calculateTrailingPeerRequirements)
         .orElse(
@@ -200,19 +217,21 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
   public CompletableFuture<Void> start() {
     if (running.compareAndSet(false, true)) {
       LOG.info("Starting synchronizer.");
+
+      syncDurationMetrics.startTimer(SyncDurationMetrics.Labels.TOTAL_SYNC_DURATION);
+
       blockPropagationManager.ifPresent(
           manager -> {
             if (!manager.isRunning()) {
               manager.start();
             }
           });
+
       CompletableFuture<Void> future;
       if (fastSyncDownloader.isPresent()) {
         future = fastSyncDownloader.get().start().thenCompose(this::handleSyncResult);
-
       } else {
         syncState.markInitialSyncPhaseAsDone();
-        enableFallbackNodeFinder();
         future = startFullSync();
       }
       return future.thenApply(this::finalizeSync);
@@ -227,7 +246,6 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
       LOG.info("Stopping synchronizer");
       fastSyncDownloader.ifPresent(FastSyncDownloader::stop);
       fullSyncDownloader.ifPresent(FullSyncDownloader::stop);
-      maybePruner.ifPresent(Pruner::stop);
       blockPropagationManager.ifPresent(
           manager -> {
             if (manager.isRunning()) {
@@ -238,30 +256,31 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
   }
 
   @Override
-  public void awaitStop() throws InterruptedException {
-    if (maybePruner.isPresent()) {
-      maybePruner.get().awaitStop();
-    }
-  }
+  public void awaitStop() {}
 
   private CompletableFuture<Void> handleSyncResult(final FastSyncState result) {
     if (!running.get()) {
       // We've been shutdown which will have triggered the fast sync future to complete
       return CompletableFuture.completedFuture(null);
     }
-    fastSyncDownloader.ifPresent(FastSyncDownloader::deleteFastSyncState);
-    result
-        .getPivotBlockHeader()
-        .ifPresent(
-            blockHeader ->
-                protocolContext.getWorldStateArchive().setArchiveStateUnSafe(blockHeader));
-    LOG.info(
-        "Sync completed successfully with pivot block {}",
-        result.getPivotBlockNumber().getAsLong());
-    pivotBlockSelector.close();
-    syncState.markInitialSyncPhaseAsDone();
 
-    enableFallbackNodeFinder();
+    if (result instanceof NoSyncRequiredState) {
+      LOG.info("Sync ended (no sync required)");
+      syncState.markInitialSyncPhaseAsDone();
+    } else {
+      fastSyncDownloader.ifPresent(FastSyncDownloader::deleteFastSyncState);
+      result
+          .getPivotBlockHeader()
+          .ifPresent(
+              blockHeader ->
+                  protocolContext.getWorldStateArchive().resetArchiveStateTo(blockHeader));
+      if (result.hasPivotBlockHash())
+        LOG.info(
+            "Sync completed successfully with pivot block {}",
+            result.getPivotBlockNumber().getAsLong());
+      pivotBlockSelector.close();
+      syncState.markInitialSyncPhaseAsDone();
+    }
 
     if (terminationCondition.shouldContinueDownload()) {
       return startFullSync();
@@ -271,21 +290,7 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
     }
   }
 
-  private void enableFallbackNodeFinder() {
-    if (worldStateStorage instanceof BonsaiWorldStateKeyValueStorage) {
-      final Optional<PeerTrieNodeFinder> fallbackNodeFinder =
-          Optional.of(
-              new WorldStatePeerTrieNodeFinder(
-                  ethContext, protocolManager, protocolContext.getBlockchain(), metricsSystem));
-      ((BonsaiWorldStateArchive) protocolContext.getWorldStateArchive())
-          .useFallbackNodeFinder(fallbackNodeFinder);
-      ((BonsaiWorldStateKeyValueStorage) worldStateStorage)
-          .useFallbackNodeFinder(fallbackNodeFinder);
-    }
-  }
-
   private CompletableFuture<Void> startFullSync() {
-    maybePruner.ifPresent(Pruner::start);
     return fullSyncDownloader
         .map(FullSyncDownloader::start)
         .orElse(CompletableFuture.completedFuture(null))
@@ -303,6 +308,62 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
       return Optional.empty();
     }
     return syncState.syncStatus();
+  }
+
+  @Override
+  public boolean resyncWorldState() {
+    // if sync is running currently, stop it and delete the fast sync state
+    if (fastSyncDownloader.isPresent() && running.get()) {
+      stop();
+      fastSyncDownloader.get().deleteFastSyncState();
+    }
+    // recreate fast sync with resync and start
+    this.syncState.markInitialSyncRestart();
+    this.syncState.markResyncNeeded();
+    this.fastSyncDownloader = this.fastSyncFactory.get();
+    start();
+    return true;
+  }
+
+  @Override
+  public boolean healWorldState(
+      final Optional<Address> maybeAccountToRepair, final Bytes location) {
+    // recreate fast sync with resync and start
+    if (fastSyncDownloader.isPresent() && running.get()) {
+      stop();
+      fastSyncDownloader.get().deleteFastSyncState();
+    }
+
+    LOG.atDebug()
+        .setMessage("heal stacktrace: \n{}")
+        .addArgument(
+            () -> {
+              var sw = new StringWriter();
+              new Exception().printStackTrace(new PrintWriter(sw, true));
+              return sw.toString();
+            })
+        .log();
+
+    final List<String> lines = new ArrayList<>();
+    lines.add("Besu has identified a problem with its worldstate database.");
+    lines.add("Your node will fetch the correct data from peers to repair the problem.");
+    lines.add("Starting the sync pipeline...");
+    LOG.atInfo().setMessage(FramedLogMessage.generate(lines)).log();
+
+    this.syncState.markInitialSyncRestart();
+    this.syncState.markResyncNeeded();
+    maybeAccountToRepair.ifPresent(
+        address -> {
+          if (this.protocolContext.getWorldStateArchive() instanceof BonsaiWorldStateProvider) {
+            ((BonsaiWorldStateProvider) this.protocolContext.getWorldStateArchive())
+                .prepareStateHealing(
+                    org.hyperledger.besu.datatypes.Address.wrap(address), location);
+          }
+          this.syncState.markAccountToRepair(maybeAccountToRepair);
+        });
+    this.fastSyncDownloader = this.fastSyncFactory.get();
+    start();
+    return true;
   }
 
   @Override
@@ -331,12 +392,25 @@ public class DefaultSynchronizer implements Synchronizer, UnverifiedForkchoiceLi
     return syncState.unsubscribeSyncStatus(listenerId);
   }
 
+  @Override
+  public long subscribeInitialSync(final BesuEvents.InitialSyncCompletionListener listener) {
+    return syncState.subscribeCompletionReached(listener);
+  }
+
+  @Override
+  public boolean unsubscribeInitialSync(final long listenerId) {
+    return syncState.unsubscribeInitialConditionReached(listenerId);
+  }
+
   private Void finalizeSync(final Void unused) {
     LOG.info("Stopping block propagation.");
     blockPropagationManager.ifPresent(BlockPropagationManager::stop);
     LOG.info("Stopping the pruner.");
-    maybePruner.ifPresent(Pruner::stop);
     running.set(false);
+
+    syncDurationMetrics.stopTimer(SyncDurationMetrics.Labels.FLAT_DB_HEAL);
+    syncDurationMetrics.stopTimer(SyncDurationMetrics.Labels.TOTAL_SYNC_DURATION);
+
     return null;
   }
 

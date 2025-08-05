@@ -24,6 +24,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import org.hyperledger.besu.ethereum.forkid.ForkId;
+import org.hyperledger.besu.ethereum.p2p.EthProtocolHelper;
+import org.hyperledger.besu.ethereum.p2p.discovery.DiscoveryPeer;
+import org.hyperledger.besu.ethereum.p2p.discovery.internal.PeerTable;
 import org.hyperledger.besu.ethereum.p2p.network.exceptions.BreachOfProtocolException;
 import org.hyperledger.besu.ethereum.p2p.network.exceptions.IncompatiblePeerException;
 import org.hyperledger.besu.ethereum.p2p.network.exceptions.PeerChannelClosedException;
@@ -52,6 +56,7 @@ import org.hyperledger.besu.ethereum.rlp.RLPException;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.data.EnodeURL;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -65,6 +70,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelId;
 import io.netty.channel.ChannelPipeline;
@@ -72,8 +78,8 @@ import io.netty.channel.EventLoop;
 import io.netty.handler.codec.DecoderException;
 import io.netty.util.concurrent.ScheduledFuture;
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 public class DeFramerTest {
@@ -88,12 +94,13 @@ public class DeFramerTest {
   private final PeerConnection peerConnection = mock(PeerConnection.class);
   private final CompletableFuture<PeerConnection> connectFuture = new CompletableFuture<>();
   private final int remotePort = 12345;
-  private final InetSocketAddress remoteAddress = new InetSocketAddress("127.0.0.1", remotePort);
+  private final InetSocketAddress remoteAddress =
+      new InetSocketAddress(InetAddress.getLoopbackAddress(), remotePort);
 
   private final int p2pVersion = 5;
   private final String clientId = "abc";
   private final int port = 30303;
-  private final List<Capability> capabilities = Arrays.asList(Capability.create("eth", 63));
+  private final List<Capability> capabilities = Arrays.asList(EthProtocolHelper.LATEST);
   private final EnodeURL localEnode =
       EnodeURLImpl.builder()
           .ipAddress("127.0.0.1")
@@ -103,9 +110,9 @@ public class DeFramerTest {
   private final LocalNode localNode =
       LocalNode.create(clientId, p2pVersion, capabilities, localEnode);
 
-  private final DeFramer deFramer = createDeFramer(null);
+  private final DeFramer deFramer = createDeFramer(null, Optional.empty());
 
-  @Before
+  @BeforeEach
   @SuppressWarnings("unchecked")
   public void setup() {
     when(ctx.channel()).thenReturn(channel);
@@ -132,7 +139,8 @@ public class DeFramerTest {
 
     deFramer.exceptionCaught(ctx, new DecoderException(new FramingException("Test")));
 
-    verify(peerConnection).disconnect(DisconnectReason.BREACH_OF_PROTOCOL);
+    verify(peerConnection)
+        .disconnect(DisconnectReason.BREACH_OF_PROTOCOL_INVALID_MESSAGE_RECEIVED_CAUGHT_EXCEPTION);
   }
 
   @Test
@@ -142,7 +150,8 @@ public class DeFramerTest {
 
     deFramer.exceptionCaught(ctx, new DecoderException(new RLPException("Test")));
 
-    verify(peerConnection).disconnect(DisconnectReason.BREACH_OF_PROTOCOL);
+    verify(peerConnection)
+        .disconnect(DisconnectReason.BREACH_OF_PROTOCOL_INVALID_MESSAGE_RECEIVED_CAUGHT_EXCEPTION);
   }
 
   @Test
@@ -196,7 +205,7 @@ public class DeFramerTest {
     assertThat(out).isEmpty();
 
     // Next phase of pipeline should be setup
-    verify(pipeline, times(1)).addLast(any());
+    verify(pipeline, times(1)).addLast(any(ChannelHandler[].class));
 
     // Next message should be pushed out
     final PingMessage nextMessage = PingMessage.get();
@@ -204,7 +213,7 @@ public class DeFramerTest {
     when(framer.deframe(eq(nextData)))
         .thenReturn(new RawMessage(nextMessage.getCode(), nextMessage.getData()))
         .thenReturn(null);
-    verify(pipeline, times(1)).addLast(any());
+    verify(pipeline, times(1)).addLast(any(ChannelHandler[].class));
     deFramer.decode(ctx, nextData, out);
     assertThat(out.size()).isEqualTo(1);
   }
@@ -218,7 +227,7 @@ public class DeFramerTest {
     final Peer peer = createRemotePeer();
     final PeerInfo remotePeerInfo =
         new PeerInfo(p2pVersion, clientId, capabilities, 0, peer.getId());
-    final DeFramer deFramer = createDeFramer(null);
+    final DeFramer deFramer = createDeFramer(null, Optional.empty());
 
     final HelloMessage helloMessage = HelloMessage.create(remotePeerInfo);
     final ByteBuf data = Unpooled.wrappedBuffer(helloMessage.getData().toArray());
@@ -246,7 +255,7 @@ public class DeFramerTest {
     assertThat(peerConnection.getPeer().getEnodeURL()).isEqualTo(expectedEnode);
 
     // Next phase of pipeline should be setup
-    verify(pipeline, times(1)).addLast(any());
+    verify(pipeline, times(1)).addLast(any(ChannelHandler[].class));
 
     // Next message should be pushed out
     final PingMessage nextMessage = PingMessage.get();
@@ -254,9 +263,42 @@ public class DeFramerTest {
     when(framer.deframe(eq(nextData)))
         .thenReturn(new RawMessage(nextMessage.getCode(), nextMessage.getData()))
         .thenReturn(null);
-    verify(pipeline, times(1)).addLast(any());
+    verify(pipeline, times(1)).addLast(any(ChannelHandler[].class));
     deFramer.decode(ctx, nextData, out);
     assertThat(out.size()).isEqualTo(1);
+  }
+
+  @Test
+  public void decode_duringHandshakeFindsPeerInPeerTable()
+      throws ExecutionException, InterruptedException {
+    final ChannelFuture future = NettyMocks.channelFuture(false);
+    when(channel.closeFuture()).thenReturn(future);
+
+    final Peer peer = createRemotePeer();
+    final PeerInfo remotePeerInfo =
+        new PeerInfo(p2pVersion, clientId, capabilities, 0, peer.getId());
+
+    final HelloMessage helloMessage = HelloMessage.create(remotePeerInfo);
+    final Bytes nodeId = helloMessage.getPeerInfo().getNodeId();
+    final String enodeURLString =
+        "enode://" + nodeId.toString().substring(2) + "@" + "12.13.14.15:30303?discport=30301";
+    final Optional<DiscoveryPeer> discoveryPeer =
+        DiscoveryPeer.from(DefaultPeer.fromURI(enodeURLString));
+    final ForkId forkId = new ForkId(Bytes.fromHexString("0x190a55ad"), 4L);
+    discoveryPeer.orElseThrow().setForkId(forkId);
+    final DeFramer deFramer = createDeFramer(null, discoveryPeer);
+    final ByteBuf data = Unpooled.wrappedBuffer(helloMessage.getData().toArray());
+    when(framer.deframe(eq(data)))
+        .thenReturn(new RawMessage(helloMessage.getCode(), helloMessage.getData()))
+        .thenReturn(null);
+    final List<Object> out = new ArrayList<>();
+    deFramer.decode(ctx, data, out);
+
+    assertThat(connectFuture).isDone();
+    assertThat(connectFuture).isNotCompletedExceptionally();
+    final PeerConnection peerConnection = connectFuture.get();
+    assertThat(peerConnection.getPeerInfo()).isEqualTo(remotePeerInfo);
+    assertThat(peerConnection.getPeer().getForkId().orElseThrow()).isEqualTo(forkId);
   }
 
   @Test
@@ -273,7 +315,7 @@ public class DeFramerTest {
             capabilities,
             peer.getEnodeURL().getListeningPortOrZero(),
             mismatchedId);
-    final DeFramer deFramer = createDeFramer(peer);
+    final DeFramer deFramer = createDeFramer(peer, Optional.empty());
 
     final HelloMessage helloMessage = HelloMessage.create(remotePeerInfo);
     final ByteBuf data = Unpooled.wrappedBuffer(helloMessage.getData().toArray());
@@ -292,7 +334,7 @@ public class DeFramerTest {
     assertThat(out).isEmpty();
 
     // Next phase of pipeline should be setup
-    verify(pipeline, times(1)).addLast(any());
+    verify(pipeline, times(1)).addLast(any(ChannelHandler[].class));
   }
 
   @Test
@@ -321,7 +363,7 @@ public class DeFramerTest {
     assertThat(out).isEmpty();
 
     // Next phase of pipeline should be setup
-    verify(pipeline, times(1)).addLast(any());
+    verify(pipeline, times(1)).addLast(any(ChannelHandler[].class));
   }
 
   @Test
@@ -353,7 +395,7 @@ public class DeFramerTest {
     when(framer.deframe(any()))
         .thenReturn(new RawMessage(helloMessage.getCode(), helloMessage.getData()))
         .thenReturn(null);
-    when(ctx.channel().remoteAddress()).thenReturn(null);
+    when(channel.remoteAddress()).thenReturn(null);
     final ChannelFuture future = NettyMocks.channelFuture(true);
     when(ctx.writeAndFlush(any())).thenReturn(future);
     final List<Object> out = new ArrayList<>();
@@ -413,7 +455,10 @@ public class DeFramerTest {
         forPeer.getId());
   }
 
-  private DeFramer createDeFramer(final Peer expectedPeer) {
+  private DeFramer createDeFramer(
+      final Peer expectedPeer, final Optional<DiscoveryPeer> peerInPeerTable) {
+    final PeerTable peerTable = new PeerTable(localNode.getPeerInfo().getNodeId());
+    peerInPeerTable.ifPresent(peerTable::tryAdd);
     return new DeFramer(
         framer,
         Arrays.asList(MockSubProtocol.create("eth")),
@@ -421,6 +466,8 @@ public class DeFramerTest {
         Optional.ofNullable(expectedPeer),
         connectionEventDispatcher,
         connectFuture,
-        new NoOpMetricsSystem());
+        new NoOpMetricsSystem(),
+        true,
+        peerTable);
   }
 }

@@ -14,7 +14,7 @@
  */
 package org.hyperledger.besu.ethereum.mainnet.feemarket;
 
-import org.hyperledger.besu.config.GenesisConfigFile;
+import org.hyperledger.besu.config.GenesisConfig;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.core.feemarket.TransactionPriceCalculator;
@@ -26,25 +26,28 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class LondonFeeMarket implements BaseFeeMarket {
-  static final Wei DEFAULT_BASEFEE_INITIAL_VALUE =
-      GenesisConfigFile.BASEFEE_AT_GENESIS_DEFAULT_VALUE;
-  static final long DEFAULT_BASEFEE_MAX_CHANGE_DENOMINATOR = 8L;
-  static final long DEFAULT_SLACK_COEFFICIENT = 2L;
-  private static final Wei DEFAULT_BASEFEE_FLOOR = Wei.of(7L);
   private static final Logger LOG = LoggerFactory.getLogger(LondonFeeMarket.class);
 
-  private final Wei baseFeeInitialValue;
+  static final Wei DEFAULT_BASEFEE_INITIAL_VALUE = GenesisConfig.BASEFEE_AT_GENESIS_DEFAULT_VALUE;
+  static final long DEFAULT_BASEFEE_MAX_CHANGE_DENOMINATOR = 8L;
+  static final long DEFAULT_SLACK_COEFFICIENT = 2L;
+
+  private static final Wei DEFAULT_BASEFEE_FLOOR = Wei.of(7L);
+
+  protected final Wei baseFeeInitialValue;
   private final long londonForkBlockNumber;
   private final TransactionPriceCalculator txPriceCalculator;
   private final Wei baseFeeFloor;
 
-  public LondonFeeMarket(final long londonForkBlockNumber) {
-    this(londonForkBlockNumber, Optional.empty());
+  LondonFeeMarket(final long londonForkBlockNumber, final Optional<Wei> baseFeePerGasOverride) {
+    this(TransactionPriceCalculator.eip1559(), londonForkBlockNumber, baseFeePerGasOverride);
   }
 
-  public LondonFeeMarket(
-      final long londonForkBlockNumber, final Optional<Wei> baseFeePerGasOverride) {
-    this.txPriceCalculator = TransactionPriceCalculator.eip1559();
+  LondonFeeMarket(
+      final TransactionPriceCalculator txPriceCalculator,
+      final long londonForkBlockNumber,
+      final Optional<Wei> baseFeePerGasOverride) {
+    this.txPriceCalculator = txPriceCalculator;
     this.londonForkBlockNumber = londonForkBlockNumber;
     this.baseFeeInitialValue = baseFeePerGasOverride.orElse(DEFAULT_BASEFEE_INITIAL_VALUE);
     this.baseFeeFloor = baseFeeInitialValue.isZero() ? Wei.ZERO : DEFAULT_BASEFEE_FLOOR;

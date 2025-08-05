@@ -14,76 +14,86 @@
  */
 package org.hyperledger.besu.ethereum.storage.keyvalue;
 
-import org.hyperledger.besu.ethereum.bonsai.BonsaiWorldStateKeyValueStorage;
 import org.hyperledger.besu.ethereum.chain.BlockchainStorage;
-import org.hyperledger.besu.ethereum.goquorum.GoQuorumPrivateKeyValueStorage;
-import org.hyperledger.besu.ethereum.goquorum.GoQuorumPrivateStorage;
+import org.hyperledger.besu.ethereum.chain.VariablesStorage;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ScheduleBasedBlockHeaderFunctions;
 import org.hyperledger.besu.ethereum.storage.StorageProvider;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
+import org.hyperledger.besu.ethereum.trie.forest.storage.ForestWorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.storage.BonsaiWorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.worldstate.DataStorageConfiguration;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateKeyValueStorage;
 import org.hyperledger.besu.ethereum.worldstate.WorldStatePreimageStorage;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
+import org.hyperledger.besu.metrics.ObservableMetricsSystem;
 import org.hyperledger.besu.plugin.services.storage.KeyValueStorage;
 import org.hyperledger.besu.plugin.services.storage.SegmentIdentifier;
-import org.hyperledger.besu.plugin.services.storage.SnappableKeyValueStorage;
+import org.hyperledger.besu.plugin.services.storage.SegmentedKeyValueStorage;
+import org.hyperledger.besu.services.kvstore.SegmentedKeyValueStorageAdapter;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class KeyValueStorageProvider implements StorageProvider {
+  private static final Logger LOG = LoggerFactory.getLogger(StorageProvider.class);
 
-  public static final boolean SEGMENT_ISOLATION_SUPPORTED = true;
-  public static final boolean SNAPSHOT_ISOLATION_UNSUPPORTED = false;
-
-  protected final Function<SegmentIdentifier, KeyValueStorage> storageCreator;
+  protected final Function<List<SegmentIdentifier>, SegmentedKeyValueStorage>
+      segmentedStorageCreator;
   private final KeyValueStorage worldStatePreimageStorage;
-  private final KeyValueStorage privateWorldStatePreimageStorage;
-  private final boolean isWorldStateIterable;
-  private final boolean isWorldStateSnappable;
-  protected final Map<SegmentIdentifier, KeyValueStorage> storageInstances = new HashMap<>();
+  protected final Map<List<SegmentIdentifier>, SegmentedKeyValueStorage> storageInstances =
+      new HashMap<>();
+  private final ObservableMetricsSystem metricsSystem;
 
   public KeyValueStorageProvider(
-      final Function<SegmentIdentifier, KeyValueStorage> storageCreator,
+      final Function<List<SegmentIdentifier>, SegmentedKeyValueStorage> segmentedStorageCreator,
       final KeyValueStorage worldStatePreimageStorage,
-      final boolean segmentIsolationSupported) {
-    this.storageCreator = storageCreator;
+      final ObservableMetricsSystem metricsSystem) {
+    this.segmentedStorageCreator = segmentedStorageCreator;
     this.worldStatePreimageStorage = worldStatePreimageStorage;
-    this.privateWorldStatePreimageStorage = null;
-    this.isWorldStateIterable = segmentIsolationSupported;
-    this.isWorldStateSnappable = SNAPSHOT_ISOLATION_UNSUPPORTED;
-  }
-
-  public KeyValueStorageProvider(
-      final Function<SegmentIdentifier, KeyValueStorage> storageCreator,
-      final KeyValueStorage worldStatePreimageStorage,
-      final KeyValueStorage privateWorldStatePreimageStorage,
-      final boolean segmentIsolationSupported,
-      final boolean storageSnapshotIsolationSupported) {
-    this.storageCreator = storageCreator;
-    this.worldStatePreimageStorage = worldStatePreimageStorage;
-    this.privateWorldStatePreimageStorage = privateWorldStatePreimageStorage;
-    this.isWorldStateIterable = segmentIsolationSupported;
-    this.isWorldStateSnappable = storageSnapshotIsolationSupported;
+    this.metricsSystem = metricsSystem;
   }
 
   @Override
-  public BlockchainStorage createBlockchainStorage(final ProtocolSchedule protocolSchedule) {
+  public VariablesStorage createVariablesStorage() {
+    return new VariablesKeyValueStorage(
+        getStorageBySegmentIdentifier(KeyValueSegmentIdentifier.VARIABLES));
+  }
+
+  @Override
+  public BlockchainStorage createBlockchainStorage(
+      final ProtocolSchedule protocolSchedule,
+      final VariablesStorage variablesStorage,
+      final DataStorageConfiguration dataStorageConfiguration) {
     return new KeyValueStoragePrefixedKeyBlockchainStorage(
         getStorageBySegmentIdentifier(KeyValueSegmentIdentifier.BLOCKCHAIN),
-        ScheduleBasedBlockHeaderFunctions.create(protocolSchedule));
+        variablesStorage,
+        ScheduleBasedBlockHeaderFunctions.create(protocolSchedule),
+        dataStorageConfiguration.getReceiptCompactionEnabled());
   }
 
   @Override
-  public WorldStateStorage createWorldStateStorage(final DataStorageFormat dataStorageFormat) {
-    if (dataStorageFormat.equals(DataStorageFormat.BONSAI)) {
-      return new BonsaiWorldStateKeyValueStorage(this);
+  public WorldStateKeyValueStorage createWorldStateStorage(
+      final DataStorageConfiguration dataStorageConfiguration) {
+    if (dataStorageConfiguration.getDataStorageFormat().isBonsaiFormat()) {
+      return new BonsaiWorldStateKeyValueStorage(this, metricsSystem, dataStorageConfiguration);
     } else {
-      return new WorldStateKeyValueStorage(
+      return new ForestWorldStateKeyValueStorage(
           getStorageBySegmentIdentifier(KeyValueSegmentIdentifier.WORLD_STATE));
     }
+  }
+
+  @Override
+  public WorldStateStorageCoordinator createWorldStateStorageCoordinator(
+      final DataStorageConfiguration dataStorageFormatConfiguration) {
+    return new WorldStateStorageCoordinator(
+        createWorldStateStorage(dataStorageFormatConfiguration));
   }
 
   @Override
@@ -93,46 +103,34 @@ public class KeyValueStorageProvider implements StorageProvider {
 
   @Override
   public KeyValueStorage getStorageBySegmentIdentifier(final SegmentIdentifier segment) {
-    return storageInstances.computeIfAbsent(segment, storageCreator);
+    return new SegmentedKeyValueStorageAdapter(
+        segment, storageInstances.computeIfAbsent(List.of(segment), segmentedStorageCreator));
   }
 
   @Override
-  public SnappableKeyValueStorage getSnappableStorageBySegmentIdentifier(
-      final SegmentIdentifier segment) {
-    return (SnappableKeyValueStorage) getStorageBySegmentIdentifier(segment);
-  }
-
-  @Override
-  public WorldStateStorage createPrivateWorldStateStorage() {
-    return new WorldStateKeyValueStorage(
-        getStorageBySegmentIdentifier(KeyValueSegmentIdentifier.GOQUORUM_PRIVATE_WORLD_STATE));
-  }
-
-  @Override
-  public WorldStatePreimageStorage createPrivateWorldStatePreimageStorage() {
-    return new WorldStatePreimageKeyValueStorage(privateWorldStatePreimageStorage);
-  }
-
-  @Override
-  public GoQuorumPrivateStorage createGoQuorumPrivateStorage() {
-    return new GoQuorumPrivateKeyValueStorage(
-        getStorageBySegmentIdentifier(KeyValueSegmentIdentifier.GOQUORUM_PRIVATE_STORAGE));
-  }
-
-  @Override
-  public boolean isWorldStateIterable() {
-    return isWorldStateIterable;
-  }
-
-  @Override
-  public boolean isWorldStateSnappable() {
-    return isWorldStateSnappable;
+  public SegmentedKeyValueStorage getStorageBySegmentIdentifiers(
+      final List<SegmentIdentifier> segments) {
+    return segmentedStorageCreator.apply(segments);
   }
 
   @Override
   public void close() throws IOException {
-    for (final KeyValueStorage kvs : storageInstances.values()) {
-      kvs.close();
-    }
+    storageInstances.entrySet().stream()
+        .filter(storage -> storage instanceof AutoCloseable)
+        .forEach(
+            storage -> {
+              try {
+                storage.getValue().close();
+              } catch (final IOException e) {
+                LOG.atWarn()
+                    .setMessage("Failed to close storage instance {}")
+                    .addArgument(
+                        storage.getKey().stream()
+                            .map(SegmentIdentifier::getName)
+                            .collect(Collectors.joining(",")))
+                    .setCause(e)
+                    .log();
+              }
+            });
   }
 }

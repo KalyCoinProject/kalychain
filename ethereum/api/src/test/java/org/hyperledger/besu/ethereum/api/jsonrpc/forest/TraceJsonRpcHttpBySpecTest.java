@@ -14,24 +14,19 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.forest;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import org.hyperledger.besu.ethereum.api.jsonrpc.AbstractJsonRpcHttpBySpecTest;
 import org.hyperledger.besu.ethereum.core.BlockchainSetupUtil;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
+import org.hyperledger.besu.plugin.services.storage.DataStorageFormat;
 
-import java.net.URL;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
-
-@RunWith(Parameterized.class)
 public class TraceJsonRpcHttpBySpecTest extends AbstractJsonRpcHttpBySpecTest {
 
-  public TraceJsonRpcHttpBySpecTest(final String specName, final URL specURL) {
-    super(specName, specURL);
-  }
-
   @Override
+  @BeforeEach
   public void setup() throws Exception {
     setupBlockchain();
     startService();
@@ -43,7 +38,6 @@ public class TraceJsonRpcHttpBySpecTest extends AbstractJsonRpcHttpBySpecTest {
         "trace/chain-data/genesis.json", "trace/chain-data/blocks.bin", storageFormat);
   }
 
-  @Parameters(name = "{index}: {0}")
   public static Object[][] specs() {
     return AbstractJsonRpcHttpBySpecTest.findSpecFiles(
         new String[] {
@@ -60,5 +54,12 @@ public class TraceJsonRpcHttpBySpecTest extends AbstractJsonRpcHttpBySpecTest {
           "trace/specs/trace-callMany",
           "trace/specs/trace-raw-transaction"
         });
+  }
+
+  @Test
+  void dryRunDetector() {
+    assertThat(true)
+        .withFailMessage("This test is here so gradle --dry-run executes this class")
+        .isTrue();
   }
 }

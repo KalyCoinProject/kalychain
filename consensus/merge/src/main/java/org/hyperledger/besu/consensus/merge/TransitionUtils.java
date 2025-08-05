@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,11 +14,9 @@
  */
 package org.hyperledger.besu.consensus.merge;
 
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.warnLambda;
-
 import org.hyperledger.besu.ethereum.ProtocolContext;
-import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.Difficulty;
+import org.hyperledger.besu.ethereum.core.ProcessableBlockHeader;
 
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -27,18 +25,27 @@ import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public abstract class TransitionUtils<SwitchingObject> {
+/**
+ * The Transition utils.
+ *
+ * @param <SwitchingObject> the type parameter
+ */
+public class TransitionUtils<SwitchingObject> {
   private static final Logger LOG = LoggerFactory.getLogger(TransitionUtils.class);
 
+  /** The Merge context. */
   protected final MergeContext mergeContext;
+
   private final SwitchingObject preMergeObject;
   private final SwitchingObject postMergeObject;
 
-  public TransitionUtils(
-      final SwitchingObject preMergeObject, final SwitchingObject postMergeObject) {
-    this(preMergeObject, postMergeObject, PostMergeContext.get());
-  }
-
+  /**
+   * Instantiates a new Transition utils.
+   *
+   * @param preMergeObject the pre merge object
+   * @param postMergeObject the post merge object
+   * @param mergeContext the merge context
+   */
   public TransitionUtils(
       final SwitchingObject preMergeObject,
       final SwitchingObject postMergeObject,
@@ -48,25 +55,53 @@ public abstract class TransitionUtils<SwitchingObject> {
     this.mergeContext = mergeContext;
   }
 
-  protected void dispatchConsumerAccordingToMergeState(final Consumer<SwitchingObject> consumer) {
+  /**
+   * Dispatch consumer according to merge state.
+   *
+   * @param consumer the consumer
+   */
+  void dispatchConsumerAccordingToMergeState(final Consumer<SwitchingObject> consumer) {
     consumer.accept(mergeContext.isPostMerge() ? postMergeObject : preMergeObject);
   }
 
-  protected <T> T dispatchFunctionAccordingToMergeState(
-      final Function<SwitchingObject, T> function) {
+  /**
+   * Dispatch function according to merge state t.
+   *
+   * @param <T> the type parameter
+   * @param function the function
+   * @return the t
+   */
+  public <T> T dispatchFunctionAccordingToMergeState(final Function<SwitchingObject, T> function) {
     return function.apply(mergeContext.isPostMerge() ? postMergeObject : preMergeObject);
   }
 
+  /**
+   * Gets pre merge object.
+   *
+   * @return the pre merge object
+   */
   public SwitchingObject getPreMergeObject() {
     return preMergeObject;
   }
 
+  /**
+   * Gets post merge object.
+   *
+   * @return the post merge object
+   */
   SwitchingObject getPostMergeObject() {
     return postMergeObject;
   }
 
+  /**
+   * Is terminal proof of work block boolean.
+   *
+   * @param header the header
+   * @param context the context
+   * @return the boolean
+   */
   public static boolean isTerminalProofOfWorkBlock(
-      final BlockHeader header, final ProtocolContext context) {
+      final ProcessableBlockHeader header, final ProtocolContext context) {
 
     Difficulty headerDifficulty =
         Optional.ofNullable(header.getDifficulty()).orElse(Difficulty.ZERO);
@@ -78,15 +113,21 @@ public abstract class TransitionUtils<SwitchingObject> {
             // if we cannot find difficulty or are merge-at-genesis
             .orElse(Difficulty.ZERO);
 
-    if (currentChainTotalDifficulty.isZero()) {
-      warnLambda(
-          LOG,
-          "unable to get total difficulty for {}, parent hash {} difficulty not found",
-          header::toLogString,
-          header::getParentHash);
+    final MergeContext consensusContext = context.getConsensusContext(MergeContext.class);
+
+    // Genesis is configured for post-merge we will never have a terminal pow block
+    if (consensusContext.isPostMergeAtGenesis()) {
+      return false;
     }
-    Difficulty configuredTotalTerminalDifficulty =
-        context.getConsensusContext(MergeContext.class).getTerminalTotalDifficulty();
+
+    if (currentChainTotalDifficulty.isZero()) {
+      LOG.atWarn()
+          .setMessage("unable to get total difficulty for {}, parent hash {} difficulty not found")
+          .addArgument(header::toLogString)
+          .addArgument(header::getParentHash)
+          .log();
+    }
+    Difficulty configuredTotalTerminalDifficulty = consensusContext.getTerminalTotalDifficulty();
 
     if (currentChainTotalDifficulty
             .add(headerDifficulty)

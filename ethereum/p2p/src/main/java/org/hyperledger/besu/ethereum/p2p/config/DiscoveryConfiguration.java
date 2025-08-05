@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 
 public class DiscoveryConfiguration {
 
-  private boolean active = true;
+  private boolean enabled = true;
   private String bindHost = NetworkUtility.INADDR_ANY;
   private int bindPort = 30303;
   private String advertisedHost = "127.0.0.1";
@@ -32,7 +32,8 @@ public class DiscoveryConfiguration {
   private List<EnodeURL> bootnodes = new ArrayList<>();
   private String dnsDiscoveryURL;
   private boolean discoveryV5Enabled = false;
-  private boolean filterOnEnrForkId = false;
+  private boolean filterOnEnrForkId = NetworkingConfiguration.DEFAULT_FILTER_ON_ENR_FORK_ID;
+  private boolean includeBootnodesOnPeerRefresh = true;
 
   public static DiscoveryConfiguration create() {
     return new DiscoveryConfiguration();
@@ -43,9 +44,9 @@ public class DiscoveryConfiguration {
         bootnodes.stream().filter(e -> !e.isRunningDiscovery()).collect(Collectors.toList());
 
     if (invalidEnodes.size() > 0) {
-      String invalidBootnodes =
+      final String invalidBootnodes =
           invalidEnodes.stream().map(EnodeURL::toString).collect(Collectors.joining(","));
-      String errorMsg =
+      final String errorMsg =
           "Bootnodes must have discovery enabled. Invalid bootnodes: " + invalidBootnodes + ".";
       throw new IllegalArgumentException(errorMsg);
     }
@@ -69,12 +70,12 @@ public class DiscoveryConfiguration {
     return this;
   }
 
-  public boolean isActive() {
-    return active;
+  public boolean isEnabled() {
+    return enabled;
   }
 
-  public DiscoveryConfiguration setActive(final boolean active) {
-    this.active = active;
+  public DiscoveryConfiguration setEnabled(final boolean enabled) {
+    this.enabled = enabled;
     return this;
   }
 
@@ -85,6 +86,16 @@ public class DiscoveryConfiguration {
   public DiscoveryConfiguration setBootnodes(final List<EnodeURL> bootnodes) {
     assertValidBootnodes(bootnodes);
     this.bootnodes = bootnodes;
+    return this;
+  }
+
+  public boolean getIncludeBootnodesOnPeerRefresh() {
+    return includeBootnodesOnPeerRefresh;
+  }
+
+  public DiscoveryConfiguration setIncludeBootnodesOnPeerRefresh(
+      final boolean includeBootnodesOnPeerRefresh) {
+    this.includeBootnodesOnPeerRefresh = includeBootnodesOnPeerRefresh;
     return this;
   }
 
@@ -140,7 +151,7 @@ public class DiscoveryConfiguration {
       return false;
     }
     final DiscoveryConfiguration that = (DiscoveryConfiguration) o;
-    return active == that.active
+    return enabled == that.enabled
         && bindPort == that.bindPort
         && bucketSize == that.bucketSize
         && Objects.equals(bindHost, that.bindHost)
@@ -152,14 +163,14 @@ public class DiscoveryConfiguration {
   @Override
   public int hashCode() {
     return Objects.hash(
-        active, bindHost, bindPort, advertisedHost, bucketSize, bootnodes, dnsDiscoveryURL);
+        enabled, bindHost, bindPort, advertisedHost, bucketSize, bootnodes, dnsDiscoveryURL);
   }
 
   @Override
   public String toString() {
     return "DiscoveryConfiguration{"
-        + "active="
-        + active
+        + "enabled="
+        + enabled
         + ", bindHost='"
         + bindHost
         + '\''

@@ -23,10 +23,6 @@ import org.web3j.protocol.core.DefaultBlockParameterName;
 
 public class EthTransactions {
 
-  public EthGetWorkTransaction getWork() {
-    return new EthGetWorkTransaction();
-  }
-
   public EthBlockNumberTransaction blockNumber() {
     return new EthBlockNumberTransaction();
   }
@@ -41,6 +37,10 @@ public class EthTransactions {
 
   public EthGetBalanceTransaction getBalance(final Account account) {
     return new EthGetBalanceTransaction(account);
+  }
+
+  public EthGetCodeTransaction getCode(final Account account) {
+    return new EthGetCodeTransaction(account);
   }
 
   public EthGetBalanceAtBlockTransaction getBalanceAtBlock(
@@ -71,6 +71,10 @@ public class EthTransactions {
 
   public EthMiningTransaction mining() {
     return new EthMiningTransaction();
+  }
+
+  public EthSyncingTransaction syncing() {
+    return new EthSyncingTransaction();
   }
 
   public EthNewPendingTransactionFilterTransaction newPendingTransactionsFilter() {

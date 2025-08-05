@@ -21,6 +21,7 @@ import static org.hyperledger.besu.consensus.common.bft.BftContextBuilder.setupC
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -31,6 +32,7 @@ import static org.mockito.Mockito.when;
 import org.hyperledger.besu.consensus.common.bft.BftBlockHashing;
 import org.hyperledger.besu.consensus.common.bft.BftExtraData;
 import org.hyperledger.besu.consensus.common.bft.BftExtraDataCodec;
+import org.hyperledger.besu.consensus.common.bft.BftProtocolSchedule;
 import org.hyperledger.besu.consensus.common.bft.ConsensusRoundIdentifier;
 import org.hyperledger.besu.consensus.common.bft.RoundTimer;
 import org.hyperledger.besu.consensus.common.bft.blockcreation.BftBlockCreator;
@@ -39,14 +41,15 @@ import org.hyperledger.besu.consensus.ibft.network.IbftMessageTransmitter;
 import org.hyperledger.besu.consensus.ibft.payload.MessageFactory;
 import org.hyperledger.besu.consensus.ibft.payload.RoundChangeCertificate;
 import org.hyperledger.besu.consensus.ibft.validation.MessageValidator;
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
 import org.hyperledger.besu.crypto.SECPSignature;
 import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.ProtocolContext;
+import org.hyperledger.besu.ethereum.blockcreation.BlockCreationTiming;
 import org.hyperledger.besu.ethereum.blockcreation.BlockCreator.BlockCreationResult;
-import org.hyperledger.besu.ethereum.blockcreation.BlockTransactionSelector.TransactionSelectionResults;
+import org.hyperledger.besu.ethereum.blockcreation.txselection.TransactionSelectionResults;
 import org.hyperledger.besu.ethereum.chain.MinedBlockObserver;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.Block;
@@ -55,6 +58,8 @@ import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
 import org.hyperledger.besu.ethereum.core.BlockImporter;
 import org.hyperledger.besu.ethereum.mainnet.BlockImportResult;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
+import org.hyperledger.besu.ethereum.mainnet.WithdrawalsValidator;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
 import org.hyperledger.besu.plugin.services.securitymodule.SecurityModuleException;
 import org.hyperledger.besu.util.Subscribers;
@@ -64,15 +69,15 @@ import java.util.Collections;
 import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class IbftRoundTest {
 
   private final NodeKey nodeKey = NodeKeyUtils.generate();
@@ -82,14 +87,17 @@ public class IbftRoundTest {
   private final BftExtraDataCodec bftExtraDataCodec = new IbftExtraDataCodec();
   private ProtocolContext protocolContext;
 
+  @Mock private BftProtocolSchedule protocolSchedule;
   @Mock private MutableBlockchain blockChain;
   @Mock private WorldStateArchive worldStateArchive;
-  @Mock private BlockImporter blockImporter;
   @Mock private IbftMessageTransmitter transmitter;
   @Mock private MinedBlockObserver minedBlockObserver;
   @Mock private BftBlockCreator blockCreator;
   @Mock private MessageValidator messageValidator;
   @Mock private RoundTimer roundTimer;
+  @Mock private ProtocolSpec protocolSpec;
+  @Mock private BlockImporter blockImporter;
+  @Mock private BlockHeader parentHeader;
 
   @Captor private ArgumentCaptor<Block> blockCaptor;
 
@@ -100,17 +108,19 @@ public class IbftRoundTest {
       SignatureAlgorithmFactory.getInstance()
           .createSignature(BigInteger.ONE, BigInteger.ONE, (byte) 1);
 
-  @Before
+  @BeforeEach
   public void setup() {
     protocolContext =
-        new ProtocolContext(
-            blockChain,
-            worldStateArchive,
-            setupContextWithBftExtraDataEncoder(emptyList(), new IbftExtraDataCodec()));
+        new ProtocolContext.Builder()
+            .withBlockchain(blockChain)
+            .withWorldStateArchive(worldStateArchive)
+            .withConsensusContext(
+                setupContextWithBftExtraDataEncoder(emptyList(), new IbftExtraDataCodec()))
+            .build();
 
-    when(messageValidator.validateProposal(any())).thenReturn(true);
-    when(messageValidator.validatePrepare(any())).thenReturn(true);
-    when(messageValidator.validateCommit(any())).thenReturn(true);
+    lenient().when(messageValidator.validateProposal(any())).thenReturn(true);
+    lenient().when(messageValidator.validatePrepare(any())).thenReturn(true);
+    lenient().when(messageValidator.validateCommit(any())).thenReturn(true);
 
     proposedExtraData =
         new BftExtraData(Bytes.wrap(new byte[32]), emptyList(), empty(), 0, emptyList());
@@ -121,10 +131,18 @@ public class IbftRoundTest {
     final BlockHeader header = headerTestFixture.buildHeader();
     proposedBlock = new Block(header, new BlockBody(emptyList(), emptyList()));
 
-    when(blockCreator.createBlock(anyLong()))
-        .thenReturn(new BlockCreationResult(proposedBlock, new TransactionSelectionResults()));
+    lenient()
+        .when(blockCreator.createBlock(anyLong(), any()))
+        .thenReturn(
+            new BlockCreationResult(
+                proposedBlock, new TransactionSelectionResults(), new BlockCreationTiming()));
 
-    when(blockImporter.importBlock(any(), any(), any())).thenReturn(new BlockImportResult(true));
+    lenient().when(protocolSpec.getBlockImporter()).thenReturn(blockImporter);
+    lenient().when(protocolSchedule.getByBlockHeader(any())).thenReturn(protocolSpec);
+
+    lenient()
+        .when(blockImporter.importBlock(any(), any(), any()))
+        .thenReturn(new BlockImportResult(BlockImportResult.BlockImportStatus.IMPORTED));
 
     subscribers.subscribe(minedBlockObserver);
   }
@@ -136,13 +154,14 @@ public class IbftRoundTest {
         roundState,
         blockCreator,
         protocolContext,
-        blockImporter,
+        protocolSchedule,
         subscribers,
         nodeKey,
         messageFactory,
         transmitter,
         roundTimer,
-        bftExtraDataCodec);
+        bftExtraDataCodec,
+        parentHeader);
     verify(roundTimer, times(1)).startTimer(roundIdentifier);
   }
 
@@ -154,13 +173,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     round.handleProposalMessage(
         messageFactory.createProposal(roundIdentifier, proposedBlock, Optional.empty()));
@@ -176,13 +196,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     round.createAndSendProposalMessage(15);
     verify(transmitter, times(1))
@@ -199,13 +220,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
     round.createAndSendProposalMessage(15);
     verify(transmitter, times(1))
         .multicastProposal(roundIdentifier, proposedBlock, Optional.empty());
@@ -222,13 +244,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     final Hash commitSealHash =
         new BftBlockHashing(new IbftExtraDataCodec())
@@ -260,19 +283,23 @@ public class IbftRoundTest {
 
   @Test
   public void localNodeProposesToNetworkOfTwoValidatorsImportsOnReceptionOfCommitFromPeer() {
+    lenient()
+        .when(protocolSpec.getWithdrawalsValidator())
+        .thenReturn(new WithdrawalsValidator.AllowedWithdrawals());
     final RoundState roundState = new RoundState(roundIdentifier, 2, messageValidator);
     final IbftRound round =
         new IbftRound(
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     final Hash commitSealHash =
         new BftBlockHashing(new IbftExtraDataCodec())
@@ -303,13 +330,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     final RoundChangeCertificate roundChangeCertificate = new RoundChangeCertificate(emptyList());
 
@@ -327,13 +355,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     final RoundChangeArtifacts roundChangeArtifacts =
         RoundChangeArtifacts.create(
@@ -374,13 +403,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     final RoundChangeArtifacts roundChangeArtifacts =
         RoundChangeArtifacts.create(
@@ -408,13 +438,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
     round.createAndSendProposalMessage(15);
     verify(minedBlockObserver).blockMined(any());
   }
@@ -429,13 +460,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     round.handleCommitMessage(
         messageFactory.createCommit(roundIdentifier, proposedBlock.getHash(), remoteCommitSeal));
@@ -455,13 +487,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             nodeKey,
             messageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     round.handleCommitMessage(
         messageFactory.createCommit(roundIdentifier, proposedBlock.getHash(), remoteCommitSeal));
@@ -485,13 +518,14 @@ public class IbftRoundTest {
             roundState,
             blockCreator,
             protocolContext,
-            blockImporter,
+            protocolSchedule,
             subscribers,
             throwingNodeKey,
             throwingMessageFactory,
             transmitter,
             roundTimer,
-            bftExtraDataCodec);
+            bftExtraDataCodec,
+            parentHeader);
 
     round.handleProposalMessage(
         messageFactory.createProposal(roundIdentifier, proposedBlock, Optional.empty()));

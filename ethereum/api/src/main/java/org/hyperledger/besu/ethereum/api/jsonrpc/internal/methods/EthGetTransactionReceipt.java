@@ -17,21 +17,29 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.TransactionReceiptResult;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.TransactionReceiptRootResult;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.TransactionReceiptStatusResult;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.api.query.TransactionReceiptWithMetadata;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.TransactionReceiptType;
 
 public class EthGetTransactionReceipt implements JsonRpcMethod {
 
   private final BlockchainQueries blockchainQueries;
 
-  public EthGetTransactionReceipt(final BlockchainQueries blockchainQueries) {
+  private final ProtocolSchedule protocolSchedule;
+
+  public EthGetTransactionReceipt(
+      final BlockchainQueries blockchainQueries, final ProtocolSchedule protocolSchedule) {
     this.blockchainQueries = blockchainQueries;
+    this.protocolSchedule = protocolSchedule;
   }
 
   @Override
@@ -41,10 +49,18 @@ public class EthGetTransactionReceipt implements JsonRpcMethod {
 
   @Override
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
-    final Hash hash = requestContext.getRequiredParameter(0, Hash.class);
+    final Hash hash;
+    try {
+      hash = requestContext.getRequiredParameter(0, Hash.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid transaction hash parameter (index 0)",
+          RpcErrorType.INVALID_TRANSACTION_HASH_PARAMS,
+          e);
+    }
     final TransactionReceiptResult result =
         blockchainQueries
-            .transactionReceiptByTransactionHash(hash)
+            .transactionReceiptByTransactionHash(hash, protocolSchedule)
             .map(this::getResult)
             .orElse(null);
     return new JsonRpcSuccessResponse(requestContext.getRequest().getId(), result);

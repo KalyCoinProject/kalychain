@@ -17,8 +17,8 @@ package org.hyperledger.besu.ethereum.eth.transactions;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.TransactionType;
 import org.hyperledger.besu.ethereum.core.Transaction;
-import org.hyperledger.besu.plugin.data.TransactionType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,7 +40,7 @@ public class TransactionAnnouncement {
     this(
         checkNotNull(transaction, "Transaction cannot be null").getHash(),
         transaction.getType(),
-        (long) transaction.calculateSize());
+        (long) transaction.getSizeForAnnouncement());
   }
 
   public TransactionAnnouncement(final Hash hash, final TransactionType type, final Long size) {

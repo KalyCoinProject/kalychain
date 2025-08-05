@@ -14,22 +14,53 @@
  */
 package org.hyperledger.besu.consensus.common.validator;
 
+import org.hyperledger.besu.cryptoservices.NodeKey;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.Util;
 
 import java.util.Collection;
 import java.util.Optional;
 
+/** The interface Validator provider. */
 public interface ValidatorProvider {
 
+  /**
+   * Gets validators at head.
+   *
+   * @return the validators at head
+   */
   Collection<Address> getValidatorsAtHead();
 
+  /**
+   * Gets validators after block.
+   *
+   * @param header the header
+   * @return the validators after block
+   */
   Collection<Address> getValidatorsAfterBlock(BlockHeader header);
 
+  /**
+   * Gets validators for block.
+   *
+   * @param header the header
+   * @return the validators for block
+   */
   Collection<Address> getValidatorsForBlock(BlockHeader header);
 
+  /**
+   * Gets vote provider at head.
+   *
+   * @return the vote provider at head
+   */
   Optional<VoteProvider> getVoteProviderAtHead();
 
+  /**
+   * Gets vote provider after block.
+   *
+   * @param header the header
+   * @return the vote provider after block
+   */
   /*
    * ForkingValidatorProvider has a specific implementation but we don't want the client code to
    * know it's using a ForkingValidatorProvider. ForkingValidatorProvider's voteProvider can be
@@ -37,5 +68,15 @@ public interface ValidatorProvider {
    */
   default Optional<VoteProvider> getVoteProviderAfterBlock(final BlockHeader header) {
     return getVoteProviderAtHead();
+  }
+
+  /**
+   * Determines if this node is a validator
+   *
+   * @param nodekey our node key
+   * @return true if this node is a validator
+   */
+  default boolean nodeIsValidator(final NodeKey nodekey) {
+    return this.getValidatorsAtHead().contains(Util.publicKeyToAddress(nodekey.getPublicKey()));
   }
 }

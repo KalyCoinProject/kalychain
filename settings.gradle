@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright Hyperledger Besu contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -13,21 +13,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
 pluginManagement {
   repositories {
-    /*
-     *  Temporary repository to host the improved version of the
-     *  com.github.hierynomus.license plugin. Can be removed when an
-     *  official version with the fix is release upstream
-     */
-    maven {
-      url = uri('https://raw.githubusercontent.com/ConsenSys/license-gradle-plugin-fix-artifacts/main/')
-      content {
-        includeGroup('com.github.hierynomus.license')
-        includeGroup('com.hierynomus.gradle.plugins')
-      }
-    }
     gradlePluginPortal()
   }
 }
@@ -36,7 +23,8 @@ rootProject.name='besu'
 include 'acceptance-tests:test-plugins'
 include 'acceptance-tests:dsl'
 include 'acceptance-tests:tests'
-include 'besu'
+include 'acceptance-tests:tests:shanghai'
+include 'app'
 include 'config'
 include 'consensus:clique'
 include 'consensus:common'
@@ -44,13 +32,11 @@ include 'consensus:ibft'
 include 'consensus:ibftlegacy'
 include 'consensus:merge'
 include 'consensus:qbft'
-include 'container-tests:tests'
+include 'consensus:qbft-core'
 include 'datatypes'
-include 'crypto'
+include 'crypto:algorithms'
+include 'crypto:services'
 include 'datatypes'
-include 'enclave'
-include 'evm'
-include 'errorprone-checks'
 include 'ethereum:api'
 include 'ethereum:blockcreation'
 include 'ethereum:core'
@@ -60,21 +46,20 @@ include 'ethereum:mock-p2p'
 include 'ethereum:p2p'
 include 'ethereum:permissioning'
 include 'ethereum:referencetests'
-include 'ethereum:retesteth'
 include 'ethereum:rlp'
-include 'ethereum:stratum'
 include 'ethereum:ethstats'
 include 'ethereum:trie'
+include 'ethereum:verkletrie'
 include 'evm'
 include 'metrics:core'
 include 'metrics:rocksdb'
 include 'nat'
-include 'pki'
+include 'platform'
 include 'plugin-api'
 include 'plugins:rocksdb'
-include 'privacy-contracts'
 include 'services:kvstore'
 include 'services:pipeline'
 include 'services:tasks'
+include 'testfuzz'
 include 'testutil'
 include 'util'

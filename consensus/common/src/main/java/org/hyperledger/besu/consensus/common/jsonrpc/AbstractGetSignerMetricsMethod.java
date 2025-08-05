@@ -18,11 +18,13 @@ import org.hyperledger.besu.consensus.common.BlockInterface;
 import org.hyperledger.besu.consensus.common.validator.ValidatorProvider;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.exception.InvalidJsonRpcParameters;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.BlockParameter;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.SignerMetricResult;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
@@ -33,6 +35,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.LongStream;
 
+/** The Abstract get signer metrics method. */
 public abstract class AbstractGetSignerMetricsMethod {
 
   private static final long DEFAULT_RANGE_BLOCK = 100;
@@ -41,6 +44,13 @@ public abstract class AbstractGetSignerMetricsMethod {
   private final BlockInterface blockInterface;
   private final BlockchainQueries blockchainQueries;
 
+  /**
+   * Instantiates a new Abstract get signer metrics method.
+   *
+   * @param validatorProvider the validator provider
+   * @param blockInterface the block interface
+   * @param blockchainQueries the blockchain queries
+   */
   protected AbstractGetSignerMetricsMethod(
       final ValidatorProvider validatorProvider,
       final BlockInterface blockInterface,
@@ -50,19 +60,35 @@ public abstract class AbstractGetSignerMetricsMethod {
     this.blockchainQueries = blockchainQueries;
   }
 
+  /**
+   * Response.
+   *
+   * @param requestContext the request context
+   * @return the json rpc response
+   */
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
 
-    final Optional<BlockParameter> startBlockParameter =
-        requestContext.getOptionalParameter(0, BlockParameter.class);
-    final Optional<BlockParameter> endBlockParameter =
-        requestContext.getOptionalParameter(1, BlockParameter.class);
+    final Optional<BlockParameter> startBlockParameter;
+    try {
+      startBlockParameter = requestContext.getOptionalParameter(0, BlockParameter.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid start block parameter (index 0)", RpcErrorType.INVALID_BLOCK_NUMBER_PARAMS, e);
+    }
+    final Optional<BlockParameter> endBlockParameter;
+    try {
+      endBlockParameter = requestContext.getOptionalParameter(1, BlockParameter.class);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidJsonRpcParameters(
+          "Invalid end block parameter (index 1)", RpcErrorType.INVALID_BLOCK_NUMBER_PARAMS, e);
+    }
 
     final long fromBlockNumber = getFromBlockNumber(startBlockParameter);
     final long toBlockNumber = getEndBlockNumber(endBlockParameter);
 
     if (!isValidParameters(fromBlockNumber, toBlockNumber)) {
       return new JsonRpcErrorResponse(
-          requestContext.getRequest().getId(), JsonRpcError.INVALID_PARAMS);
+          requestContext.getRequest().getId(), RpcErrorType.INVALID_BLOCK_NUMBER_PARAMS);
     }
 
     final Map<Address, SignerMetricResult> proposersMap = new HashMap<>();

@@ -14,30 +14,24 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 
+import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.ethereum.api.ApiConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.Quantity;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
-import org.hyperledger.besu.ethereum.blockcreation.MiningCoordinator;
-
-import java.util.function.Supplier;
 
 public class EthGasPrice implements JsonRpcMethod {
 
-  private final Supplier<BlockchainQueries> blockchain;
-  private final MiningCoordinator miningCoordinator;
+  private final BlockchainQueries blockchainQueries;
+  private final ApiConfiguration apiConfiguration;
 
   public EthGasPrice(
-      final BlockchainQueries blockchain, final MiningCoordinator miningCoordinator) {
-    this(() -> blockchain, miningCoordinator);
-  }
-
-  public EthGasPrice(
-      final Supplier<BlockchainQueries> blockchain, final MiningCoordinator miningCoordinator) {
-    this.blockchain = blockchain;
-    this.miningCoordinator = miningCoordinator;
+      final BlockchainQueries blockchainQueries, final ApiConfiguration apiConfiguration) {
+    this.blockchainQueries = blockchainQueries;
+    this.apiConfiguration = apiConfiguration;
   }
 
   @Override
@@ -48,11 +42,33 @@ public class EthGasPrice implements JsonRpcMethod {
   @Override
   public JsonRpcResponse response(final JsonRpcRequestContext requestContext) {
     return new JsonRpcSuccessResponse(
-        requestContext.getRequest().getId(),
-        blockchain
-            .get()
-            .gasPrice()
-            .map(Quantity::create)
-            .orElseGet(() -> Quantity.create(miningCoordinator.getMinTransactionGasPrice())));
+        requestContext.getRequest().getId(), Quantity.create(calculateGasPrice()));
+  }
+
+  private Wei calculateGasPrice() {
+    final Wei gasPrice = blockchainQueries.gasPrice();
+    return isGasPriceLimitingEnabled() ? limitGasPrice(gasPrice) : gasPrice;
+  }
+
+  private boolean isGasPriceLimitingEnabled() {
+    return apiConfiguration.isGasAndPriorityFeeLimitingEnabled();
+  }
+
+  private Wei limitGasPrice(final Wei gasPrice) {
+    final Wei lowerBoundGasPrice = blockchainQueries.gasPriceLowerBound();
+    final Wei forcedLowerBound =
+        calculateBound(
+            lowerBoundGasPrice, apiConfiguration.getLowerBoundGasAndPriorityFeeCoefficient());
+    final Wei forcedUpperBound =
+        calculateBound(
+            lowerBoundGasPrice, apiConfiguration.getUpperBoundGasAndPriorityFeeCoefficient());
+
+    return gasPrice.compareTo(forcedLowerBound) <= 0
+        ? forcedLowerBound
+        : gasPrice.compareTo(forcedUpperBound) >= 0 ? forcedUpperBound : gasPrice;
+  }
+
+  private Wei calculateBound(final Wei price, final long coefficient) {
+    return price.multiply(coefficient).divide(100);
   }
 }

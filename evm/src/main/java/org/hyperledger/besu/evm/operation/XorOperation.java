@@ -18,14 +18,21 @@ import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
-import org.apache.tuweni.units.bigints.UInt256;
+import org.apache.tuweni.bytes.Bytes;
 
+/** The XOR operation. */
 public class XorOperation extends AbstractFixedCostOperation {
 
+  /** The XOR operation success result. */
   static final OperationResult xorSuccess = new OperationResult(3, null);
 
+  /**
+   * Instantiates a new Xor operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public XorOperation(final GasCalculator gasCalculator) {
-    super(0x18, "XOR", 2, 1, 1, gasCalculator, gasCalculator.getVeryLowTierGasCost());
+    super(0x18, "XOR", 2, 1, gasCalculator, gasCalculator.getVeryLowTierGasCost());
   }
 
   @Override
@@ -34,11 +41,17 @@ public class XorOperation extends AbstractFixedCostOperation {
     return staticOperation(frame);
   }
 
+  /**
+   * Performs XOR operation.
+   *
+   * @param frame the frame
+   * @return the operation result
+   */
   public static OperationResult staticOperation(final MessageFrame frame) {
-    final UInt256 value0 = UInt256.fromBytes(frame.popStackItem());
-    final UInt256 value1 = UInt256.fromBytes(frame.popStackItem());
+    final Bytes value0 = frame.popStackItem();
+    final Bytes value1 = frame.popStackItem();
 
-    final UInt256 result = value0.xor(value1);
+    final Bytes result = value0.xor(value1);
 
     frame.pushStackItem(result);
 

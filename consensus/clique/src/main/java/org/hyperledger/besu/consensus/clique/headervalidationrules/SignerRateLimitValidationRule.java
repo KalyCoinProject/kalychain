@@ -23,9 +23,13 @@ import org.hyperledger.besu.ethereum.mainnet.AttachedBlockHeaderValidationRule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Signer rate limit validation rule. */
 public class SignerRateLimitValidationRule implements AttachedBlockHeaderValidationRule {
 
   private static final Logger LOG = LoggerFactory.getLogger(SignerRateLimitValidationRule.class);
+
+  /** Default constructor. */
+  public SignerRateLimitValidationRule() {}
 
   @Override
   public boolean validate(

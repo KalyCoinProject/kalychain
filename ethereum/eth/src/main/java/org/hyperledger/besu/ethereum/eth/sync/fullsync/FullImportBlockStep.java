@@ -58,11 +58,11 @@ public class FullImportBlockStep implements Consumer<Block> {
     final long blockNumber = block.getHeader().getNumber();
     final String blockHash = block.getHash().toHexString();
     final BlockImporter importer =
-        protocolSchedule.getByBlockNumber(blockNumber).getBlockImporter();
+        protocolSchedule.getByBlockHeader(block.getHeader()).getBlockImporter();
     final BlockImportResult blockImportResult =
         importer.importBlock(protocolContext, block, HeaderValidationMode.SKIP_DETACHED);
     if (!blockImportResult.isImported()) {
-      throw new InvalidBlockException("Failed to import block", blockNumber, block.getHash());
+      throw InvalidBlockException.fromInvalidBlock(block.getHeader());
     }
     gasAccumulator += block.getHeader().getGasUsed();
     int peerCount = -1; // ethContext is not available in tests

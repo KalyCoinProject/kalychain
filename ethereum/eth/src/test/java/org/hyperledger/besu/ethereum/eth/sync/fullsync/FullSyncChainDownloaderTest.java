@@ -17,6 +17,7 @@ package org.hyperledger.besu.ethereum.eth.sync.fullsync;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider.createInMemoryBlockchain;
+import static org.mockito.Mockito.mock;
 
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
@@ -31,10 +32,12 @@ import org.hyperledger.besu.ethereum.core.TransactionReceipt;
 import org.hyperledger.besu.ethereum.eth.EthProtocolConfiguration;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManager;
+import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestBuilder;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManagerTestUtil;
 import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
 import org.hyperledger.besu.ethereum.eth.manager.RespondingEthPeer;
-import org.hyperledger.besu.ethereum.eth.messages.EthPV62;
+import org.hyperledger.besu.ethereum.eth.manager.peertask.PeerTaskExecutor;
+import org.hyperledger.besu.ethereum.eth.messages.EthProtocolMessages;
 import org.hyperledger.besu.ethereum.eth.messages.GetBlockHeadersMessage;
 import org.hyperledger.besu.ethereum.eth.sync.ChainDownloader;
 import org.hyperledger.besu.ethereum.eth.sync.SynchronizerConfiguration;
@@ -42,27 +45,26 @@ import org.hyperledger.besu.ethereum.eth.sync.state.SyncState;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MessageData;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage.DisconnectReason;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
+import org.hyperledger.besu.metrics.SyncDurationMetrics;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
+import org.hyperledger.besu.plugin.services.storage.DataStorageFormat;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
+import java.util.stream.Stream;
 
 import org.awaitility.Awaitility;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.ArgumentsProvider;
+import org.junit.jupiter.params.provider.ArgumentsSource;
 
-@RunWith(Parameterized.class)
 public class FullSyncChainDownloaderTest {
 
   protected ProtocolSchedule protocolSchedule;
@@ -78,19 +80,15 @@ public class FullSyncChainDownloaderTest {
   protected Blockchain otherBlockchain;
   private final MetricsSystem metricsSystem = new NoOpMetricsSystem();
 
-  @Parameters
-  public static Collection<Object[]> data() {
-    return Arrays.asList(new Object[][] {{DataStorageFormat.BONSAI}, {DataStorageFormat.FOREST}});
+  static class FullSyncChainDownloaderTestArguments implements ArgumentsProvider {
+    @Override
+    public Stream<? extends Arguments> provideArguments(final ExtensionContext context) {
+      return Stream.of(
+          Arguments.of(DataStorageFormat.BONSAI), Arguments.of(DataStorageFormat.FOREST));
+    }
   }
 
-  private final DataStorageFormat storageFormat;
-
-  public FullSyncChainDownloaderTest(final DataStorageFormat storageFormat) {
-    this.storageFormat = storageFormat;
-  }
-
-  @Before
-  public void setupTest() {
+  public void setupTest(final DataStorageFormat storageFormat) {
     gen = new BlockDataGenerator();
     localBlockchainSetup = BlockchainSetupUtil.forTesting(storageFormat);
     localBlockchain = localBlockchainSetup.getBlockchain();
@@ -100,19 +98,23 @@ public class FullSyncChainDownloaderTest {
     protocolSchedule = localBlockchainSetup.getProtocolSchedule();
     protocolContext = localBlockchainSetup.getProtocolContext();
     ethProtocolManager =
-        EthProtocolManagerTestUtil.create(
-            localBlockchain,
-            new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()),
-            localBlockchainSetup.getWorldArchive(),
-            localBlockchainSetup.getTransactionPool(),
-            EthProtocolConfiguration.defaultConfig());
+        EthProtocolManagerTestBuilder.builder()
+            .setProtocolSchedule(protocolSchedule)
+            .setBlockchain(localBlockchain)
+            .setEthScheduler(new EthScheduler(1, 1, 1, 1, new NoOpMetricsSystem()))
+            .setWorldStateArchive(localBlockchainSetup.getWorldArchive())
+            .setTransactionPool(localBlockchainSetup.getTransactionPool())
+            .setEthereumWireProtocolConfiguration(EthProtocolConfiguration.defaultConfig())
+            .build();
     ethContext = ethProtocolManager.ethContext();
     syncState = new SyncState(protocolContext.getBlockchain(), ethContext.getEthPeers());
   }
 
-  @After
+  @AfterEach
   public void tearDown() {
-    ethProtocolManager.stop();
+    if (ethProtocolManager != null) {
+      ethProtocolManager.stop();
+    }
   }
 
   private ChainDownloader downloader(final SynchronizerConfiguration syncConfig) {
@@ -123,7 +125,9 @@ public class FullSyncChainDownloaderTest {
         ethContext,
         syncState,
         metricsSystem,
-        SyncTerminationCondition.never());
+        SyncTerminationCondition.never(),
+        SyncDurationMetrics.NO_OP_SYNC_DURATION_METRICS,
+        mock(PeerTaskExecutor.class));
   }
 
   private ChainDownloader downloader() {
@@ -135,8 +139,10 @@ public class FullSyncChainDownloaderTest {
     return SynchronizerConfiguration.builder();
   }
 
-  @Test
-  public void syncsToBetterChain_multipleSegments() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTestArguments.class)
+  public void syncsToBetterChain_multipleSegments(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     otherBlockchainSetup.importFirstBlocks(15);
     final long targetBlock = otherBlockchain.getChainHeadBlockNumber();
     // Sanity check
@@ -162,8 +168,10 @@ public class FullSyncChainDownloaderTest {
     assertThat(localBlockchain.getChainHeadBlockNumber()).isEqualTo(targetBlock);
   }
 
-  @Test
-  public void syncsToBetterChain_singleSegment() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTestArguments.class)
+  public void syncsToBetterChain_singleSegment(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     otherBlockchainSetup.importFirstBlocks(5);
     final long targetBlock = otherBlockchain.getChainHeadBlockNumber();
     // Sanity check
@@ -189,8 +197,10 @@ public class FullSyncChainDownloaderTest {
     assertThat(localBlockchain.getChainHeadBlockNumber()).isEqualTo(targetBlock);
   }
 
-  @Test
-  public void syncsToBetterChain_singleSegmentOnBoundary() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTestArguments.class)
+  public void syncsToBetterChain_singleSegmentOnBoundary(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     otherBlockchainSetup.importFirstBlocks(5);
     final long targetBlock = otherBlockchain.getChainHeadBlockNumber();
     // Sanity check
@@ -216,8 +226,10 @@ public class FullSyncChainDownloaderTest {
     assertThat(localBlockchain.getChainHeadBlockNumber()).isEqualTo(targetBlock);
   }
 
-  @Test
-  public void doesNotSyncToWorseChain() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTestArguments.class)
+  public void doesNotSyncToWorseChain(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     localBlockchainSetup.importFirstBlocks(15);
     // Sanity check
     assertThat(localBlockchain.getChainHeadBlockNumber())
@@ -239,8 +251,10 @@ public class FullSyncChainDownloaderTest {
     assertThat(syncState.syncTarget()).isNotPresent();
   }
 
-  @Test
-  public void syncsToBetterChain_fromFork() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTestArguments.class)
+  public void syncsToBetterChain_fromFork(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     otherBlockchainSetup.importFirstBlocks(15);
     final long targetBlock = otherBlockchain.getChainHeadBlockNumber();
 
@@ -277,8 +291,10 @@ public class FullSyncChainDownloaderTest {
     assertThat(localBlockchain.getChainHeadBlockNumber()).isEqualTo(targetBlock);
   }
 
-  @Test
-  public void choosesBestPeerAsSyncTarget_byTd() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTestArguments.class)
+  public void choosesBestPeerAsSyncTarget_byTd(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     final Difficulty localTd = localBlockchain.getChainHead().getTotalDifficulty();
 
     final RespondingEthPeer.Responder responder =
@@ -299,8 +315,10 @@ public class FullSyncChainDownloaderTest {
     assertThat(syncState.syncTarget().get().peer()).isEqualTo(peerB.getEthPeer());
   }
 
-  @Test
-  public void choosesBestPeerAsSyncTarget_byTdAndHeight() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTestArguments.class)
+  public void choosesBestPeerAsSyncTarget_byTdAndHeight(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     final Difficulty localTd = localBlockchain.getChainHead().getTotalDifficulty();
 
     final RespondingEthPeer.Responder responder =
@@ -321,8 +339,10 @@ public class FullSyncChainDownloaderTest {
     assertThat(syncState.syncTarget().get().peer()).isEqualTo(peerB.getEthPeer());
   }
 
-  @Test
-  public void recoversFromSyncTargetDisconnect() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTestArguments.class)
+  public void recoversFromSyncTargetDisconnect(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     localBlockchainSetup.importFirstBlocks(2);
     final long localChainHeadAtStart = localBlockchain.getChainHeadBlockNumber();
     otherBlockchainSetup.importAllBlocks();
@@ -358,8 +378,8 @@ public class FullSyncChainDownloaderTest {
         .until(() -> bestPeer.peekNextOutgoingRequest().isPresent());
     final Optional<MessageData> maybeNextMessage = bestPeer.peekNextOutgoingRequest();
     assertThat(maybeNextMessage).isPresent();
-    final MessageData nextMessage = maybeNextMessage.get();
-    assertThat(nextMessage.getCode()).isEqualTo(EthPV62.GET_BLOCK_HEADERS);
+    final MessageData nextMessage = maybeNextMessage.get().unwrapMessageData().getValue();
+    assertThat(nextMessage.getCode()).isEqualTo(EthProtocolMessages.GET_BLOCK_HEADERS);
     final GetBlockHeadersMessage headersMessage = GetBlockHeadersMessage.readFrom(nextMessage);
     assertThat(headersMessage.skip()).isGreaterThan(0);
 
@@ -392,8 +412,10 @@ public class FullSyncChainDownloaderTest {
     assertThat(localBlockchain.getChainHeadBlockNumber()).isEqualTo(secondBestPeerChainHead);
   }
 
-  @Test
-  public void requestsCheckpointsFromSyncTarget() {
+  @ParameterizedTest
+  @ArgumentsSource(FullSyncChainDownloaderTestArguments.class)
+  public void requestsCheckpointsFromSyncTarget(final DataStorageFormat storageFormat) {
+    setupTest(storageFormat);
     localBlockchainSetup.importFirstBlocks(2);
     otherBlockchainSetup.importAllBlocks();
     final long targetBlock = otherBlockchain.getChainHeadBlockNumber();
@@ -454,8 +476,8 @@ public class FullSyncChainDownloaderTest {
       final long checkpointRequestsToOtherPeers =
           otherPeers.stream()
               .map(RespondingEthPeer::streamPendingOutgoingRequests)
-              .flatMap(Function.identity())
-              .filter(m -> m.getCode() == EthPV62.GET_BLOCK_HEADERS)
+              .flatMap(s -> s.map(messageData -> messageData.unwrapMessageData().getValue()))
+              .filter(m -> m.getCode() == EthProtocolMessages.GET_BLOCK_HEADERS)
               .map(GetBlockHeadersMessage::readFrom)
               .filter(m -> m.skip() > 0)
               .count();
@@ -485,5 +507,12 @@ public class FullSyncChainDownloaderTest {
       nextBlock++;
     }
     return shortChain;
+  }
+
+  @Test
+  void dryRunDetector() {
+    assertThat(true)
+        .withFailMessage("This test is here so gradle --dry-run executes this class")
+        .isTrue();
   }
 }

@@ -15,12 +15,12 @@
 package org.hyperledger.besu.consensus.clique;
 
 import org.hyperledger.besu.datatypes.Address;
-import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.mainnet.DifficultyCalculator;
 
 import java.math.BigInteger;
 
+/** The Clique difficulty calculator. */
 public class CliqueDifficultyCalculator implements DifficultyCalculator {
 
   private final Address localAddress;
@@ -28,17 +28,19 @@ public class CliqueDifficultyCalculator implements DifficultyCalculator {
   private final BigInteger IN_TURN_DIFFICULTY = BigInteger.valueOf(2);
   private final BigInteger OUT_OF_TURN_DIFFICULTY = BigInteger.ONE;
 
+  /**
+   * Instantiates a new Clique difficulty calculator.
+   *
+   * @param localAddress the local address
+   */
   public CliqueDifficultyCalculator(final Address localAddress) {
     this.localAddress = localAddress;
   }
 
   @Override
-  public BigInteger nextDifficulty(
-      final long time, final BlockHeader parent, final ProtocolContext context) {
+  public BigInteger nextDifficulty(final long time, final BlockHeader parent) {
 
-    final Address nextProposer =
-        CliqueHelpers.getProposerForBlockAfter(
-            parent, context.getConsensusContext(CliqueContext.class).getValidatorProvider());
+    final Address nextProposer = CliqueHelpers.getProposerForBlockAfter(parent);
     return nextProposer.equals(localAddress) ? IN_TURN_DIFFICULTY : OUT_OF_TURN_DIFFICULTY;
   }
 }

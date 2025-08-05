@@ -19,7 +19,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
-import org.hyperledger.besu.enclave.GoQuorumEnclave;
 import org.hyperledger.besu.ethereum.api.graphql.internal.pojoadapter.AccountAdapter;
 import org.hyperledger.besu.ethereum.api.graphql.internal.pojoadapter.EmptyAccountAdapter;
 import org.hyperledger.besu.ethereum.api.graphql.internal.pojoadapter.LogAdapter;
@@ -32,8 +31,6 @@ import org.hyperledger.besu.ethereum.api.query.BlockWithMetadata;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.api.query.LogsQuery;
 import org.hyperledger.besu.ethereum.api.query.TransactionWithMetadata;
-import org.hyperledger.besu.ethereum.blockcreation.MiningCoordinator;
-import org.hyperledger.besu.ethereum.core.GoQuorumPrivacyParameters;
 import org.hyperledger.besu.ethereum.core.LogWithMetadata;
 import org.hyperledger.besu.ethereum.core.Synchronizer;
 import org.hyperledger.besu.ethereum.core.Transaction;
@@ -63,22 +60,35 @@ import graphql.GraphQLContext;
 import graphql.schema.DataFetcher;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+/**
+ * This class contains data fetchers for GraphQL queries.
+ *
+ * <p>Data fetchers are responsible for fetching data for a specific field. Each field in the schema
+ * is associated with a data fetcher. When the field is being processed during a query, the
+ * associated data fetcher is invoked to get the data for that field.
+ *
+ * <p>This class contains data fetchers for various fields such as protocol version, syncing state,
+ * pending state, gas price, chain ID, max priority fee per gas, range block, block, account, logs,
+ * and transaction.
+ *
+ * <p>Each data fetcher is a method that returns a `DataFetcher` object. The `DataFetcher` object
+ * defines how to fetch the data for the field. It takes a `DataFetchingEnvironment` object as input
+ * which contains all the context needed to fetch the data.
+ */
 public class GraphQLDataFetchers {
 
-  private static final Logger LOG = LoggerFactory.getLogger(GraphQLDataFetchers.class);
   private final Integer highestEthVersion;
-  private Optional<GoQuorumPrivacyParameters> goQuorumPrivacyParameters = Optional.empty();
 
-  public GraphQLDataFetchers(
-      final Set<Capability> supportedCapabilities,
-      final Optional<GoQuorumPrivacyParameters> goQuorumPrivacyParameters) {
-    this(supportedCapabilities);
-    this.goQuorumPrivacyParameters = goQuorumPrivacyParameters;
-  }
-
+  /**
+   * Constructs a new GraphQLDataFetchers instance.
+   *
+   * <p>This constructor takes a set of supported capabilities and determines the highest Ethereum
+   * protocol version supported by these capabilities. This version is then stored and can be
+   * fetched using the getProtocolVersionDataFetcher method.
+   *
+   * @param supportedCapabilities a set of capabilities supported by the Ethereum node
+   */
   public GraphQLDataFetchers(final Set<Capability> supportedCapabilities) {
     final OptionalInt version =
         supportedCapabilities.stream()
@@ -88,10 +98,30 @@ public class GraphQLDataFetchers {
     highestEthVersion = version.isPresent() ? version.getAsInt() : null;
   }
 
+  /**
+   * Returns a DataFetcher that fetches the highest Ethereum protocol version supported by the node.
+   *
+   * <p>The DataFetcher is a functional interface. It has a single method that takes a
+   * DataFetchingEnvironment object as input and returns the highest Ethereum protocol version as an
+   * Optional<Integer>.
+   *
+   * @return a DataFetcher that fetches the highest Ethereum protocol version
+   */
   DataFetcher<Optional<Integer>> getProtocolVersionDataFetcher() {
     return dataFetchingEnvironment -> Optional.of(highestEthVersion);
   }
 
+  /**
+   * Returns a DataFetcher that fetches the result of sending a raw transaction.
+   *
+   * <p>The DataFetcher is a functional interface. It has a single method that takes a
+   * DataFetchingEnvironment object as input and returns the hash of the transaction if it is valid
+   * and added to the transaction pool. If the transaction is invalid, it throws a GraphQLException
+   * with the invalid reason. If the raw transaction data cannot be read, it throws a
+   * GraphQLException with INVALID_PARAMS error.
+   *
+   * @return a DataFetcher that fetches the result of sending a raw transaction
+   */
   DataFetcher<Optional<Bytes32>> getSendRawTransactionDataFetcher() {
     return dataFetchingEnvironment -> {
       try {
@@ -101,7 +131,7 @@ public class GraphQLDataFetchers {
 
         final Transaction transaction = Transaction.readFrom(RLP.input(rawTran));
         final ValidationResult<TransactionInvalidReason> validationResult =
-            transactionPool.addLocalTransaction(transaction);
+            transactionPool.addTransactionViaApi(transaction);
         if (validationResult.isValid()) {
           return Optional.of(transaction.getHash());
         } else {
@@ -113,6 +143,19 @@ public class GraphQLDataFetchers {
     };
   }
 
+  /**
+   * Returns a DataFetcher that fetches the syncing state of the Ethereum node.
+   *
+   * <p>The DataFetcher is a functional interface. It has a single method that takes a
+   * DataFetchingEnvironment object as input and returns the syncing state as an
+   * Optional<SyncStateAdapter>.
+   *
+   * <p>The SyncStateAdapter is a wrapper around the SyncStatus of the Ethereum node. It provides
+   * information about the current syncing state of the node such as the current block, highest
+   * block, and starting block.
+   *
+   * @return a DataFetcher that fetches the syncing state of the Ethereum node
+   */
   DataFetcher<Optional<SyncStateAdapter>> getSyncingDataFetcher() {
     return dataFetchingEnvironment -> {
       final Synchronizer synchronizer =
@@ -126,24 +169,28 @@ public class GraphQLDataFetchers {
     return dataFetchingEnvironment -> {
       final TransactionPool txPool =
           dataFetchingEnvironment.getGraphQlContext().get(GraphQLContextType.TRANSACTION_POOL);
-      return Optional.of(new PendingStateAdapter(txPool.getPendingTransactions()));
+      return Optional.of(new PendingStateAdapter(txPool));
     };
   }
 
-  DataFetcher<Optional<Wei>> getGasPriceDataFetcher() {
+  DataFetcher<Wei> getGasPriceDataFetcher() {
     return dataFetchingEnvironment -> {
       final GraphQLContext graphQLContext = dataFetchingEnvironment.getGraphQlContext();
       final BlockchainQueries blockchainQueries =
           graphQLContext.get(GraphQLContextType.BLOCKCHAIN_QUERIES);
-      final MiningCoordinator miningCoordinator =
-          graphQLContext.get(GraphQLContextType.MINING_COORDINATOR);
-      return blockchainQueries
-          .gasPrice()
-          .map(Wei::of)
-          .or(() -> Optional.of(miningCoordinator.getMinTransactionGasPrice()));
+      return blockchainQueries.gasPrice();
     };
   }
 
+  /**
+   * Returns a DataFetcher that fetches the chain ID of the Ethereum node.
+   *
+   * <p>The DataFetcher is a functional interface. It has a single method that takes a
+   * DataFetchingEnvironment object as input and returns the chain ID as an {@code
+   * Optional<BigInteger>}.
+   *
+   * @return a DataFetcher that fetches the chain ID of the Ethereum node
+   */
   public DataFetcher<Optional<BigInteger>> getChainIdDataFetcher() {
     return dataFetchingEnvironment -> {
       final GraphQLContext graphQLContext = dataFetchingEnvironment.getGraphQlContext();
@@ -151,11 +198,20 @@ public class GraphQLDataFetchers {
     };
   }
 
+  /**
+   * Returns a DataFetcher that fetches the maximum priority fee per gas of the Ethereum node.
+   *
+   * <p>The DataFetcher is a functional interface. It has a single method that takes a
+   * DataFetchingEnvironment object as input and returns the maximum priority fee per gas as a Wei
+   * object.
+   *
+   * @return a DataFetcher that fetches the maximum priority fee per gas of the Ethereum node
+   */
   public DataFetcher<Wei> getMaxPriorityFeePerGasDataFetcher() {
     return dataFetchingEnvironment -> {
       final BlockchainQueries blockchainQuery =
           dataFetchingEnvironment.getGraphQlContext().get(GraphQLContextType.BLOCKCHAIN_QUERIES);
-      return blockchainQuery.gasPriorityFee().orElse(Wei.ZERO);
+      return blockchainQuery.gasPriorityFee();
     };
   }
 
@@ -186,6 +242,20 @@ public class GraphQLDataFetchers {
     };
   }
 
+  /**
+   * Returns a DataFetcher that fetches a specific block in the Ethereum blockchain.
+   *
+   * <p>The DataFetcher is a functional interface. It has a single method that takes a
+   * DataFetchingEnvironment object as input. This method fetches a block based on either a block
+   * number or a block hash. If both a block number and a block hash are provided, it throws a
+   * GraphQLException with INVALID_PARAMS error. If neither a block number nor a block hash is
+   * provided, it fetches the latest block.
+   *
+   * <p>The fetched block is then wrapped in a {@link NormalBlockAdapter} and returned as an {@code
+   * Optional<NormalBlockAdapter>}.
+   *
+   * @return a DataFetcher that fetches a specific block in the Ethereum blockchain
+   */
   public DataFetcher<Optional<NormalBlockAdapter>> getBlockDataFetcher() {
 
     return dataFetchingEnvironment -> {
@@ -224,9 +294,9 @@ public class GraphQLDataFetchers {
                 ws -> {
                   final Account account = ws.get(addr);
                   if (account == null) {
-                    return new EmptyAccountAdapter(addr);
+                    return Optional.of(new EmptyAccountAdapter(addr));
                   }
-                  return new AccountAdapter(account);
+                  return Optional.of(new AccountAdapter(account));
                 })
             .or(
                 () -> {
@@ -246,9 +316,9 @@ public class GraphQLDataFetchers {
             ws -> {
               final Account account = ws.get(addr);
               if (account == null) {
-                return new EmptyAccountAdapter(addr);
+                return Optional.of(new EmptyAccountAdapter(addr));
               }
-              return new AccountAdapter(account);
+              return Optional.of(new AccountAdapter(account));
             });
       }
     };
@@ -312,44 +382,6 @@ public class GraphQLDataFetchers {
 
   private TransactionAdapter getTransactionAdapter(
       final TransactionWithMetadata transactionWithMetadata) {
-    final Transaction transaction = transactionWithMetadata.getTransaction();
-    final boolean isGoQuorumCompatbilityMode = goQuorumPrivacyParameters.isPresent();
-    final boolean isGoQuorumPrivateTransaction =
-        isGoQuorumCompatbilityMode
-            && transaction.isGoQuorumPrivateTransaction(isGoQuorumCompatbilityMode);
-    return isGoQuorumPrivateTransaction
-        ? updatePrivatePayload(transaction)
-        : new TransactionAdapter(transactionWithMetadata);
-  }
-
-  private TransactionAdapter updatePrivatePayload(final Transaction transaction) {
-    final GoQuorumEnclave enclave = goQuorumPrivacyParameters.get().enclave();
-    Bytes enclavePayload;
-
-    try {
-      // Retrieve the payload from the enclave
-      enclavePayload =
-          Bytes.wrap(enclave.receive(transaction.getPayload().toBase64String()).getPayload());
-    } catch (final Exception ex) {
-      LOG.debug("An error occurred while retrieving the GoQuorum transaction payload: ", ex);
-      enclavePayload = Bytes.EMPTY;
-    }
-
-    // Return a new transaction containing the retrieved payload
-    return new TransactionAdapter(
-        new TransactionWithMetadata(
-            new Transaction(
-                transaction.getNonce(),
-                transaction.getGasPrice(),
-                transaction.getMaxPriorityFeePerGas(),
-                transaction.getMaxFeePerGas(),
-                transaction.getGasLimit(),
-                transaction.getTo(),
-                transaction.getValue(),
-                transaction.getSignature(),
-                enclavePayload,
-                transaction.getSender(),
-                transaction.getChainId(),
-                Optional.ofNullable(transaction.getV()))));
+    return new TransactionAdapter(transactionWithMetadata);
   }
 }

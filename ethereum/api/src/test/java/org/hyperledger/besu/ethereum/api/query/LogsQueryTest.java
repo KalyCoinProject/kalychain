@@ -11,9 +11,7 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.ethereum.api.query;
 
 import static java.util.Collections.singletonList;
@@ -26,7 +24,7 @@ import org.hyperledger.besu.evm.log.LogTopic;
 import java.util.List;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class LogsQueryTest {
 
@@ -58,6 +56,41 @@ public class LogsQueryTest {
                     Bytes.EMPTY,
                     List.of(ERC20_TRANSFER_EVENT, FIRST_ADDRESS_TOPIC))))
         .isTrue();
+    assertThat(
+            query.matches(
+                new Log(
+                    FIRST_ADDRESS,
+                    Bytes.EMPTY,
+                    List.of(ERC20_TRANSFER_EVENT, SECOND_ADDRESS_TOPIC))))
+        .isTrue();
+    assertThat(
+            query.matches(
+                new Log(
+                    FIRST_ADDRESS,
+                    Bytes.EMPTY,
+                    List.of(ERC20_TRANSFER_EVENT, SECOND_ADDRESS_TOPIC, FIRST_ADDRESS_TOPIC))))
+        .isTrue();
+  }
+
+  @Test
+  public void testWildcardMatches() {
+    final LogsQuery query =
+        new LogsQuery(
+            List.of(),
+            List.of(
+                List.of(), // wildcard match in first spot
+                List.of(SECOND_ADDRESS_TOPIC)));
+
+    assertThat(query.matches(new Log(FIRST_ADDRESS, Bytes.EMPTY, List.of()))).isFalse();
+    assertThat(query.matches(new Log(FIRST_ADDRESS, Bytes.EMPTY, List.of(ERC20_TRANSFER_EVENT))))
+        .isFalse();
+    assertThat(
+            query.matches(
+                new Log(
+                    FIRST_ADDRESS,
+                    Bytes.EMPTY,
+                    List.of(ERC20_TRANSFER_EVENT, FIRST_ADDRESS_TOPIC))))
+        .isFalse();
     assertThat(
             query.matches(
                 new Log(

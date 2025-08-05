@@ -20,6 +20,7 @@ import java.lang.reflect.Method;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Collectors;
 
 import org.web3j.crypto.Credentials;
@@ -37,10 +38,20 @@ public class DeploySmartContractTransaction<T extends Contract> implements Trans
 
   private final Class<T> clazz;
   private final Object[] args;
+  private BigInteger gasPrice = DEFAULT_GAS_PRICE;
+  private BigInteger gasLimit = DEFAULT_GAS_LIMIT;
 
   public DeploySmartContractTransaction(final Class<T> clazz, final Object... args) {
     this.clazz = clazz;
     this.args = args;
+  }
+
+  public void setGasPrice(final BigInteger gasPrice) {
+    this.gasPrice = gasPrice;
+  }
+
+  public void setGasLimit(final BigInteger gasLimit) {
+    this.gasLimit = gasLimit;
   }
 
   @Override
@@ -48,8 +59,7 @@ public class DeploySmartContractTransaction<T extends Contract> implements Trans
     try {
       if (args != null && args.length != 0) {
         final ArrayList<Object> parameterObjects = new ArrayList<>();
-        parameterObjects.addAll(
-            Arrays.asList(node.eth(), BENEFACTOR_ONE, DEFAULT_GAS_PRICE, DEFAULT_GAS_LIMIT));
+        parameterObjects.addAll(Arrays.asList(node.eth(), BENEFACTOR_ONE, gasPrice, gasLimit));
         parameterObjects.addAll(Arrays.asList(args));
 
         final Method method =
@@ -70,8 +80,7 @@ public class DeploySmartContractTransaction<T extends Contract> implements Trans
                 "deploy", Web3j.class, Credentials.class, BigInteger.class, BigInteger.class);
 
         final Object invoked =
-            method.invoke(
-                METHOD_IS_STATIC, node.eth(), BENEFACTOR_ONE, DEFAULT_GAS_PRICE, DEFAULT_GAS_LIMIT);
+            method.invoke(METHOD_IS_STATIC, node.eth(), BENEFACTOR_ONE, gasPrice, gasLimit);
 
         return cast(invoked).send();
       }
@@ -83,7 +92,7 @@ public class DeploySmartContractTransaction<T extends Contract> implements Trans
 
   @SuppressWarnings("rawtypes")
   private boolean parameterTypesAreEqual(
-      final Class<?>[] expectedTypes, final ArrayList<Object> actualObjects) {
+      final Class<?>[] expectedTypes, final List<Object> actualObjects) {
     if (expectedTypes.length != actualObjects.size()) {
       return false;
     }

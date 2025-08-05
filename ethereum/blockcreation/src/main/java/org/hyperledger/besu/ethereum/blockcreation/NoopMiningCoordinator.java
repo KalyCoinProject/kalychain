@@ -12,27 +12,24 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.ethereum.blockcreation;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
-import org.hyperledger.besu.ethereum.core.MiningParameters;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.Transaction;
 
 import java.util.List;
 import java.util.Optional;
 
-import org.apache.tuweni.bytes.Bytes;
-
 public class NoopMiningCoordinator implements MiningCoordinator {
 
-  private final MiningParameters miningParameters;
+  private final MiningConfiguration miningConfiguration;
 
-  public NoopMiningCoordinator(final MiningParameters miningParameters) {
-    this.miningParameters = miningParameters;
+  public NoopMiningCoordinator(final MiningConfiguration miningConfiguration) {
+    this.miningConfiguration = miningConfiguration;
   }
 
   @Override
@@ -61,15 +58,17 @@ public class NoopMiningCoordinator implements MiningCoordinator {
 
   @Override
   public Wei getMinTransactionGasPrice() {
-    return miningParameters.getMinTransactionGasPrice();
+    return miningConfiguration.getMinTransactionGasPrice();
   }
 
   @Override
-  public void setExtraData(final Bytes extraData) {}
+  public Wei getMinPriorityFeePerGas() {
+    return miningConfiguration.getMinPriorityFeePerGas();
+  }
 
   @Override
   public Optional<Address> getCoinbase() {
-    return miningParameters.getCoinbase();
+    return miningConfiguration.getCoinbase();
   }
 
   @Override

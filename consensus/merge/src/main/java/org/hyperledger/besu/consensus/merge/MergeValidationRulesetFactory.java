@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -37,10 +37,14 @@ import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.TimestampBoun
 
 import java.util.Optional;
 
+/** The Merge validation ruleset factory. */
 public class MergeValidationRulesetFactory {
 
   private static final EpochCalculator preMergeCalculator =
       new EpochCalculator.DefaultEpochCalculator();
+
+  /** Default constructor. */
+  private MergeValidationRulesetFactory() {}
 
   /**
    * Creates a set of rules which when executed will determine if a given block header is valid with

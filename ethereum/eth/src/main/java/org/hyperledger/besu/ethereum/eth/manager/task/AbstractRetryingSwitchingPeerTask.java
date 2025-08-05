@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -13,9 +13,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 package org.hyperledger.besu.ethereum.eth.manager.task;
-
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.debugLambda;
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.traceLambda;
 
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
@@ -52,9 +49,12 @@ public abstract class AbstractRetryingSwitchingPeerTask<T> extends AbstractRetry
   }
 
   @Override
-  public void assignPeer(final EthPeer peer) {
-    super.assignPeer(peer);
-    triedPeers.add(peer);
+  public boolean assignPeer(final EthPeer peer) {
+    if (super.assignPeer(peer)) {
+      triedPeers.add(peer);
+      return true;
+    }
+    return false;
   }
 
   protected abstract CompletableFuture<T> executeTaskOnCurrentPeer(final EthPeer peer);
@@ -65,15 +65,14 @@ public abstract class AbstractRetryingSwitchingPeerTask<T> extends AbstractRetry
     final Optional<EthPeer> maybePeer =
         assignedPeer
             .filter(u -> getRetryCount() == 1) // first try with the assigned peer if present
-            .map(Optional::of)
-            .orElseGet(this::selectNextPeer); // otherwise select a new one from the pool
+            .or(this::selectNextPeer); // otherwise select a new one from the pool
 
     if (maybePeer.isEmpty()) {
-      traceLambda(
-          LOG,
-          "No peer found to try to execute task at attempt {}, tried peers {}",
-          this::getRetryCount,
-          triedPeers::toString);
+      LOG.atTrace()
+          .setMessage("No peer found to try to execute task at attempt {}, tried peers {}")
+          .addArgument(this::getRetryCount)
+          .addArgument(triedPeers)
+          .log();
       final var ex = new NoAvailablePeersException();
       return CompletableFuture.failedFuture(ex);
     }
@@ -81,21 +80,21 @@ public abstract class AbstractRetryingSwitchingPeerTask<T> extends AbstractRetry
     final EthPeer peerToUse = maybePeer.get();
     assignPeer(peerToUse);
 
-    traceLambda(
-        LOG,
-        "Trying to execute task on peer {}, attempt {}",
-        this::getAssignedPeer,
-        this::getRetryCount);
+    LOG.atTrace()
+        .setMessage("Trying to execute task on peer {}, attempt {}")
+        .addArgument(this::getAssignedPeer)
+        .addArgument(this::getRetryCount)
+        .log();
 
     return executeTaskOnCurrentPeer(peerToUse)
         .thenApply(
             peerResult -> {
-              traceLambda(
-                  LOG,
-                  "Got result {} from peer {}, attempt {}",
-                  peerResult::toString,
-                  peerToUse::toString,
-                  this::getRetryCount);
+              LOG.atTrace()
+                  .setMessage("Got result {} from peer {}, attempt {}")
+                  .addArgument(peerResult)
+                  .addArgument(peerToUse)
+                  .addArgument(this::getRetryCount)
+                  .log();
               result.complete(peerResult);
               return peerResult;
             });
@@ -104,7 +103,7 @@ public abstract class AbstractRetryingSwitchingPeerTask<T> extends AbstractRetry
   @Override
   protected void handleTaskError(final Throwable error) {
     if (isPeerFailure(error)) {
-      getAssignedPeer().ifPresent(peer -> failedPeers.add(peer));
+      getAssignedPeer().ifPresent(failedPeers::add);
     }
     super.handleTaskError(error);
   }
@@ -127,10 +126,11 @@ public abstract class AbstractRetryingSwitchingPeerTask<T> extends AbstractRetry
     return maybeNextPeer;
   }
 
-  private Stream<EthPeer> remainingPeersToTry() {
+  protected Stream<EthPeer> remainingPeersToTry() {
     return getEthContext()
         .getEthPeers()
         .streamBestPeers()
+        .filter(this::isSuitablePeer)
         .filter(peer -> !triedPeers.contains(peer));
   }
 
@@ -138,15 +138,21 @@ public abstract class AbstractRetryingSwitchingPeerTask<T> extends AbstractRetry
     final EthPeers peers = getEthContext().getEthPeers();
     // If we are at max connections, then refresh peers disconnecting one of the failed peers,
     // or the least useful
+
     if (peers.peerCount() >= peers.getMaxPeers()) {
-      failedPeers.stream()
-          .filter(peer -> !peer.isDisconnected())
-          .findAny()
-          .or(() -> peers.streamAvailablePeers().sorted(peers.getBestChainComparator()).findFirst())
+      failedPeers.stream().filter(peer -> !peer.isDisconnected()).findAny().stream()
+          .min(EthPeers.MOST_USEFUL_PEER)
+          .or(() -> peers.streamAvailablePeers().min(EthPeers.MOST_USEFUL_PEER))
           .ifPresent(
               peer -> {
-                debugLambda(LOG, "Refresh peers disconnecting peer {}", peer::toString);
-                peer.disconnect(DisconnectReason.USELESS_PEER);
+                LOG.atDebug()
+                    .setMessage(
+                        "Refresh peers disconnecting peer {} Waiting for better peers. Current {} of max {}")
+                    .addArgument(peer::getLoggableId)
+                    .addArgument(peers::peerCount)
+                    .addArgument(peers::getMaxPeers)
+                    .log();
+                peer.disconnect(DisconnectReason.USELESS_PEER_BY_REPUTATION);
               });
     }
   }

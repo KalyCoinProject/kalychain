@@ -30,30 +30,25 @@ import org.hyperledger.besu.ethereum.core.BlockDataGenerator;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.eth.EthProtocol;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeer;
+import org.hyperledger.besu.ethereum.eth.manager.EthPeers;
 import org.hyperledger.besu.ethereum.eth.manager.MockPeerConnection;
-import org.hyperledger.besu.ethereum.eth.messages.EthPV65;
+import org.hyperledger.besu.ethereum.eth.messages.EthProtocolMessages;
 import org.hyperledger.besu.ethereum.eth.messages.NewPooledTransactionHashesMessage;
-import org.hyperledger.besu.ethereum.eth.transactions.sorter.AbstractPendingTransactionsSorter;
-import org.hyperledger.besu.ethereum.eth.transactions.sorter.BaseFeePendingTransactionsSorter;
-import org.hyperledger.besu.ethereum.eth.transactions.sorter.GasPricePendingTransactionsSorter;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MessageData;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.google.common.collect.Sets;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-@RunWith(Parameterized.class)
 public class NewPooledTransactionHashesMessageSenderTest {
+  private final EthPeers ethPeers = mock(EthPeers.class);
 
   private final EthPeer peer1 = mock(EthPeer.class);
   private final EthPeer peer2 = mock(EthPeer.class);
@@ -63,39 +58,31 @@ public class NewPooledTransactionHashesMessageSenderTest {
   private final Transaction transaction2 = generator.transaction();
   private final Transaction transaction3 = generator.transaction();
 
-  @Parameterized.Parameter public AbstractPendingTransactionsSorter pendingTransactions;
+  public PendingTransactions pendingTransactions;
 
   private PeerTransactionTracker transactionTracker;
   private NewPooledTransactionHashesMessageSender messageSender;
 
-  @Parameterized.Parameters
-  public static Collection<Object[]> data() {
-    return Arrays.asList(
-        new Object[][] {
-          {mock(GasPricePendingTransactionsSorter.class)},
-          {mock(BaseFeePendingTransactionsSorter.class)}
-        });
-  }
-
-  @Before
+  @BeforeEach
   public void setUp() {
-    transactionTracker = new PeerTransactionTracker();
+    transactionTracker = new PeerTransactionTracker(TransactionPoolConfiguration.DEFAULT, ethPeers);
     messageSender = new NewPooledTransactionHashesMessageSender(transactionTracker);
     final Transaction tx = mock(Transaction.class);
+    pendingTransactions = mock(PendingTransactions.class);
     when(pendingTransactions.getTransactionByHash(any())).thenReturn(Optional.of(tx));
 
     when(peer1.getConnection())
-        .thenReturn(new MockPeerConnection(Set.of(EthProtocol.ETH67), (cap, msg, conn) -> {}));
+        .thenReturn(new MockPeerConnection(Set.of(EthProtocol.ETH68), (cap, msg, conn) -> {}));
     when(peer2.getConnection())
-        .thenReturn(new MockPeerConnection(Set.of(EthProtocol.ETH67), (cap, msg, conn) -> {}));
+        .thenReturn(new MockPeerConnection(Set.of(EthProtocol.ETH68), (cap, msg, conn) -> {}));
   }
 
   @Test
   public void shouldSendPendingTransactionsToEachPeer() throws Exception {
 
-    transactionTracker.addToPeerSendQueue(peer1, transaction1);
-    transactionTracker.addToPeerSendQueue(peer1, transaction2);
-    transactionTracker.addToPeerSendQueue(peer2, transaction3);
+    transactionTracker.addToPeerHashSendQueue(peer1, transaction1);
+    transactionTracker.addToPeerHashSendQueue(peer1, transaction2);
+    transactionTracker.addToPeerHashSendQueue(peer2, transaction3);
 
     List.of(peer1, peer2).forEach(messageSender::sendTransactionHashesToPeer);
 
@@ -111,7 +98,8 @@ public class NewPooledTransactionHashesMessageSenderTest {
     final Set<Transaction> transactions =
         generator.transactions(6000).stream().collect(Collectors.toSet());
 
-    transactions.forEach(transaction -> transactionTracker.addToPeerSendQueue(peer1, transaction));
+    transactions.forEach(
+        transaction -> transactionTracker.addToPeerHashSendQueue(peer1, transaction));
 
     messageSender.sendTransactionHashesToPeer(peer1);
     final ArgumentCaptor<MessageData> messageDataArgumentCaptor =
@@ -122,7 +110,8 @@ public class NewPooledTransactionHashesMessageSenderTest {
 
     assertThat(sentMessages)
         .hasSize(2)
-        .allMatch(message -> message.getCode() == EthPV65.NEW_POOLED_TRANSACTION_HASHES);
+        .allMatch(
+            message -> message.getCode() == EthProtocolMessages.NEW_POOLED_TRANSACTION_HASHES);
     final Set<Hash> firstBatch = getTransactionsFromMessage(sentMessages.get(0));
     final Set<Hash> secondBatch = getTransactionsFromMessage(sentMessages.get(1));
 
@@ -144,7 +133,7 @@ public class NewPooledTransactionHashesMessageSenderTest {
           final Set<Hash> actualSentTransactions = getTransactionsFromMessage(message);
           final Set<Hash> expectedTransactions =
               newHashSet(toHashList(Arrays.asList(transactions)));
-          return message.getCode() == EthPV65.NEW_POOLED_TRANSACTION_HASHES
+          return message.getCode() == EthProtocolMessages.NEW_POOLED_TRANSACTION_HASHES
               && actualSentTransactions.equals(expectedTransactions);
         });
   }

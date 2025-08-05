@@ -21,12 +21,13 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider;
+import org.hyperledger.besu.ethereum.p2p.EthProtocolHelper;
 import org.hyperledger.besu.ethereum.p2p.config.DiscoveryConfiguration;
 import org.hyperledger.besu.ethereum.p2p.config.NetworkingConfiguration;
 import org.hyperledger.besu.ethereum.p2p.config.RlpxConfiguration;
@@ -45,31 +46,31 @@ import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.data.EnodeURL;
 
 import java.net.InetAddress;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import io.vertx.core.Vertx;
 import org.apache.tuweni.bytes.Bytes;
 import org.assertj.core.api.Assertions;
-import org.junit.After;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.StrictStubs.class)
+@ExtendWith(MockitoExtension.class)
 public class P2PNetworkTest {
   private final Vertx vertx = Vertx.vertx();
   private final NetworkingConfiguration config =
       NetworkingConfiguration.create()
-          .setDiscovery(DiscoveryConfiguration.create().setActive(false))
+          .setDiscovery(DiscoveryConfiguration.create().setEnabled(false))
           .setRlpx(
               RlpxConfiguration.create()
                   .setBindPort(0)
                   .setSupportedProtocols(MockSubProtocol.create()));
 
-  @After
+  @AfterEach
   public void closeVertx() {
     vertx.close();
   }
@@ -79,6 +80,8 @@ public class P2PNetworkTest {
     final NodeKey nodeKey = NodeKeyUtils.generate();
     try (final P2PNetwork listener = builder().nodeKey(nodeKey).build();
         final P2PNetwork connector = builder().build()) {
+      listener.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
+      connector.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
 
       listener.start();
       connector.start();
@@ -101,6 +104,8 @@ public class P2PNetworkTest {
     final NodeKey listenNodeKey = NodeKeyUtils.generate();
     try (final P2PNetwork listener = builder().nodeKey(listenNodeKey).build();
         final P2PNetwork connector = builder().build()) {
+      listener.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
+      connector.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
 
       listener.start();
       connector.start();
@@ -123,80 +128,24 @@ public class P2PNetworkTest {
     }
   }
 
-  /**
-   * Tests that max peers setting is honoured and inbound connections that would exceed the limit
-   * are correctly disconnected.
-   *
-   * @throws Exception On Failure
-   */
-  @Test
-  public void limitMaxPeers() throws Exception {
-    final NodeKey nodeKey = NodeKeyUtils.generate();
-    final int maxPeers = 1;
-    final NetworkingConfiguration listenerConfig =
-        NetworkingConfiguration.create()
-            .setDiscovery(DiscoveryConfiguration.create().setActive(false))
-            .setRlpx(
-                RlpxConfiguration.create()
-                    .setBindPort(0)
-                    .setPeerUpperBound(maxPeers)
-                    .setSupportedProtocols(MockSubProtocol.create()));
-    try (final P2PNetwork listener = builder().nodeKey(nodeKey).config(listenerConfig).build();
-        final P2PNetwork connector1 = builder().build();
-        final P2PNetwork connector2 = builder().build()) {
-
-      // Setup listener and first connection
-      listener.start();
-      connector1.start();
-      final EnodeURL listenerEnode = listener.getLocalEnode().get();
-      final Bytes listenId = listenerEnode.getNodeId();
-      final int listenPort = listenerEnode.getListeningPort().get();
-
-      final Peer listeningPeer = createPeer(listenId, listenPort);
-      Assertions.assertThat(
-              connector1
-                  .connect(listeningPeer)
-                  .get(30L, TimeUnit.SECONDS)
-                  .getPeerInfo()
-                  .getNodeId())
-          .isEqualTo(listenId);
-
-      // Setup second connection and check that connection is not accepted
-      final CompletableFuture<PeerConnection> peerFuture = new CompletableFuture<>();
-      final CompletableFuture<DisconnectReason> reasonFuture = new CompletableFuture<>();
-      connector2.subscribeDisconnect(
-          (peerConnection, reason, initiatedByPeer) -> {
-            peerFuture.complete(peerConnection);
-            reasonFuture.complete(reason);
-          });
-      connector2.start();
-      Assertions.assertThat(
-              connector2
-                  .connect(listeningPeer)
-                  .get(30L, TimeUnit.SECONDS)
-                  .getPeerInfo()
-                  .getNodeId())
-          .isEqualTo(listenId);
-      Assertions.assertThat(peerFuture.get(30L, TimeUnit.SECONDS).getPeerInfo().getNodeId())
-          .isEqualTo(listenId);
-      assertThat(reasonFuture.get(30L, TimeUnit.SECONDS))
-          .isEqualByComparingTo(DisconnectReason.TOO_MANY_PEERS);
-    }
-  }
-
   @Test
   public void rejectPeerWithNoSharedCaps() throws Exception {
     final NodeKey listenerNodeKey = NodeKeyUtils.generate();
     final NodeKey connectorNodeKey = NodeKeyUtils.generate();
 
     final SubProtocol subprotocol1 = MockSubProtocol.create("eth");
-    final Capability cap1 = Capability.create(subprotocol1.getName(), 63);
+    final Capability cap1 =
+        Capability.create(subprotocol1.getName(), EthProtocolHelper.LATEST.getVersion());
     final SubProtocol subprotocol2 = MockSubProtocol.create("oth");
-    final Capability cap2 = Capability.create(subprotocol2.getName(), 63);
+    final Capability cap2 =
+        Capability.create(subprotocol2.getName(), EthProtocolHelper.LATEST.getVersion());
     try (final P2PNetwork listener =
             builder().nodeKey(listenerNodeKey).supportedCapabilities(cap1).build();
         final P2PNetwork connector =
             builder().nodeKey(connectorNodeKey).supportedCapabilities(cap2).build()) {
+      listener.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
+      connector.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
+
       listener.start();
       connector.start();
       final EnodeURL listenerEnode = listener.getLocalEnode().get();
@@ -215,6 +164,8 @@ public class P2PNetworkTest {
 
     try (final P2PNetwork localNetwork = builder().peerPermissions(localDenylist).build();
         final P2PNetwork remoteNetwork = builder().build()) {
+      localNetwork.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
+      remoteNetwork.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
 
       localNetwork.start();
       remoteNetwork.start();
@@ -262,6 +213,8 @@ public class P2PNetworkTest {
 
     try (final P2PNetwork localNetwork = builder().peerPermissions(peerPermissions).build();
         final P2PNetwork remoteNetwork = builder().build()) {
+      localNetwork.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
+      remoteNetwork.getRlpxAgent().subscribeConnectRequest((p, d) -> true);
 
       localNetwork.start();
       remoteNetwork.start();
@@ -319,9 +272,12 @@ public class P2PNetworkTest {
         .config(config)
         .nodeKey(NodeKeyUtils.generate())
         .metricsSystem(new NoOpMetricsSystem())
-        .supportedCapabilities(Arrays.asList(Capability.create("eth", 63)))
+        .supportedCapabilities(Collections.singletonList(EthProtocolHelper.LATEST))
         .storageProvider(new InMemoryKeyValueStorageProvider())
-        .forks(Collections.emptyList())
-        .blockchain(blockchainMock);
+        .blockNumberForks(Collections.emptyList())
+        .timestampForks(Collections.emptyList())
+        .blockchain(blockchainMock)
+        .allConnectionsSupplier(Stream::empty)
+        .allActiveConnectionsSupplier(Stream::empty);
   }
 }

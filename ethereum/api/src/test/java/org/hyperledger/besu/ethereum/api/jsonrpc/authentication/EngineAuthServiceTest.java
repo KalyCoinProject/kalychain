@@ -1,8 +1,8 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- *  the License. You may obtain a copy of the License at
+ * the License. You may obtain a copy of the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -11,9 +11,7 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.ethereum.api.jsonrpc.authentication;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,7 +32,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.auth.jwt.JWTAuth;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class EngineAuthServiceTest {
 
@@ -72,7 +70,6 @@ public class EngineAuthServiceTest {
           @Override
           public void handle(final Optional<User> event) {
             assertThat(event).isPresent();
-            assertThat(event.get()).isNotNull();
           }
         };
     auth.authenticate(token, authHandler);

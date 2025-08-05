@@ -18,14 +18,22 @@ import org.hyperledger.besu.evm.EVM;
 import org.hyperledger.besu.evm.frame.MessageFrame;
 import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
-import org.apache.tuweni.units.bigints.UInt256;
+import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.bytes.Bytes32;
 
+/** The Not operation. */
 public class NotOperation extends AbstractFixedCostOperation {
 
+  /** The Not operation success result. */
   static final OperationResult notSuccess = new OperationResult(3, null);
 
+  /**
+   * Instantiates a new Not operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public NotOperation(final GasCalculator gasCalculator) {
-    super(0x19, "NOT", 1, 1, 1, gasCalculator, gasCalculator.getVeryLowTierGasCost());
+    super(0x19, "NOT", 1, 1, gasCalculator, gasCalculator.getVeryLowTierGasCost());
   }
 
   @Override
@@ -34,10 +42,16 @@ public class NotOperation extends AbstractFixedCostOperation {
     return staticOperation(frame);
   }
 
+  /**
+   * Performs Not operation.
+   *
+   * @param frame the frame
+   * @return the operation result
+   */
   public static OperationResult staticOperation(final MessageFrame frame) {
-    final UInt256 value = UInt256.fromBytes(frame.popStackItem());
+    final Bytes value = Bytes32.leftPad(frame.popStackItem());
 
-    final UInt256 result = value.not();
+    final Bytes result = value.not();
 
     frame.pushStackItem(result);
 

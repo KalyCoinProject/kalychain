@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -17,6 +17,9 @@ package org.hyperledger.besu.ethereum.eth.sync.snapsync;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.datatypes.Hash;
@@ -25,35 +28,47 @@ import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.AccountRangeDataR
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.BytecodeRequest;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.SnapDataRequest;
 import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.StorageRangeDataRequest;
-import org.hyperledger.besu.ethereum.trie.StoredMerklePatriciaTrie;
-import org.hyperledger.besu.ethereum.worldstate.DataStorageFormat;
-import org.hyperledger.besu.ethereum.worldstate.WorldStateStorage;
+import org.hyperledger.besu.ethereum.eth.sync.snapsync.request.heal.AccountTrieNodeHealingRequest;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.storage.BonsaiWorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.trie.patricia.StoredMerklePatriciaTrie;
+import org.hyperledger.besu.ethereum.worldstate.DataStorageConfiguration;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateKeyValueStorage;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 import org.hyperledger.besu.services.tasks.Task;
 
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class PersistDataStepTest {
 
-  private final WorldStateStorage worldStateStorage =
-      new InMemoryKeyValueStorageProvider().createWorldStateStorage(DataStorageFormat.FOREST);
-  private final SnapSyncState snapSyncState = mock(SnapSyncState.class);
+  private final WorldStateKeyValueStorage worldStateKeyValueStorage =
+      spy(
+          new InMemoryKeyValueStorageProvider()
+              .createWorldStateStorage(DataStorageConfiguration.DEFAULT_CONFIG));
+  private final WorldStateStorageCoordinator worldStateStorageCoordinator =
+      new WorldStateStorageCoordinator(worldStateKeyValueStorage);
+
+  private final SnapSyncProcessState snapSyncState = mock(SnapSyncProcessState.class);
   private final SnapWorldDownloadState downloadState = mock(SnapWorldDownloadState.class);
 
-  private final PersistDataStep persistDataStep =
-      new PersistDataStep(snapSyncState, worldStateStorage, downloadState);
+  private final SnapSyncConfiguration snapSyncConfiguration = mock(SnapSyncConfiguration.class);
 
-  @Before
+  private final PersistDataStep persistDataStep =
+      new PersistDataStep(
+          snapSyncState, worldStateStorageCoordinator, downloadState, snapSyncConfiguration);
+
+  @BeforeEach
   public void setUp() {
-    when(downloadState.getMetricsManager()).thenReturn(mock(SnapsyncMetricsManager.class));
+    when(downloadState.getMetricsManager()).thenReturn(mock(SnapSyncMetricsManager.class));
   }
 
   @Test
   public void shouldPersistDataWhenPresent() {
-    final List<Task<SnapDataRequest>> tasks = TaskGenerator.createAccountRequest(true);
+    final List<Task<SnapDataRequest>> tasks = TaskGenerator.createAccountRequest(true, false);
     final List<Task<SnapDataRequest>> result = persistDataStep.persist(tasks);
 
     assertThat(result).isSameAs(tasks);
@@ -62,13 +77,62 @@ public class PersistDataStepTest {
   }
 
   @Test
+  public void shouldPersistTrieNodeHealDataOnlyOnce() {
+
+    final Bytes stateTrieNode =
+        Bytes.fromHexString(
+            "0xe2a0310e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf602");
+    final Hash hash = Hash.hash(stateTrieNode);
+    final Bytes location = Bytes.of(0x02);
+    final AccountTrieNodeHealingRequest accountTrieNodeDataRequest =
+        SnapDataRequest.createAccountTrieNodeDataRequest(hash, location, Collections.emptySet());
+    accountTrieNodeDataRequest.setData(stateTrieNode);
+
+    final BonsaiWorldStateKeyValueStorage.Updater updater =
+        (BonsaiWorldStateKeyValueStorage.Updater) spy(worldStateKeyValueStorage.updater());
+    when(worldStateKeyValueStorage.updater())
+        .thenReturn(updater)
+        .thenReturn(mock(BonsaiWorldStateKeyValueStorage.Updater.class));
+
+    List<Task<SnapDataRequest>> result =
+        persistDataStep.persist(List.of(new StubTask(accountTrieNodeDataRequest)));
+
+    persistDataStep.persist(List.of(new StubTask(accountTrieNodeDataRequest)));
+
+    verify(updater, times(1)).putAccountStateTrieNode(location, hash, stateTrieNode);
+    assertDataPersisted(result);
+  }
+
+  @Test
   public void shouldSkipPersistDataWhenNoData() {
-    final List<Task<SnapDataRequest>> tasks = TaskGenerator.createAccountRequest(false);
+    final List<Task<SnapDataRequest>> tasks = TaskGenerator.createAccountRequest(false, false);
     final List<Task<SnapDataRequest>> result = persistDataStep.persist(tasks);
 
     assertThat(result).isSameAs(tasks);
-    assertThat(worldStateStorage.getNodeData(Bytes.EMPTY, tasks.get(0).getData().getRootHash()))
+    assertThat(
+            worldStateStorageCoordinator
+                .getStrategy(BonsaiWorldStateKeyValueStorage.class)
+                .getTrieNodeUnsafe(tasks.get(0).getData().getRootHash()))
         .isEmpty();
+  }
+
+  @Test
+  public void shouldHandleNullTaskElementInTrie() {
+    // Create a StorageRangeDataRequest where taskElement might be null or incomplete
+    List<Task<SnapDataRequest>> tasks = TaskGenerator.createAccountRequest(false, true);
+
+    try {
+      List<Task<SnapDataRequest>> result = persistDataStep.persist(tasks);
+
+      // check for proper handling of null taskElement
+      assertThat(result).isSameAs(tasks);
+      assertThat(result)
+          .isNotNull(); // Make sure the result isn't null even with the bad taskElement
+    } catch (NullPointerException e) {
+      fail(
+          "NullPointerException occurred during persist step, taskElement might be null: "
+              + e.getMessage());
+    }
   }
 
   private void assertDataPersisted(final List<Task<SnapDataRequest>> tasks) {
@@ -78,14 +142,17 @@ public class PersistDataStepTest {
             final AccountRangeDataRequest data = (AccountRangeDataRequest) task.getData();
             StoredMerklePatriciaTrie<Bytes, Bytes> trie =
                 new StoredMerklePatriciaTrie<>(
-                    worldStateStorage::getAccountStateTrieNode, data.getRootHash(), b -> b, b -> b);
+                    worldStateStorageCoordinator::getAccountStateTrieNode,
+                    data.getRootHash(),
+                    b -> b,
+                    b -> b);
             data.getAccounts().forEach((key, value) -> assertThat(trie.get(key)).isPresent());
           } else if (task.getData() instanceof StorageRangeDataRequest) {
             final StorageRangeDataRequest data = (StorageRangeDataRequest) task.getData();
             final StoredMerklePatriciaTrie<Bytes, Bytes> trie =
                 new StoredMerklePatriciaTrie<>(
                     (location, hash) ->
-                        worldStateStorage.getAccountStorageTrieNode(
+                        worldStateStorageCoordinator.getAccountStorageTrieNode(
                             Hash.wrap(data.getAccountHash()), location, hash),
                     data.getStorageRoot(),
                     b -> b,
@@ -94,7 +161,17 @@ public class PersistDataStepTest {
           } else if (task.getData() instanceof BytecodeRequest) {
             final BytecodeRequest data = (BytecodeRequest) task.getData();
             assertThat(
-                    worldStateStorage.getCode(data.getCodeHash(), Hash.wrap(data.getAccountHash())))
+                    worldStateStorageCoordinator
+                        .getStrategy(BonsaiWorldStateKeyValueStorage.class)
+                        .getCode(Hash.wrap(data.getCodeHash()), Hash.wrap(data.getAccountHash())))
+                .isPresent();
+          } else if (task.getData() instanceof AccountTrieNodeHealingRequest) {
+            final AccountTrieNodeHealingRequest data =
+                (AccountTrieNodeHealingRequest) task.getData();
+            assertThat(
+                    worldStateStorageCoordinator
+                        .getStrategy(BonsaiWorldStateKeyValueStorage.class)
+                        .getTrieNodeUnsafe(data.getLocation()))
                 .isPresent();
           } else {
             fail("not expected message");

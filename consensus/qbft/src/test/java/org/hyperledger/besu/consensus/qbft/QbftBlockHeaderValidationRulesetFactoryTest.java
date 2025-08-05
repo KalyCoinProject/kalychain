@@ -19,8 +19,9 @@ import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hyperledger.besu.consensus.common.bft.BftContextBuilder.setupContextWithBftExtraDataEncoder;
 
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.crypto.NodeKeyUtils;
+import org.hyperledger.besu.consensus.common.bft.BftContext;
+import org.hyperledger.besu.cryptoservices.NodeKey;
+import org.hyperledger.besu.cryptoservices.NodeKeyUtils;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
@@ -32,20 +33,21 @@ import org.hyperledger.besu.ethereum.mainnet.BlockHeaderValidator;
 import org.hyperledger.besu.ethereum.mainnet.HeaderValidationMode;
 import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class QbftBlockHeaderValidationRulesetFactoryTest {
 
   private ProtocolContext protocolContext(final Collection<Address> validators) {
-    return new ProtocolContext(
-        null,
-        null,
-        setupContextWithBftExtraDataEncoder(
-            QbftContext.class, validators, new QbftExtraDataCodec()));
+    return new ProtocolContext.Builder()
+        .withConsensusContext(
+            setupContextWithBftExtraDataEncoder(
+                BftContext.class, validators, new QbftExtraDataCodec()))
+        .build();
   }
 
   @Test
@@ -90,7 +92,7 @@ public class QbftBlockHeaderValidationRulesetFactoryTest {
 
     final BlockHeaderValidator validator =
         QbftBlockHeaderValidationRulesetFactory.blockHeaderValidator(
-                5, false, Optional.of(FeeMarket.london(1)))
+                Duration.ofSeconds(5), false, Optional.of(FeeMarket.london(1)))
             .build();
 
     assertThat(
@@ -364,7 +366,8 @@ public class QbftBlockHeaderValidationRulesetFactoryTest {
   }
 
   public BlockHeaderValidator getBlockHeaderValidator() {
-    return QbftBlockHeaderValidationRulesetFactory.blockHeaderValidator(5, false, Optional.empty())
+    return QbftBlockHeaderValidationRulesetFactory.blockHeaderValidator(
+            Duration.ofSeconds(5), false, Optional.empty())
         .build();
   }
 }

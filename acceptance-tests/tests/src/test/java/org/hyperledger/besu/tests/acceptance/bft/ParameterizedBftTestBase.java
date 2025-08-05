@@ -14,29 +14,52 @@
  */
 package org.hyperledger.besu.tests.acceptance.bft;
 
+import org.hyperledger.besu.config.JsonUtil;
 import org.hyperledger.besu.tests.acceptance.dsl.AcceptanceTestBase;
+import org.hyperledger.besu.tests.acceptance.dsl.node.BesuNode;
 
-import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Stream;
 
-import org.junit.Ignore;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.params.provider.Arguments;
 
-@RunWith(Parameterized.class)
-@Ignore("This is not a test class, it offers BFT parameterization only.")
+@Disabled("This is not a test class, it offers BFT parameterization only.")
 public abstract class ParameterizedBftTestBase extends AcceptanceTestBase {
+  protected String bftType;
+  protected BftAcceptanceTestParameterization nodeFactory;
 
-  protected final String bftType;
-  protected final BftAcceptanceTestParameterization nodeFactory;
-
-  @Parameters(name = "{0}")
-  public static Collection<Object[]> factoryFunctions() {
+  public static Stream<Arguments> factoryFunctions() {
     return BftAcceptanceTestParameterization.getFactories();
   }
 
-  protected ParameterizedBftTestBase(
-      final String bftType, final BftAcceptanceTestParameterization input) {
+  protected static void updateGenesisConfigToLondon(
+      final BesuNode minerNode, final boolean zeroBaseFeeEnabled) {
+    final Optional<String> genesisConfig =
+        minerNode.getGenesisConfigProvider().create(List.of(minerNode));
+    final ObjectNode genesisConfigNode = JsonUtil.objectNodeFromString(genesisConfig.orElseThrow());
+    final ObjectNode config = (ObjectNode) genesisConfigNode.get("config");
+    config.remove("berlinBlock");
+    config.put("londonBlock", 0);
+    config.put("zeroBaseFee", zeroBaseFeeEnabled);
+    minerNode.setGenesisConfig(genesisConfigNode.toString());
+  }
+
+  static void updateGenesisConfigToShanghai(
+      final BesuNode minerNode, final boolean zeroBaseFeeEnabled) {
+    final Optional<String> genesisConfig =
+        minerNode.getGenesisConfigProvider().create(List.of(minerNode));
+    final ObjectNode genesisConfigNode = JsonUtil.objectNodeFromString(genesisConfig.orElseThrow());
+    final ObjectNode config = (ObjectNode) genesisConfigNode.get("config");
+    config.remove("berlinBlock");
+    config.put("shanghaiTime", 100);
+    config.put("zeroBaseFee", zeroBaseFeeEnabled);
+    minerNode.setGenesisConfig(genesisConfigNode.toString());
+  }
+
+  protected void setUp(final String bftType, final BftAcceptanceTestParameterization input) {
     this.bftType = bftType;
     this.nodeFactory = input;
   }

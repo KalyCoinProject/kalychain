@@ -19,9 +19,11 @@ import org.hyperledger.besu.ethereum.p2p.peers.Peer;
 import org.hyperledger.besu.ethereum.p2p.rlpx.ConnectCallback;
 import org.hyperledger.besu.ethereum.p2p.rlpx.DisconnectCallback;
 import org.hyperledger.besu.ethereum.p2p.rlpx.MessageCallback;
+import org.hyperledger.besu.ethereum.p2p.rlpx.RlpxAgent;
 import org.hyperledger.besu.ethereum.p2p.rlpx.connections.PeerConnection;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Capability;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.Message;
+import org.hyperledger.besu.ethereum.p2p.rlpx.wire.ShouldConnectCallback;
 import org.hyperledger.besu.plugin.data.EnodeURL;
 
 import java.io.Closeable;
@@ -83,7 +85,9 @@ public interface P2PNetwork extends Closeable {
    *
    * @param callback The callback to invoke when a new connection is established
    */
-  void subscribeConnect(ConnectCallback callback);
+  void subscribeConnect(final ConnectCallback callback);
+
+  void subscribeConnectRequest(final ShouldConnectCallback callback);
 
   /**
    * Subscribe a {@link Consumer} to all incoming new Peer disconnect events.
@@ -108,7 +112,7 @@ public interface P2PNetwork extends Closeable {
    * disconnected even if it is not in the maintained peer list. See {@link
    * #addMaintainedConnectionPeer(Peer)} for details on the maintained peer list.
    *
-   * @param peer The peer to which connections are not longer required
+   * @param peer The peer to which connections are no longer required
    * @return boolean representing whether the peer was removed from the maintained peer list
    */
   boolean removeMaintainedConnectionPeer(final Peer peer);
@@ -141,6 +145,13 @@ public interface P2PNetwork extends Closeable {
   boolean isDiscoveryEnabled();
 
   /**
+   * Is discovery stopped?
+   *
+   * @return Return true if peer discovery is stopped.
+   */
+  boolean isStopped();
+
+  /**
    * Returns the EnodeURL used to identify this peer in the network.
    *
    * @return the enodeURL associated with this node if P2P has been enabled. Returns empty
@@ -149,4 +160,9 @@ public interface P2PNetwork extends Closeable {
   Optional<EnodeURL> getLocalEnode();
 
   void updateNodeRecord();
+
+  default RlpxAgent getRlpxAgent() {
+    return null;
+  }
+  ;
 }

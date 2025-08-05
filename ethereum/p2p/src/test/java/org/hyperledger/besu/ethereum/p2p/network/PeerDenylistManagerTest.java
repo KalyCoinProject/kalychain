@@ -29,7 +29,7 @@ import org.hyperledger.besu.ethereum.p2p.rlpx.wire.PeerInfo;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.messages.DisconnectMessage.DisconnectReason;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class PeerDenylistManagerTest {
   private final Peer localNode = generatePeer();
@@ -59,6 +59,16 @@ public class PeerDenylistManagerTest {
 
     checkPermissions(denylist, peer.getPeer(), true);
     peerDenylistManager.onDisconnect(peer, DisconnectReason.BREACH_OF_PROTOCOL, false);
+    checkPermissions(denylist, peer.getPeer(), false);
+  }
+
+  @Test
+  public void denylistPeerForBadBehaviorWithDifferentMessage() {
+    final PeerConnection peer = generatePeerConnection();
+
+    checkPermissions(denylist, peer.getPeer(), true);
+    peerDenylistManager.onDisconnect(
+        peer, DisconnectReason.BREACH_OF_PROTOCOL_INVALID_MESSAGE_CODE_FOR_PROTOCOL, false);
     checkPermissions(denylist, peer.getPeer(), false);
   }
 
@@ -99,6 +109,15 @@ public class PeerDenylistManagerTest {
     peerDenylistManager.onDisconnect(
         peer, DisconnectReason.INCOMPATIBLE_P2P_PROTOCOL_VERSION, true);
     checkPermissions(denylist, peer.getPeer(), false);
+  }
+
+  @Test
+  public void disconnectReasonWithEmptyValue_doesNotAddToDenylist() {
+    final PeerConnection peer = generatePeerConnection();
+
+    checkPermissions(denylist, peer.getPeer(), true);
+    peerDenylistManager.onDisconnect(peer, DisconnectReason.UNKNOWN, false);
+    checkPermissions(denylist, peer.getPeer(), true);
   }
 
   private void checkPermissions(

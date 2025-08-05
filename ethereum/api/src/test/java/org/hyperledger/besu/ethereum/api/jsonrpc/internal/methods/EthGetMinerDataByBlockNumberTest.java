@@ -12,7 +12,6 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,13 +41,13 @@ import java.util.Collections;
 import java.util.Optional;
 
 import org.assertj.core.util.Arrays;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class EthGetMinerDataByBlockNumberTest {
   @Mock private BlockchainQueries blockchainQueries;
   @Mock private ProtocolSchedule protocolSchedule;
@@ -58,7 +57,7 @@ public class EthGetMinerDataByBlockNumberTest {
   private final String ETH_METHOD = "eth_getMinerDataByBlockNumber";
   private final BlockHeaderTestFixture blockHeaderTestFixture = new BlockHeaderTestFixture();
 
-  @Before
+  @BeforeEach
   public void before() {
     this.method = new EthGetMinerDataByBlockNumber(blockchainQueries, protocolSchedule);
   }
@@ -76,7 +75,7 @@ public class EthGetMinerDataByBlockNumberTest {
             header, Collections.emptyList(), Collections.emptyList(), Difficulty.of(100L), 5);
 
     when(blockchainQueries.blockByNumber(anyLong())).thenReturn(Optional.of(blockWithMetadata));
-    when(protocolSchedule.getByBlockNumber(header.getNumber())).thenReturn(protocolSpec);
+    when(protocolSchedule.getByBlockHeader(header)).thenReturn(protocolSpec);
     when(protocolSpec.getBlockReward()).thenReturn(Wei.fromEth(2));
     when(blockchainQueries.getBlockchain()).thenReturn(blockChain);
 
@@ -104,7 +103,7 @@ public class EthGetMinerDataByBlockNumberTest {
     JsonRpcRequestContext requestContext = new JsonRpcRequestContext(request);
     assertThatThrownBy(() -> method.response(requestContext))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessage("Missing required json rpc parameter at index 0");
+        .hasMessage("Invalid block parameter (index 0)");
 
     verifyNoMoreInteractions(blockchainQueries);
   }
@@ -115,7 +114,7 @@ public class EthGetMinerDataByBlockNumberTest {
     JsonRpcRequestContext requestContext = new JsonRpcRequestContext(request);
     assertThatThrownBy(() -> method.response(requestContext))
         .isInstanceOf(InvalidJsonRpcParameters.class)
-        .hasMessageContaining("Invalid json rpc parameter at index 0");
+        .hasMessageContaining("Invalid block parameter");
 
     verifyNoMoreInteractions(blockchainQueries);
   }

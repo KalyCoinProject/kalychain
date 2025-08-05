@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -28,6 +28,14 @@ public class RunnableTimedCounter implements Counter {
   private final AtomicLong stepCounter;
   private volatile long nextExecutionAtMillis;
 
+  /**
+   * Instantiates a new Runnable timed counter.
+   *
+   * @param backedCounter the backed counter
+   * @param task the task
+   * @param interval the interval
+   * @param unit the unit
+   */
   public RunnableTimedCounter(
       final Counter backedCounter, final Runnable task, final long interval, final TimeUnit unit) {
     this.backedCounter = backedCounter;
@@ -63,6 +71,11 @@ public class RunnableTimedCounter implements Counter {
     }
   }
 
+  /**
+   * Get Step Counter.
+   *
+   * @return the long
+   */
   public long get() {
     return stepCounter.get();
   }

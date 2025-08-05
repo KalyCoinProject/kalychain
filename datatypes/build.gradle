@@ -16,32 +16,31 @@
 apply plugin: 'java-library'
 
 jar {
-  archiveBaseName = 'besu-datatypes'
+  archiveBaseName = calculateArtifactId(project)
   manifest {
     attributes(
       'Specification-Title': archiveBaseName,
       'Specification-Version': project.version,
       'Implementation-Title': archiveBaseName,
       'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash,
       'Automatic-Module-Name': 'org.hyperledger.besu.datatypes'
       )
   }
 }
 
 dependencies {
-  api project(':plugin-api')
-
   compileOnly 'com.fasterxml.jackson.core:jackson-databind'
+  compileOnly 'io.vertx:vertx-core'
 
-  implementation project(':crypto')
+  implementation project(':crypto:algorithms')
   implementation project(':ethereum:rlp')
   implementation 'com.google.guava:guava'
+  implementation 'io.consensys.tuweni:tuweni-bytes'
+  implementation 'io.consensys.tuweni:tuweni-units'
 
-  testImplementation 'junit:junit'
   testImplementation 'org.assertj:assertj-core'
   testImplementation 'org.junit.jupiter:junit-jupiter'
-
-  testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
 }
 
 configurations { testArtifacts }
@@ -50,7 +49,6 @@ publishing {
   publications {
     mavenJava(MavenPublication) {
       groupId 'org.hyperledger.besu'
-      artifactId 'besu-datatypes'
       pom {
         name = 'Besu Datatypes'
         description = 'Cross-module datatypes'

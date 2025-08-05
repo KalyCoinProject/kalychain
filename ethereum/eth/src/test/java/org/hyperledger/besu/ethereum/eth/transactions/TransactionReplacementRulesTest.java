@@ -22,119 +22,96 @@ import static org.mockito.Mockito.when;
 
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
-import org.hyperledger.besu.ethereum.core.Transaction;
-import org.hyperledger.besu.plugin.data.TransactionType;
 import org.hyperledger.besu.util.number.Percentage;
 
-import java.math.BigInteger;
 import java.util.Collection;
 import java.util.Optional;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-@RunWith(Parameterized.class)
-public class TransactionReplacementRulesTest {
+public class TransactionReplacementRulesTest extends AbstractTransactionReplacementTest {
 
-  @Parameterized.Parameters
   public static Collection<Object[]> data() {
     return asList(
         new Object[][] {
           // TransactionReplacementByGasPriceRule
           //   basefee absent
-          {frontierTx(5L), frontierTx(6L), empty(), 0, true},
-          {frontierTx(5L), frontierTx(5L), empty(), 0, false},
-          {frontierTx(5L), frontierTx(4L), empty(), 0, false},
-          {frontierTx(100L), frontierTx(105L), empty(), 10, false},
-          {frontierTx(100L), frontierTx(110L), empty(), 10, false},
-          {frontierTx(100L), frontierTx(111L), empty(), 10, true},
+          {frontierTx(5L), frontierTx(6L), empty(), 0, 100, true},
+          {frontierTx(5L), frontierTx(5L), empty(), 0, 100, true},
+          {frontierTx(5L), frontierTx(4L), empty(), 0, 100, false},
+          {frontierTx(100L), frontierTx(105L), empty(), 10, 100, false},
+          {frontierTx(100L), frontierTx(110L), empty(), 10, 100, true},
+          {frontierTx(100L), frontierTx(111L), empty(), 10, 100, true},
           //   basefee present
-          {frontierTx(5L), frontierTx(6L), Optional.of(Wei.of(3L)), 0, true},
-          {frontierTx(5L), frontierTx(5L), Optional.of(Wei.of(3L)), 0, false},
-          {frontierTx(5L), frontierTx(4L), Optional.of(Wei.of(3L)), 0, false},
-          {frontierTx(100L), frontierTx(105L), Optional.of(Wei.of(3L)), 10, false},
-          {frontierTx(100L), frontierTx(110L), Optional.of(Wei.of(3L)), 10, false},
-          {frontierTx(100L), frontierTx(111L), Optional.of(Wei.of(3L)), 10, true},
-
+          {frontierTx(5L), frontierTx(6L), Optional.of(Wei.of(3L)), 0, 100, true},
+          {frontierTx(5L), frontierTx(5L), Optional.of(Wei.of(3L)), 0, 100, true},
+          {frontierTx(5L), frontierTx(4L), Optional.of(Wei.of(3L)), 0, 100, false},
+          {frontierTx(100L), frontierTx(105L), Optional.of(Wei.of(3L)), 10, 100, false},
+          {frontierTx(100L), frontierTx(110L), Optional.of(Wei.of(3L)), 10, 100, true},
+          {frontierTx(100L), frontierTx(111L), Optional.of(Wei.of(3L)), 10, 100, true},
           // TransactionReplacementByFeeMarketRule
           //  eip1559 replacing frontier
-          {frontierTx(5L), eip1559Tx(3L, 6L), Optional.of(Wei.of(1L)), 0, false},
-          {frontierTx(5L), eip1559Tx(3L, 5L), Optional.of(Wei.of(3L)), 0, false},
-          {frontierTx(5L), eip1559Tx(3L, 6L), Optional.of(Wei.of(3L)), 0, true},
+          {frontierTx(5L), eip1559Tx(3L, 6L), Optional.of(Wei.of(1L)), 0, 100, false},
+          {frontierTx(5L), eip1559Tx(3L, 5L), Optional.of(Wei.of(3L)), 0, 100, true},
+          {frontierTx(5L), eip1559Tx(3L, 6L), Optional.of(Wei.of(3L)), 0, 100, true},
           //  frontier replacing 1559
-          {eip1559Tx(3L, 8L), frontierTx(7L), Optional.of(Wei.of(4L)), 0, false},
-          {eip1559Tx(3L, 8L), frontierTx(8L), Optional.of(Wei.of(4L)), 0, true},
+          {eip1559Tx(3L, 8L), frontierTx(6L), Optional.of(Wei.of(4L)), 0, 100, false},
+          {eip1559Tx(3L, 8L), frontierTx(7L), Optional.of(Wei.of(4L)), 0, 100, true},
+          {eip1559Tx(3L, 8L), frontierTx(8L), Optional.of(Wei.of(4L)), 0, 100, true},
           //  eip1559 replacing eip1559
-          {eip1559Tx(3L, 6L), eip1559Tx(3L, 6L), Optional.of(Wei.of(3L)), 0, false},
-          {eip1559Tx(3L, 6L), eip1559Tx(3L, 7L), Optional.of(Wei.of(3L)), 0, false},
-          {eip1559Tx(3L, 6L), eip1559Tx(3L, 7L), Optional.of(Wei.of(4L)), 0, true},
-          {eip1559Tx(10L, 200L), eip1559Tx(10L, 200L), Optional.of(Wei.of(90L)), 10, false},
-          {eip1559Tx(10L, 200L), eip1559Tx(15L, 200L), Optional.of(Wei.of(90L)), 10, false},
-          {eip1559Tx(10L, 200L), eip1559Tx(21L, 200L), Optional.of(Wei.of(90L)), 10, true},
+          {eip1559Tx(3L, 6L), eip1559Tx(3L, 6L), Optional.of(Wei.of(3L)), 0, 100, true},
+          {eip1559Tx(3L, 6L), eip1559Tx(3L, 7L), Optional.of(Wei.of(3L)), 0, 100, true},
+          {eip1559Tx(3L, 6L), eip1559Tx(3L, 7L), Optional.of(Wei.of(4L)), 0, 100, true},
+          {eip1559Tx(10L, 200L), eip1559Tx(10L, 200L), Optional.of(Wei.of(90L)), 10, 100, false},
+          {eip1559Tx(10L, 200L), eip1559Tx(15L, 200L), Optional.of(Wei.of(90L)), 10, 100, false},
+          {eip1559Tx(10L, 200L), eip1559Tx(21L, 200L), Optional.of(Wei.of(90L)), 10, 100, true},
           //  pathological, priority fee > max fee
-          {eip1559Tx(8L, 6L), eip1559Tx(3L, 7L), Optional.of(Wei.of(3L)), 0, false},
-          {eip1559Tx(8L, 6L), eip1559Tx(3L, 7L), Optional.of(Wei.of(4L)), 0, true},
+          {eip1559Tx(8L, 6L), eip1559Tx(3L, 7L), Optional.of(Wei.of(3L)), 0, 100, true},
+          {eip1559Tx(8L, 6L), eip1559Tx(3L, 7L), Optional.of(Wei.of(4L)), 0, 100, true},
           //  pathological, eip1559 without basefee
-          {eip1559Tx(8L, 6L), eip1559Tx(3L, 7L), Optional.empty(), 0, false},
-          {eip1559Tx(8L, 6L), eip1559Tx(3L, 7L), Optional.empty(), 0, false},
+          {eip1559Tx(8L, 6L), eip1559Tx(3L, 7L), Optional.empty(), 0, 100, false},
+          {eip1559Tx(8L, 6L), eip1559Tx(3L, 7L), Optional.empty(), 0, 100, false},
+          // zero base fee market
+          {frontierTx(0L), frontierTx(0L), Optional.of(Wei.ZERO), 0, 100, true},
+          {eip1559Tx(0L, 0L), frontierTx(0L), Optional.of(Wei.ZERO), 0, 100, true},
+          {frontierTx(0L), eip1559Tx(0L, 0L), Optional.of(Wei.ZERO), 0, 100, true},
+          {eip1559Tx(0L, 0L), eip1559Tx(0L, 0L), Optional.of(Wei.ZERO), 0, 100, true},
+          // blob tx
+          {blobTx(3L, 6L, 1L), blobTx(3L, 6L, 1L), Optional.of(Wei.of(3L)), 0, 0, true},
+          {blobTx(3L, 6L, 1L), blobTx(3L, 6L, 2L), Optional.of(Wei.of(3L)), 0, 100, true},
+          {blobTx(10L, 200L, 1L), blobTx(10L, 200L, 1L), Optional.of(Wei.of(90L)), 10, 100, false},
+          {blobTx(10L, 200L, 2L), blobTx(15L, 200L, 3L), Optional.of(Wei.of(90L)), 10, 100, false},
+          // blob tx must be replaced by blob tx only
+          {blobTx(3L, 6L, 1L), eip1559Tx(3L, 6L), Optional.of(Wei.of(3L)), 0, 0, false},
+          {eip1559Tx(3L, 6L), blobTx(3L, 6L, 1L), Optional.of(Wei.of(3L)), 0, 0, false},
         });
   }
 
-  private final PendingTransaction oldTx;
-  private final PendingTransaction newTx;
-  private final Optional<Wei> baseFee;
-  private final int priceBump;
-  private final boolean expected;
-
-  public TransactionReplacementRulesTest(
+  @ParameterizedTest
+  @MethodSource("data")
+  public void shouldReplace(
       final PendingTransaction oldTx,
       final PendingTransaction newTx,
       final Optional<Wei> baseFee,
       final int priceBump,
+      final int blobPriceBump,
       final boolean expected) {
-    this.oldTx = oldTx;
-    this.newTx = newTx;
-    this.baseFee = baseFee;
-    this.priceBump = priceBump;
-    this.expected = expected;
-  }
-
-  @Test
-  public void shouldReplace() {
     BlockHeader mockHeader = mock(BlockHeader.class);
     when(mockHeader.getBaseFee()).thenReturn(baseFee);
 
     assertThat(
-            new TransactionPoolReplacementHandler(Percentage.fromInt(priceBump))
+            new TransactionPoolReplacementHandler(
+                    Percentage.fromInt(priceBump), Percentage.fromInt(blobPriceBump))
                 .shouldReplace(oldTx, newTx, mockHeader))
         .isEqualTo(expected);
   }
 
-  private static PendingTransaction frontierTx(final long price) {
-    final PendingTransaction pendingTransaction = mock(PendingTransaction.class);
-    final Transaction transaction =
-        Transaction.builder()
-            .chainId(BigInteger.ZERO)
-            .type(TransactionType.FRONTIER)
-            .gasPrice(Wei.of(price))
-            .build();
-    when(pendingTransaction.getTransaction()).thenReturn(transaction);
-    when(pendingTransaction.getGasPrice()).thenReturn(Wei.of(price));
-    return pendingTransaction;
-  }
-
-  private static PendingTransaction eip1559Tx(
-      final long maxPriorityFeePerGas, final long maxFeePerGas) {
-    final PendingTransaction pendingTransaction = mock(PendingTransaction.class);
-    final Transaction transaction =
-        Transaction.builder()
-            .chainId(BigInteger.ZERO)
-            .type(TransactionType.EIP1559)
-            .maxPriorityFeePerGas(Wei.of(maxPriorityFeePerGas))
-            .maxFeePerGas(Wei.of(maxFeePerGas))
-            .build();
-    when(pendingTransaction.getTransaction()).thenReturn(transaction);
-    return pendingTransaction;
+  @Test
+  void dryRunDetector() {
+    assertThat(true)
+        .withFailMessage("This test is here so gradle --dry-run executes this class")
+        .isTrue();
   }
 }

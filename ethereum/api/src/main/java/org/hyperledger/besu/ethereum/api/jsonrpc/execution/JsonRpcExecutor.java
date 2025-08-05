@@ -14,17 +14,17 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.execution;
 
-import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError.INVALID_REQUEST;
+import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType.INVALID_REQUEST;
 
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequest;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestId;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
-import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcError;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcNoResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 
 import java.util.Map;
 import java.util.Optional;
@@ -81,7 +81,7 @@ public class JsonRpcExecutor {
       } else {
         span = Span.getInvalid();
       }
-      final Optional<JsonRpcError> unavailableMethod = validateMethodAvailability(requestBody);
+      final Optional<RpcErrorType> unavailableMethod = validateMethodAvailability(requestBody);
       if (unavailableMethod.isPresent()) {
         span.setStatus(StatusCode.ERROR, "method unavailable");
         return new JsonRpcErrorResponse(id, unavailableMethod.get());
@@ -91,32 +91,32 @@ public class JsonRpcExecutor {
 
       return rpcProcessor.process(
           id, method, span, new JsonRpcRequestContext(requestBody, optionalUser, alive));
-    } catch (IllegalArgumentException e) {
+    } catch (final IllegalArgumentException e) {
       try {
         final Integer id = jsonRpcRequest.getInteger("id", null);
         return new JsonRpcErrorResponse(id, INVALID_REQUEST);
-      } catch (ClassCastException idNotIntegerException) {
+      } catch (final ClassCastException idNotIntegerException) {
         return new JsonRpcErrorResponse(null, INVALID_REQUEST);
       }
     }
   }
 
-  private Optional<JsonRpcError> validateMethodAvailability(final JsonRpcRequest request) {
+  private Optional<RpcErrorType> validateMethodAvailability(final JsonRpcRequest request) {
     final String name = request.getMethod();
 
-    if (LOG.isDebugEnabled()) {
+    if (LOG.isTraceEnabled()) {
       final JsonArray params = JsonObject.mapFrom(request).getJsonArray("params");
-      LOG.debug("JSON-RPC request -> {} {}", name, params);
+      LOG.trace("JSON-RPC request -> {} {}", name, params);
     }
 
     final JsonRpcMethod method = rpcMethods.get(name);
 
     if (method == null) {
       if (!RpcMethod.rpcMethodExists(name)) {
-        return Optional.of(JsonRpcError.METHOD_NOT_FOUND);
+        return Optional.of(RpcErrorType.METHOD_NOT_FOUND);
       }
       if (!rpcMethods.containsKey(name)) {
-        return Optional.of(JsonRpcError.METHOD_NOT_ENABLED);
+        return Optional.of(RpcErrorType.METHOD_NOT_ENABLED);
       }
     }
 

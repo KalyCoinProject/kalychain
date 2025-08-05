@@ -22,52 +22,58 @@ import org.hyperledger.besu.consensus.clique.CliqueContext;
 import org.hyperledger.besu.consensus.clique.CliqueExtraData;
 import org.hyperledger.besu.consensus.common.EpochManager;
 import org.hyperledger.besu.consensus.common.validator.ValidatorVote;
-import org.hyperledger.besu.crypto.NodeKey;
-import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.cryptoservices.NodeKey;
 import org.hyperledger.besu.datatypes.Hash;
-import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.blockcreation.AbstractBlockCreator;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderBuilder;
 import org.hyperledger.besu.ethereum.core.BlockHeaderFunctions;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
 import org.hyperledger.besu.ethereum.core.SealableBlockHeader;
 import org.hyperledger.besu.ethereum.core.Util;
-import org.hyperledger.besu.ethereum.eth.transactions.sorter.AbstractPendingTransactionsSorter;
+import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
+import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ScheduleBasedBlockHeaderFunctions;
 
 import java.util.Optional;
-import java.util.function.Supplier;
 
+/** The Clique block creator. */
 public class CliqueBlockCreator extends AbstractBlockCreator {
 
   private final NodeKey nodeKey;
   private final EpochManager epochManager;
 
+  /**
+   * Instantiates a new Clique block creator.
+   *
+   * @param miningConfiguration the mining parameters
+   * @param extraDataCalculator the extra data calculator
+   * @param transactionPool the pending transactions
+   * @param protocolContext the protocol context
+   * @param protocolSchedule the protocol schedule
+   * @param nodeKey the node key
+   * @param epochManager the epoch manager
+   * @param ethScheduler the scheduler for asynchronous block creation tasks
+   */
   public CliqueBlockCreator(
-      final Address coinbase,
-      final Supplier<Optional<Long>> targetGasLimitSupplier,
+      final MiningConfiguration miningConfiguration,
       final ExtraDataCalculator extraDataCalculator,
-      final AbstractPendingTransactionsSorter pendingTransactions,
+      final TransactionPool transactionPool,
       final ProtocolContext protocolContext,
       final ProtocolSchedule protocolSchedule,
       final NodeKey nodeKey,
-      final Wei minTransactionGasPrice,
-      final Double minBlockOccupancyRatio,
-      final BlockHeader parentHeader,
-      final EpochManager epochManager) {
+      final EpochManager epochManager,
+      final EthScheduler ethScheduler) {
     super(
-        coinbase,
-        __ -> Util.publicKeyToAddress(nodeKey.getPublicKey()),
-        targetGasLimitSupplier,
+        miningConfiguration,
+        (__, ___) -> Util.publicKeyToAddress(nodeKey.getPublicKey()),
         extraDataCalculator,
-        pendingTransactions,
+        transactionPool,
         protocolContext,
         protocolSchedule,
-        minTransactionGasPrice,
-        minBlockOccupancyRatio,
-        parentHeader);
+        ethScheduler);
     this.nodeKey = nodeKey;
     this.epochManager = epochManager;
   }
@@ -103,6 +109,8 @@ public class CliqueBlockCreator extends AbstractBlockCreator {
 
   private Optional<ValidatorVote> determineCliqueVote(
       final SealableBlockHeader sealableBlockHeader) {
+    BlockHeader parentHeader =
+        protocolContext.getBlockchain().getBlockHeader(sealableBlockHeader.getParentHash()).get();
     if (epochManager.isEpochBlock(sealableBlockHeader.getNumber())) {
       return Optional.empty();
     } else {

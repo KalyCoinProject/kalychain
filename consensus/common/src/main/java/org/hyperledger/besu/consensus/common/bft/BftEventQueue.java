@@ -15,10 +15,12 @@
 package org.hyperledger.besu.consensus.common.bft;
 
 import org.hyperledger.besu.consensus.common.bft.events.BftEvent;
+import org.hyperledger.besu.consensus.common.bft.events.BftEvents;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nullable;
 
 import org.slf4j.Logger;
@@ -30,28 +32,63 @@ public class BftEventQueue {
 
   private static final Logger LOG = LoggerFactory.getLogger(BftEventQueue.class);
   private final int messageQueueLimit;
+  private final AtomicBoolean started = new AtomicBoolean(false);
 
+  /**
+   * Instantiates a new Bft event queue.
+   *
+   * @param messageQueueLimit the message queue limit
+   */
   public BftEventQueue(final int messageQueueLimit) {
     this.messageQueueLimit = messageQueueLimit;
   }
 
+  /** Start the event queue. Until it has been started no events will be queued for processing. */
+  public void start() {
+    started.set(true);
+  }
+
+  /** Stop the event queue. No events will be queued for processing until it is started. */
+  public void stop() {
+    started.set(false);
+  }
+
+  private boolean isStarted() {
+    return started.get();
+  }
+
   /**
-   * Put an Bft event onto the queue
+   * Put an Bft event onto the queue. Note: the event queue must be started before an event will be
+   * queued for processing. Events received before the queue is started will be discarded.
    *
    * @param event Provided bft event
    */
   public void add(final BftEvent event) {
-    if (queue.size() > messageQueueLimit) {
-      LOG.warn("Queue size exceeded trying to add new bft event {}", event);
-    } else {
-      queue.add(event);
+
+    // Don't queue events other than block timer expiry, until we know we can process them
+    if (isStarted() || event.getType() == BftEvents.Type.BLOCK_TIMER_EXPIRY) {
+      if (queue.size() > messageQueueLimit) {
+        LOG.warn("Queue size exceeded trying to add new bft event {}", event);
+      } else {
+        queue.add(event);
+      }
     }
   }
 
+  /**
+   * Size of queue.
+   *
+   * @return the int
+   */
   public int size() {
     return queue.size();
   }
 
+  /**
+   * Is empty.
+   *
+   * @return the boolean
+   */
   public boolean isEmpty() {
     return queue.isEmpty();
   }

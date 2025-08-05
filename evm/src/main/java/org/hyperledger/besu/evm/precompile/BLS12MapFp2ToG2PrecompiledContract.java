@@ -11,27 +11,37 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.evm.precompile;
 
-import org.hyperledger.besu.nativelib.bls12_381.LibEthPairings;
+import org.hyperledger.besu.nativelib.gnark.LibGnarkEIP2537;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.apache.tuweni.bytes.Bytes;
 
+/** The BLS12MapFp2ToG2 precompiled contract. */
 public class BLS12MapFp2ToG2PrecompiledContract extends AbstractBLS12PrecompiledContract {
 
   private static final int PARAMETER_LENGTH = 128;
+  private static final Cache<Integer, PrecompileInputResultTuple> mapfp2g2Cache =
+      Caffeine.newBuilder().maximumSize(1000).build();
 
-  public BLS12MapFp2ToG2PrecompiledContract() {
+  /** Instantiates a new BLS12MapFp2ToG2 precompiled contract. */
+  BLS12MapFp2ToG2PrecompiledContract() {
     super(
-        "BLS12_MAP_FIELD_TO_CURVE",
-        LibEthPairings.BLS12_MAP_FP2_TO_G2_OPERATION_RAW_VALUE,
+        "BLS12_MAP_FP2_TO_G2",
+        LibGnarkEIP2537.BLS12_MAP_FP2_TO_G2_OPERATION_SHIM_VALUE,
         PARAMETER_LENGTH);
   }
 
   @Override
   public long gasRequirement(final Bytes input) {
-    return 110_000L;
+    return 23_800L;
+  }
+
+  @Override
+  protected Cache<Integer, PrecompileInputResultTuple> getCache() {
+    return mapfp2g2Cache;
   }
 }

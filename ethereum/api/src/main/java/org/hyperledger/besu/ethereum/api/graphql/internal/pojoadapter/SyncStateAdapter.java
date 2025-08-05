@@ -16,25 +16,53 @@ package org.hyperledger.besu.ethereum.api.graphql.internal.pojoadapter;
 
 import org.hyperledger.besu.plugin.data.SyncStatus;
 
-import java.util.Optional;
-
+/**
+ * The SyncStateAdapter class provides methods to retrieve the synchronization status of the
+ * blockchain.
+ *
+ * <p>This class is used to adapt a SyncStatus object into a format that can be used by GraphQL. The
+ * SyncStatus object is provided at construction time.
+ *
+ * <p>The class provides methods to retrieve the starting block, current block, and highest block of
+ * the synchronization status.
+ */
 @SuppressWarnings("unused") // reflected by GraphQL
 public class SyncStateAdapter {
   private final SyncStatus syncStatus;
 
+  /**
+   * Constructs a new SyncStateAdapter object.
+   *
+   * @param syncStatus the SyncStatus object to adapt.
+   */
   public SyncStateAdapter(final SyncStatus syncStatus) {
     this.syncStatus = syncStatus;
   }
 
-  public Optional<Long> getStartingBlock() {
-    return Optional.of(syncStatus.getStartingBlock());
+  /**
+   * Returns the starting block of the synchronization status.
+   *
+   * @return the starting block of the synchronization status.
+   */
+  public Long getStartingBlock() {
+    return syncStatus.getStartingBlock();
   }
 
-  public Optional<Long> getCurrentBlock() {
-    return Optional.of(syncStatus.getCurrentBlock());
+  /**
+   * Returns the current block of the synchronization status.
+   *
+   * @return the current block of the synchronization status.
+   */
+  public Long getCurrentBlock() {
+    return syncStatus.getCurrentBlock();
   }
 
-  public Optional<Long> getHighestBlock() {
-    return Optional.of(syncStatus.getHighestBlock());
+  /**
+   * Returns the highest block of the synchronization status.
+   *
+   * @return the highest block of the synchronization status.
+   */
+  public Long getHighestBlock() {
+    return syncStatus.getHighestBlock();
   }
 }

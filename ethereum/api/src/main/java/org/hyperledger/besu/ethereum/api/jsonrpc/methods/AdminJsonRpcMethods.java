@@ -28,12 +28,15 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.PluginsReloadConfiguration;
 import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.eth.manager.EthPeers;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.p2p.network.P2PNetwork;
+import org.hyperledger.besu.ethereum.p2p.peers.EnodeDnsConfiguration;
 import org.hyperledger.besu.nat.NatService;
 import org.hyperledger.besu.plugin.BesuPlugin;
 
 import java.math.BigInteger;
 import java.util.Map;
+import java.util.Optional;
 
 public class AdminJsonRpcMethods extends ApiGroupJsonRpcMethods {
 
@@ -45,6 +48,8 @@ public class AdminJsonRpcMethods extends ApiGroupJsonRpcMethods {
   private final NatService natService;
   private final Map<String, BesuPlugin> namedPlugins;
   private final EthPeers ethPeers;
+  private final Optional<EnodeDnsConfiguration> enodeDnsConfiguration;
+  private final ProtocolSchedule protocolSchedule;
 
   public AdminJsonRpcMethods(
       final String clientVersion,
@@ -54,7 +59,9 @@ public class AdminJsonRpcMethods extends ApiGroupJsonRpcMethods {
       final BlockchainQueries blockchainQueries,
       final Map<String, BesuPlugin> namedPlugins,
       final NatService natService,
-      final EthPeers ethPeers) {
+      final EthPeers ethPeers,
+      final Optional<EnodeDnsConfiguration> enodeDnsConfiguration,
+      final ProtocolSchedule protocolSchedule) {
     this.clientVersion = clientVersion;
     this.networkId = networkId;
     this.genesisConfigOptions = genesisConfigOptions;
@@ -63,6 +70,8 @@ public class AdminJsonRpcMethods extends ApiGroupJsonRpcMethods {
     this.namedPlugins = namedPlugins;
     this.natService = natService;
     this.ethPeers = ethPeers;
+    this.enodeDnsConfiguration = enodeDnsConfiguration;
+    this.protocolSchedule = protocolSchedule;
   }
 
   @Override
@@ -73,15 +82,16 @@ public class AdminJsonRpcMethods extends ApiGroupJsonRpcMethods {
   @Override
   protected Map<String, JsonRpcMethod> create() {
     return mapOf(
-        new AdminAddPeer(p2pNetwork),
-        new AdminRemovePeer(p2pNetwork),
+        new AdminAddPeer(p2pNetwork, enodeDnsConfiguration),
+        new AdminRemovePeer(p2pNetwork, enodeDnsConfiguration),
         new AdminNodeInfo(
             clientVersion,
             networkId,
             genesisConfigOptions,
             p2pNetwork,
             blockchainQueries,
-            natService),
+            natService,
+            protocolSchedule),
         new AdminPeers(ethPeers),
         new AdminChangeLogLevel(),
         new AdminGenerateLogBloomCache(blockchainQueries),

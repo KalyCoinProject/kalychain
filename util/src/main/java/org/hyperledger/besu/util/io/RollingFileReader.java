@@ -11,9 +11,7 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
-
 package org.hyperledger.besu.util.io;
 
 import java.io.Closeable;
@@ -25,6 +23,7 @@ import java.util.function.BiFunction;
 
 import org.xerial.snappy.Snappy;
 
+/** The Rolling file reader. */
 public class RollingFileReader implements Closeable {
   private final BiFunction<Integer, Boolean, Path> filenameGenerator;
   private final boolean compressed;
@@ -34,6 +33,13 @@ public class RollingFileReader implements Closeable {
   private final RandomAccessFile index;
   private boolean done = false;
 
+  /**
+   * Instantiates a new Rolling file reader.
+   *
+   * @param filenameGenerator the filename generator
+   * @param compressed the compressed
+   * @throws IOException the io exception
+   */
   public RollingFileReader(
       final BiFunction<Integer, Boolean, Path> filenameGenerator, final boolean compressed)
       throws IOException {
@@ -46,6 +52,12 @@ public class RollingFileReader implements Closeable {
     currentPosition = index.readUnsignedShort();
   }
 
+  /**
+   * Read bytes.
+   *
+   * @return the byte [ ]
+   * @throws IOException the io exception
+   */
   public byte[] readBytes() throws IOException {
     byte[] raw;
     try {
@@ -75,6 +87,12 @@ public class RollingFileReader implements Closeable {
     return compressed ? Snappy.uncompress(raw) : raw;
   }
 
+  /**
+   * Seek.
+   *
+   * @param position the position
+   * @throws IOException the io exception
+   */
   public void seek(final long position) throws IOException {
     index.seek(position * 6);
     final int oldFile = fileNumber;
@@ -92,6 +110,11 @@ public class RollingFileReader implements Closeable {
     index.close();
   }
 
+  /**
+   * Is done.
+   *
+   * @return the boolean
+   */
   public boolean isDone() {
     return done;
   }

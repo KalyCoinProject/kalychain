@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -11,13 +11,13 @@
  * specific language governing permissions and limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
  */
 package org.hyperledger.besu.plugin.services.storage.rocksdb.segmented;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
+import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.OptimisticTransactionDB;
+import org.rocksdb.ReadOptions;
+import org.rocksdb.RocksDBException;
 import org.rocksdb.Snapshot;
 
 /**
@@ -29,22 +29,24 @@ class RocksDBSnapshot {
 
   private final OptimisticTransactionDB db;
   private final Snapshot dbSnapshot;
-  private final AtomicInteger usages = new AtomicInteger(0);
 
   RocksDBSnapshot(final OptimisticTransactionDB db) {
     this.db = db;
     this.dbSnapshot = db.getSnapshot();
   }
 
-  Snapshot markAndUseSnapshot() {
-    usages.incrementAndGet();
+  synchronized Snapshot getSnapshot() {
     return dbSnapshot;
   }
 
-  void unMarkSnapshot() {
-    if (usages.decrementAndGet() < 1) {
-      db.releaseSnapshot(dbSnapshot);
-      dbSnapshot.close();
-    }
+  synchronized void close() {
+    db.releaseSnapshot(dbSnapshot);
+    dbSnapshot.close();
+  }
+
+  public byte[] get(
+      final ColumnFamilyHandle columnFamilyHandle, final ReadOptions readOptions, final byte[] key)
+      throws RocksDBException {
+    return db.get(columnFamilyHandle, readOptions, key);
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright contributors to Hyperledger Besu
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -22,10 +22,16 @@ import org.hyperledger.besu.evm.gascalculator.GasCalculator;
 
 import java.util.Optional;
 
+/** The Base fee operation. */
 public class BaseFeeOperation extends AbstractFixedCostOperation {
 
+  /**
+   * Instantiates a new Base fee operation.
+   *
+   * @param gasCalculator the gas calculator
+   */
   public BaseFeeOperation(final GasCalculator gasCalculator) {
-    super(0x48, "BASEFEE", 0, 1, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
+    super(0x48, "BASEFEE", 0, 1, gasCalculator, gasCalculator.getBaseTierGasCost());
   }
 
   @Override

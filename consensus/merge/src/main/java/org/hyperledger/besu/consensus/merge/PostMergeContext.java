@@ -1,5 +1,5 @@
 /*
- * Copyright Hyperledger Besu Contributors.
+ * Copyright contributors to Hyperledger Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,10 +14,9 @@
  */
 package org.hyperledger.besu.consensus.merge;
 
-import static org.hyperledger.besu.util.Slf4jLambdaHelper.debugLambda;
-
 import org.hyperledger.besu.consensus.merge.blockcreation.PayloadIdentifier;
 import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.ethereum.ConsensusContext;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
@@ -28,22 +27,18 @@ import org.hyperledger.besu.util.Subscribers;
 import java.util.Comparator;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.EvictingQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The Post merge context. */
 public class PostMergeContext implements MergeContext {
   private static final Logger LOG = LoggerFactory.getLogger(PostMergeContext.class);
+
+  /** The Max blocks in progress. */
   static final int MAX_BLOCKS_IN_PROGRESS = 12;
-
-  private static final AtomicReference<PostMergeContext> singleton = new AtomicReference<>();
-
-  private static final Comparator<Block> compareByGasUsedDesc =
-      Comparator.comparingLong((Block block) -> block.getHeader().getGasUsed()).reversed();
 
   private final AtomicReference<SyncState> syncState;
   private final AtomicReference<Difficulty> terminalTotalDifficulty;
@@ -55,7 +50,7 @@ public class PostMergeContext implements MergeContext {
   private final Subscribers<UnverifiedForkchoiceListener>
       newUnverifiedForkchoiceCallbackSubscribers = Subscribers.create();
 
-  private final EvictingQueue<PayloadTuple> blocksInProgress =
+  private final EvictingQueue<PayloadWrapper> blocksInProgress =
       EvictingQueue.create(MAX_BLOCKS_IN_PROGRESS);
 
   // latest finalized block
@@ -63,23 +58,21 @@ public class PostMergeContext implements MergeContext {
   private final AtomicReference<BlockHeader> lastSafeBlock = new AtomicReference<>();
   private final AtomicReference<Optional<BlockHeader>> terminalPoWBlock =
       new AtomicReference<>(Optional.empty());
+  private boolean isPostMergeAtGenesis;
 
-  @VisibleForTesting
-  PostMergeContext() {
+  /** Instantiates a new Post merge context. */
+  public PostMergeContext() {
     this(Difficulty.ZERO);
   }
 
-  @VisibleForTesting
-  PostMergeContext(final Difficulty difficulty) {
+  /**
+   * Instantiates a new Post merge context.
+   *
+   * @param difficulty the difficulty
+   */
+  private PostMergeContext(final Difficulty difficulty) {
     this.terminalTotalDifficulty = new AtomicReference<>(difficulty);
     this.syncState = new AtomicReference<>();
-  }
-
-  public static PostMergeContext get() {
-    if (singleton.get() == null) {
-      singleton.compareAndSet(null, new PostMergeContext());
-    }
-    return singleton.get();
   }
 
   @Override
@@ -135,7 +128,9 @@ public class PostMergeContext implements MergeContext {
     return Optional.ofNullable(syncState.get()).map(s -> !s.isInSync()).orElse(Boolean.TRUE)
         // this is necessary for when we do not have a sync target yet, like at startup.
         // not being stopped at ttd implies we are syncing.
-        && !syncState.get().hasReachedTerminalDifficulty().orElse(Boolean.FALSE);
+        && Optional.ofNullable(syncState.get())
+            .map(s -> !(s.hasReachedTerminalDifficulty().orElse(Boolean.FALSE)))
+            .orElse(Boolean.TRUE);
   }
 
   @Override
@@ -205,64 +200,91 @@ public class PostMergeContext implements MergeContext {
   }
 
   @Override
-  public void putPayloadById(final PayloadIdentifier payloadId, final Block newBlock) {
+  public void putPayloadById(final PayloadWrapper newPayload) {
+    final var newBlockWithReceipts = newPayload.blockWithReceipts();
+    final var newBlockValue = newPayload.blockValue();
+
     synchronized (blocksInProgress) {
-      final Optional<Block> maybeCurrBestBlock = retrieveBlockById(payloadId);
+      final Optional<PayloadWrapper> maybeCurrBestPayload =
+          retrievePayloadById(newPayload.payloadIdentifier());
 
-      maybeCurrBestBlock.ifPresentOrElse(
-          currBestBlock -> {
-            if (compareByGasUsedDesc.compare(newBlock, currBestBlock) < 0) {
-              debugLambda(
-                  LOG,
-                  "New proposal for payloadId {} {} is better than the previous one {}",
-                  payloadId::toString,
-                  () -> logBlockProposal(newBlock),
-                  () -> logBlockProposal(currBestBlock));
+      maybeCurrBestPayload.ifPresent(
+          currBestPayload -> {
+            if (newBlockValue.greaterThan(currBestPayload.blockValue())) {
+              LOG.atInfo()
+                  .setMessage(
+                      "New proposal for payloadId {} {} is better than the previous one by {}")
+                  .addArgument(newPayload.payloadIdentifier())
+                  .addArgument(
+                      () -> logBlockProposal(newBlockWithReceipts.getBlock(), newBlockValue))
+                  .addArgument(
+                      () ->
+                          newBlockValue
+                              .subtract(currBestPayload.blockValue())
+                              .toHumanReadableString())
+                  .log();
+
               blocksInProgress.removeAll(
-                  retrieveTuplesById(payloadId).collect(Collectors.toUnmodifiableList()));
-              blocksInProgress.add(new PayloadTuple(payloadId, newBlock));
-            }
-          },
-          () -> blocksInProgress.add(new PayloadTuple(payloadId, newBlock)));
+                  streamPayloadsById(newPayload.payloadIdentifier()).toList());
 
-      debugLambda(
-          LOG,
-          "Current best proposal for payloadId {} {}",
-          payloadId::toString,
-          () -> retrieveBlockById(payloadId).map(bb -> logBlockProposal(bb)).orElse("N/A"));
+              logCurrentBestBlock(newPayload);
+            }
+          });
+      blocksInProgress.add(newPayload);
+    }
+  }
+
+  private void logCurrentBestBlock(final PayloadWrapper payloadWrapper) {
+    if (LOG.isDebugEnabled()) {
+      final Block block = payloadWrapper.blockWithReceipts().getBlock();
+      final float gasUsedPerc =
+          100.0f * block.getHeader().getGasUsed() / block.getHeader().getGasLimit();
+      final int txsNum = block.getBody().getTransactions().size();
+
+      LOG.debug(
+          "Current best proposal for block {}: txs {}, gas used {}%, reward {}",
+          block.getHeader().getNumber(),
+          txsNum,
+          String.format("%1.2f", gasUsedPerc),
+          payloadWrapper.blockValue().toHumanReadableString());
     }
   }
 
   @Override
-  public Optional<Block> retrieveBlockById(final PayloadIdentifier payloadId) {
+  public Optional<PayloadWrapper> retrievePayloadById(final PayloadIdentifier payloadId) {
     synchronized (blocksInProgress) {
-      return retrieveTuplesById(payloadId)
-          .map(tuple -> tuple.block)
-          .sorted(compareByGasUsedDesc)
-          .findFirst();
+      return streamPayloadsById(payloadId).max(Comparator.comparing(PayloadWrapper::blockValue));
     }
   }
 
-  private Stream<PayloadTuple> retrieveTuplesById(final PayloadIdentifier payloadId) {
-    return blocksInProgress.stream().filter(z -> z.payloadIdentifier.equals(payloadId));
+  private Stream<PayloadWrapper> streamPayloadsById(final PayloadIdentifier payloadId) {
+    return blocksInProgress.stream().filter(z -> z.payloadIdentifier().equals(payloadId));
   }
 
-  private String logBlockProposal(final Block block) {
+  private String logBlockProposal(final Block block, final Wei value) {
     return "block "
         + block.toLogString()
         + " gas used "
         + block.getHeader().getGasUsed()
         + " transactions "
-        + block.getBody().getTransactions().size();
+        + block.getBody().getTransactions().size()
+        + " reward "
+        + value.toHumanReadableString();
   }
 
-  private static class PayloadTuple {
-    final PayloadIdentifier payloadIdentifier;
-    final Block block;
+  @Override
+  public boolean isPostMergeAtGenesis() {
+    return this.isPostMergeAtGenesis;
+  }
 
-    PayloadTuple(final PayloadIdentifier payloadIdentifier, final Block block) {
-      this.payloadIdentifier = payloadIdentifier;
-      this.block = block;
-    }
+  /**
+   * Sets whether it is post merge at genesis
+   *
+   * @param isPostMergeAtGenesis the is post merge at genesis state
+   * @return the post merge context
+   */
+  public PostMergeContext setPostMergeAtGenesis(final boolean isPostMergeAtGenesis) {
+    this.isPostMergeAtGenesis = isPostMergeAtGenesis;
+    return this;
   }
 }
