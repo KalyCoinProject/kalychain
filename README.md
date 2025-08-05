@@ -23,11 +23,11 @@ If you have any questions, queries or comments, [KalyChain Discord] is the place
 
 ## KalyChain Users
 
-To install the Besu binary and connect to Kalychain, follow [these instructions](https://git.cipherlabs.org/KalyChain/Node-Install).    
+To install the Besu binary and connect to Kalychain, follow [these instructions](https://github.com/KalyCoinProject/node-install).    
 
 
 
-[KalyChain Issues]: https://git.cipherlabs.org/KalyChain/KalyChain/issues
+[KalyChain Issues]: https://github.com/KalyCoinProject/KalyChain/issues
 [KalyChain User Documentation]: https://docs.kalychain.io/
 [KalyChain Discord]: https://discord.gg/bvtm6dUf
 
